@@ -94,6 +94,25 @@ class KeyMomentEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "poza zakresem"):
             _candidate_moments({"moments": [{"time_sec": 121.0, "category": "other", "headline": "Za późno"}]}, _report(), [])
 
+    def test_new_manual_moment_requires_team_and_nonblank_headline(self) -> None:
+        with self.assertRaises(KeyMomentEditorError) as missing_team:
+            _candidate_moments({"moments": [{"time_sec": 10.0, "category": "other", "headline": "Nowy"}]}, _report(), [])
+        with self.assertRaises(KeyMomentEditorError) as blank_headline:
+            _candidate_moments({"moments": [{"time_sec": 10.0, "category": "other", "headline": "  ", "team_id": "team-a"}]}, _report(), [])
+        self.assertEqual(missing_team.exception.code, "key_moment_team_invalid")
+        self.assertEqual(blank_headline.exception.code, "key_moment_editor_invalid")
+
+    def test_new_manual_moment_saves_with_required_fields_and_trims_headline(self) -> None:
+        moments = _candidate_moments({"moments": [{"time_sec": 10.0, "category": "other", "headline": "  Nowy moment  ", "team_id": "team-a"}]}, _report(), [])
+        self.assertEqual(moments[0]["headline"], "Nowy moment")
+        self.assertEqual(moments[0]["team_id"], "team-a")
+
+    def test_existing_legacy_no_team_moment_remains_editable(self) -> None:
+        legacy = {"moment_id": "legacy-no-team", "time_sec": 10.0, "type": "other", "headline": "Stary moment", "team_id": None}
+        moments = _candidate_moments({"moments": [{**legacy, "headline": "Poprawiony stary moment"}]}, _report(), [legacy])
+        self.assertEqual(moments[0]["team_id"], None)
+        self.assertEqual(moments[0]["headline"], "Poprawiony stary moment")
+
     def test_save_updates_canonical_and_static_projection_without_changing_published_id(self) -> None:
         report = _report()
         with tempfile.TemporaryDirectory() as temporary:
@@ -113,7 +132,7 @@ class KeyMomentEditorTests(unittest.TestCase):
                 initial = editor_state("published-one")
                 saved = save_editorial_document("published-one", {
                     "expected_revision": initial["revision"],
-                    "moments": [*initial["moments"], {"time_sec": 10.0, "category": "other", "headline": "Dodany"}],
+                    "moments": [*initial["moments"], {"time_sec": 10.0, "category": "other", "headline": "Dodany", "team_id": "team-a"}],
                 })
             canonical_report = json.loads((canonical / "public_report.json").read_text(encoding="utf-8"))
             static_report = json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))
@@ -195,6 +214,19 @@ class KeyMomentEditorTests(unittest.TestCase):
         self.assertTrue(str(accepted["accepted_moment"]["moment_id"]).startswith("manual-km-"))
         self.assertEqual(accepted["suggestions"]["unreviewed_count"], 0)
         self.assertEqual(fresh["suggestions"]["unreviewed_count"], 1)
+
+    def test_accept_rejects_missing_new_team_or_final_headline(self) -> None:
+        suggestion = {"status": "ready", "candidate_generation_digest": "lineage-a", "candidate_count": 1, "unreviewed_count": 1, "candidates": [{"candidate_id": "iac-a", "start_time_sec": 10, "end_time_sec": 20, "team_id": "team-a"}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch("app.services.key_moment_editor.EDITORIAL_DIRECTORY", Path(temporary)), patch("app.services.key_moment_editor.get_published_match", return_value={"public_report": _report(), "source_kind": "merged"}), patch("app.services.suggested_key_moments.suggested_key_moment_projection", return_value=suggestion):
+                initial = editor_state("published-one")
+                base = {"expected_revision": initial["revision"], "candidate_id": "iac-a", "candidate_generation_digest": "lineage-a"}
+                with self.assertRaises(KeyMomentEditorError) as missing_team:
+                    accept_suggested_candidate("published-one", {**base, "moment": {"time_sec": 15, "category": "other", "headline": "Finalny opis"}})
+                with self.assertRaises(KeyMomentEditorError) as blank_headline:
+                    accept_suggested_candidate("published-one", {**base, "moment": {"time_sec": 15, "category": "other", "headline": " ", "team_id": "team-a"}})
+        self.assertEqual(missing_team.exception.code, "key_moment_team_invalid")
+        self.assertEqual(blank_headline.exception.code, "key_moment_editor_invalid")
 
     def test_overlap_warning_is_deterministic_for_duplicate_extension_and_generic(self) -> None:
         moments = [

@@ -146,6 +146,7 @@ test('Add shows one focused form, validates new data, and cancel has no mutation
   fireEvent.click(view.getByRole('button', { name: '+ Dodaj moment' }));
   assert.ok(view.getByRole('heading', { name: 'Nowy Key Moment' }));
   assert.equal(view.queryByText('Zaakceptowany moment'), null);
+  assert.equal(view.queryByRole('tablist'), null);
   assert.equal((view.getByLabelText('Czas momentu') as HTMLInputElement).value, '');
 
   fireEvent.click(view.getByRole('button', { name: 'Zapisz moment' }));
@@ -162,6 +163,7 @@ test('Add shows one focused form, validates new data, and cancel has no mutation
   fireEvent.click(view.getByRole('button', { name: 'Anuluj' }));
   assert.equal(saves, 0);
   assert.ok(view.getByText('Zaakceptowany moment'));
+  assert.equal(view.getByRole('tab', { name: 'Zaakceptowane 2' }).getAttribute('aria-selected'), 'true');
 });
 
 test('Add uses current player time and saves an item from the latest editor state', async () => {
@@ -209,8 +211,10 @@ test('Edit uses the same form and preserves compatibility with a legacy no-team 
   fireEvent.click(view.getAllByRole('button', { name: 'Edytuj' })[1]);
   assert.ok(view.getByRole('heading', { name: 'Edytuj Key Moment' }));
   assert.equal((view.getByLabelText('Drużyna momentu') as HTMLSelectElement).value, '');
+  assert.equal(view.queryByRole('tablist'), null);
   fireEvent.click(view.getByRole('button', { name: 'Anuluj' }));
   assert.equal(saved, undefined);
+  assert.equal(view.getByRole('tab', { name: 'Zaakceptowane 2' }).getAttribute('aria-selected'), 'true');
   fireEvent.click(view.getAllByRole('button', { name: 'Edytuj' })[1]);
   fireEvent.change(view.getByLabelText('Tytuł momentu'), { target: { value: 'Poprawiony historyczny moment' } });
   fireEvent.click(view.getByRole('button', { name: 'Zapisz moment' }));
@@ -228,12 +232,14 @@ test('Accept opens the shared blank form, cancel leaves candidate unreviewed, an
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));
   assert.ok(view.getByRole('heading', { name: 'Akceptuj sugerowany moment' }));
+  assert.equal(view.queryByRole('tablist'), null);
   assert.match((view.getByLabelText('Czas momentu') as HTMLInputElement).value, /^1:40(?:\.0)?$/);
   assert.equal((view.getByLabelText('Drużyna momentu') as HTMLSelectElement).value, 'verisk');
   assert.equal((view.getByLabelText('Tytuł momentu') as HTMLInputElement).value, '');
   fireEvent.click(view.getByRole('button', { name: 'Anuluj' }));
   assert.equal(accepted, undefined);
   assert.ok(view.getByText('Sugerowane Key Moments (1)'));
+  assert.equal(view.getByRole('tab', { name: 'Sugestie 1' }).getAttribute('aria-selected'), 'true');
 
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));
   fireEvent.change(view.getByLabelText('Tytuł momentu'), { target: { value: 'Finalny opis akcji' } });
