@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { comparisonBarWidth, RedesignedPublishedReportContent, redesignedPossessionDataKeys } from '../src/components/RedesignedPublishedReportContent.tsx';
 import { RedesignedReportVideoMoments } from '../src/components/RedesignedReportVideoMoments.tsx';
-import { embedAtTimestamp } from '../src/components/RedesignedReportVideoMoments.tsx';
+import { youtubePlayerEmbedUrl } from '../src/components/RedesignedReportVideoMoments.tsx';
 import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import { isGoalkeeperWorkloadRow, redesignedWorkloadHue } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import {
@@ -183,6 +183,17 @@ test('an operator-approved stale YouTube link remains embedded', () => {
   assert.match(html, /Mocny pressing Corgi/);
 });
 
+test('an approved YouTube video keeps the core module visible when no moments are published yet', () => {
+  const html = renderToStaticMarkup(createElement(RedesignedReportVideoMoments, {
+    report: { ...report, key_moments: { ...report.key_moments!, moments: [] } },
+    editorAllowed: false,
+    onEditKeyMoments: () => undefined,
+    externalVideo: { group_id: 'group', status: 'current', external_video: { provider: 'youtube', video_id: 'abc', source_url: 'https://youtube.com/watch?v=abc', embed_url: 'https://www.youtube-nocookie.com/embed/abc', linked_video: { generation_id: 'g', input_semantic_digest: 'in', output_semantic_digest: 'out', timeline_span_sec: 2150 }, updated_at: '2026-09-08T12:00:00Z' } },
+  }));
+  assert.match(html, /youtube-nocookie\.com\/embed\/abc/);
+  assert.match(html, /Brak opublikowanych momentów/);
+});
+
 test('video section shows a small status while the saved YouTube link is loading', () => {
   const html = renderToStaticMarkup(createElement(RedesignedReportVideoMoments, {
     report: { ...report, key_moments: undefined },
@@ -206,10 +217,10 @@ test('the moment editor action is absent normally and appears only when the back
   assert.match(allowed, /Edytuj momenty/);
 });
 
-test('a moment click has a deterministic YouTube playback URL with the logical timestamp', () => {
+test('the persistent no-cookie player URL enables the YouTube JavaScript API', () => {
   assert.equal(
-    embedAtTimestamp('https://www.youtube.com/embed/abc?rel=0', 202.9),
-    'https://www.youtube.com/embed/abc?rel=0&start=202&autoplay=1',
+    youtubePlayerEmbedUrl('https://www.youtube-nocookie.com/embed/abc?rel=0', 'https://socca.example'),
+    'https://www.youtube-nocookie.com/embed/abc?rel=0&enablejsapi=1&origin=https%3A%2F%2Fsocca.example',
   );
 });
 
