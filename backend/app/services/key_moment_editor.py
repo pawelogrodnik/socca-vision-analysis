@@ -25,7 +25,7 @@ from app.services.json_publish_store import (
 from app.services.public_match_report import CLIENT_PUBLIC_MATCHES_DIR
 
 
-EDITORIAL_SCHEMA_VERSION = "1.0.0"
+EDITORIAL_SCHEMA_VERSION = "1.1.0"
 EDITORIAL_DIRECTORY = config.STORAGE_DIR / "editorial" / "key-moments"
 MOMENT_CATEGORIES = {
     "goal_for_us", "goal_for_opponent", "chance", "good_action", "mistake",
@@ -69,7 +69,9 @@ def _editorial_content(document: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": EDITORIAL_SCHEMA_VERSION,
         "published_id": str(document.get("published_id") or ""),
+        "curated_override": bool(document.get("curated_override", True)),
         "moments": copy.deepcopy(document.get("moments") or []),
+        "suggested_candidate_reviews": copy.deepcopy(document.get("suggested_candidate_reviews") or []),
     }
 
 
@@ -84,6 +86,8 @@ def _empty_document(published_id: str) -> dict[str, Any]:
         "created_at": _now(),
         "updated_at": _now(),
         "moments": [],
+        "curated_override": False,
+        "suggested_candidate_reviews": [],
         "_exists": False,
     }
     document["revision"] = _revision(document)
@@ -158,7 +162,7 @@ def _curated_key_moments(report: Mapping[str, Any], moments: list[dict[str, Any]
 def apply_editorial_key_moments(report: Mapping[str, Any], published_id: str, *, source_kind: str | None = None) -> dict[str, Any]:
     """Return the durable curated list when present, otherwise preserve generation."""
     editorial = load_editorial_document(published_id)
-    if not editorial["_exists"]:
+    if not editorial["_exists"] or not editorial.get("curated_override", True):
         return copy.deepcopy(_record(report.get("key_moments")))
     return _curated_key_moments(report, editorial["moments"], source_kind or _source_kind(published_id))
 
@@ -178,12 +182,97 @@ def editor_state(published_id: str) -> dict[str, Any]:
     match = get_published_match(published_id)
     report = _record(match.get("public_report"))
     editorial = load_editorial_document(published_id)
-    moments = editorial["moments"] if editorial["_exists"] else _generated_moments(report)
+    moments = editorial["moments"] if editorial["_exists"] and editorial.get("curated_override", True) else _generated_moments(report)
+    suggestions = _suggestion_state(published_id, editorial, moments)
     return {
         **key_moment_editor_capability(), "published_id": published_id, "revision": editorial["revision"],
         "moments": [_editor_dto(row) for row in _sort_moments(moments)],
         "has_editorial_sidecar": bool(editorial["_exists"]),
+        "suggestions": suggestions,
     }
+
+
+def _suggestion_state(published_id: str, editorial: Mapping[str, Any], moments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Decorate the derived queue with current-lineage decisions only."""
+
+    try:
+        from app.services.suggested_key_moments import suggested_key_moment_projection
+        projection = suggested_key_moment_projection(published_id)
+    except Exception:
+        # A missing optional queue must never block the established manual editor.
+        return {"status": "not_available", "reason": "candidate_projection_unavailable", "candidate_count": 0, "unreviewed_count": 0, "candidates": []}
+    if projection.get("status") != "ready":
+        return {**projection, "unreviewed_count": 0}
+    generation_digest = str(projection.get("candidate_generation_digest") or "")
+    reviews = _reviews_by_candidate(editorial, generation_digest)
+    candidates = []
+    accepted = rejected = 0
+    for candidate in projection.get("candidates", []):
+        if not isinstance(candidate, dict):
+            continue
+        review = reviews.get(str(candidate.get("candidate_id") or ""))
+        status = str((review or {}).get("review_status") or "unreviewed")
+        accepted += status == "accepted"
+        rejected += status == "rejected"
+        if status == "unreviewed":
+            candidates.append(copy.deepcopy(candidate))
+    return {
+        "status": "ready", "policy_version": projection.get("policy_version"),
+        "candidate_generation_digest": generation_digest,
+        "candidate_count": int(projection.get("candidate_count") or 0),
+        "accepted_count": accepted, "rejected_count": rejected,
+        "unreviewed_count": len(candidates), "candidates": candidates,
+        "overlaps": _candidate_overlaps(candidates, moments),
+    }
+
+
+def _reviews_by_candidate(editorial: Mapping[str, Any], generation_digest: str) -> dict[str, dict[str, Any]]:
+    rows = editorial.get("suggested_candidate_reviews")
+    result: dict[str, dict[str, Any]] = {}
+    if not isinstance(rows, list):
+        return result
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("candidate_generation_digest") or "") == generation_digest:
+            candidate_id = str(row.get("candidate_id") or "")
+            if candidate_id:
+                result[candidate_id] = row
+    return result
+
+
+def _candidate_overlaps(candidates: list[dict[str, Any]], moments: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Return the single largest deterministic temporal overlap per candidate."""
+
+    result: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        start, end = _number(candidate.get("start_time_sec")), _number(candidate.get("end_time_sec"))
+        if start is None or end is None or end <= start:
+            continue
+        matches = []
+        for moment in moments:
+            point = _number(moment.get("time_sec"))
+            if point is None:
+                continue
+            before, after = _number(moment.get("context_before_sec")) or 5.0, _number(moment.get("context_after_sec")) or 5.0
+            moment_start, moment_end = max(0.0, point - before), point + after
+            overlap = max(0.0, min(end, moment_end) - max(start, moment_start))
+            if overlap:
+                matches.append((overlap, str(moment.get("moment_id") or ""), moment_start, moment_end, moment))
+        if not matches:
+            continue
+        overlap, _, moment_start, moment_end, moment = max(matches, key=lambda row: (row[0], row[1]))
+        candidate_duration, moment_duration = end - start, moment_end - moment_start
+        containment = overlap / min(candidate_duration, moment_duration)
+        if start < moment_start - 2.0 or end > moment_end + 2.0:
+            kind = "extension"
+        elif containment >= 0.8:
+            kind = "duplicate"
+        else:
+            kind = "overlap"
+        result[str(candidate.get("candidate_id") or "")] = {
+            "kind": kind, "overlap_sec": round(overlap, 3), "moment_id": moment.get("moment_id"),
+            "headline": moment.get("headline"), "start_time_sec": round(moment_start, 3), "end_time_sec": round(moment_end, 3),
+        }
+    return result
 
 
 def _candidate_moments(payload: Mapping[str, Any], report: Mapping[str, Any], current_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -230,15 +319,104 @@ def save_editorial_document(published_id: str, payload: Mapping[str, Any]) -> di
     current = load_editorial_document(published_id)
     if str(payload.get("expected_revision") or "") != current["revision"]:
         raise KeyMomentEditorError("key_moment_editor_revision_conflict", "Stan momentów zmienił się na serwerze. Odśwież edytor.", 409)
-    current_rows = current["moments"] if current["_exists"] else _generated_moments(report)
+    current_rows = current["moments"] if current["_exists"] and current.get("curated_override", True) else _generated_moments(report)
     moments = _candidate_moments(payload, report, current_rows)
-    candidate = {"schema_version": EDITORIAL_SCHEMA_VERSION, "published_id": published_id, "moments": moments, "created_at": current.get("created_at") or _now(), "updated_at": _now(), "_exists": True}
+    candidate = _next_document(current, published_id, moments=moments, curated_override=True)
     candidate["revision"] = _revision(candidate)
     source_kind = _source_kind(published_id)
     candidate_report = copy.deepcopy(report)
     candidate_report["key_moments"] = _curated_key_moments(report, moments, source_kind)
     _promote_projection(published_id, candidate, candidate_report, source_kind)
     return {**editor_state(published_id), "public_report": candidate_report}
+
+
+def accept_suggested_candidate(published_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Accept one current suggestion as an ordinary curated manual moment.
+
+    Review provenance and the resulting moment share the editorial sidecar and
+    are promoted in the same existing publication transaction.
+    """
+
+    match = get_published_match(published_id)
+    report = _record(match.get("public_report"))
+    current = load_editorial_document(published_id)
+    if str(payload.get("expected_revision") or "") != current["revision"]:
+        raise KeyMomentEditorError("key_moment_editor_revision_conflict", "Stan momentów zmienił się na serwerze. Odśwież edytor.", 409)
+    current_rows = current["moments"] if current["_exists"] and current.get("curated_override", True) else _generated_moments(report)
+    suggestion = _current_suggestion(published_id, current, current_rows, payload)
+    final = _record(payload.get("moment"))
+    if final.get("moment_id"):
+        raise KeyMomentEditorError("key_moment_editor_invalid", "Zaakceptowana sugestia musi utworzyć nowy moment.")
+    prepared = _candidate_moments({"moments": [*current_rows, final]}, report, current_rows)
+    existing_ids = {str(row.get("moment_id") or "") for row in current_rows}
+    accepted = next(row for row in prepared if str(row.get("moment_id") or "") not in existing_ids)
+    accepted["origin"] = "manual"
+    accepted["suggested_candidate_id"] = str(suggestion["candidate_id"])
+    accepted["suggested_candidate_generation_digest"] = str(suggestion["candidate_generation_digest"])
+    reviews = _replace_review(current.get("suggested_candidate_reviews"), {
+        "candidate_id": suggestion["candidate_id"],
+        "candidate_generation_digest": suggestion["candidate_generation_digest"],
+        "review_status": "accepted", "manual_moment_id": accepted["moment_id"], "reviewed_at": _now(),
+    })
+    candidate = _next_document(current, published_id, moments=prepared, curated_override=True, reviews=reviews)
+    source_kind = _source_kind(published_id)
+    candidate_report = copy.deepcopy(report)
+    candidate_report["key_moments"] = _curated_key_moments(report, prepared, source_kind)
+    _promote_projection(published_id, candidate, candidate_report, source_kind)
+    return {**editor_state(published_id), "public_report": candidate_report, "accepted_moment": _editor_dto(accepted)}
+
+
+def reject_suggested_candidate(published_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Persist rejection without creating a curated override or public write."""
+
+    match = get_published_match(published_id)
+    report = _record(match.get("public_report"))
+    current = load_editorial_document(published_id)
+    current_rows = current["moments"] if current["_exists"] and current.get("curated_override", True) else _generated_moments(report)
+    suggestion = _current_suggestion(published_id, current, current_rows, payload)
+    reviews = _replace_review(current.get("suggested_candidate_reviews"), {
+        "candidate_id": suggestion["candidate_id"],
+        "candidate_generation_digest": suggestion["candidate_generation_digest"],
+        "review_status": "rejected", "reviewed_at": _now(),
+    })
+    document = _next_document(current, published_id, moments=current.get("moments") or [], curated_override=bool(current.get("curated_override", False)), reviews=reviews)
+    _write_editorial_only(published_id, document)
+    return editor_state(published_id)
+
+
+def _current_suggestion(published_id: str, editorial: Mapping[str, Any], moments: list[dict[str, Any]], payload: Mapping[str, Any]) -> dict[str, str]:
+    state = _suggestion_state(published_id, editorial, moments)
+    generation_digest = str(payload.get("candidate_generation_digest") or "")
+    if generation_digest != str(state.get("candidate_generation_digest") or ""):
+        raise KeyMomentEditorError("key_moment_candidate_stale", "Sugestia pochodzi z nieaktualnej generacji. Odśwież edytor.", 409)
+    candidate_id = str(payload.get("candidate_id") or "")
+    if candidate_id not in {str(row.get("candidate_id") or "") for row in state.get("candidates", []) if isinstance(row, dict)}:
+        raise KeyMomentEditorError("key_moment_candidate_unavailable", "Sugestia nie jest już dostępna do przeglądu.", 409)
+    return {"candidate_id": candidate_id, "candidate_generation_digest": generation_digest}
+
+
+def _next_document(current: Mapping[str, Any], published_id: str, *, moments: list[dict[str, Any]], curated_override: bool, reviews: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    candidate = {
+        "schema_version": EDITORIAL_SCHEMA_VERSION, "published_id": published_id,
+        "curated_override": curated_override, "moments": moments,
+        "suggested_candidate_reviews": reviews if reviews is not None else copy.deepcopy(current.get("suggested_candidate_reviews") or []),
+        "created_at": current.get("created_at") or _now(), "updated_at": _now(), "_exists": True,
+    }
+    candidate["revision"] = _revision(candidate)
+    return candidate
+
+
+def _replace_review(value: Any, review: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [copy.deepcopy(row) for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+    return [row for row in rows if not (str(row.get("candidate_id") or "") == review["candidate_id"] and str(row.get("candidate_generation_digest") or "") == review["candidate_generation_digest"])] + [review]
+
+
+def _write_editorial_only(published_id: str, document: Mapping[str, Any]) -> None:
+    sidecar = _sidecar_path(published_id)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    temporary = sidecar.with_suffix(".tmp")
+    _write_json(temporary, _editorial_content(document))
+    temporary.replace(sidecar)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

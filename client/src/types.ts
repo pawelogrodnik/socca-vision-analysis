@@ -3458,6 +3458,39 @@ export type KeyMomentEditorialMoment = {
   origin?: 'generated' | 'manual' | string;
 };
 
+export type SuggestedKeyMomentCandidate = {
+  candidate_id: string;
+  start_time_sec: number;
+  peak_time_sec?: number;
+  end_time_sec: number;
+  team_id?: string | null;
+  interestingness_score?: number;
+  confidence?: number;
+  evidence?: Array<Record<string, unknown>>;
+};
+
+export type KeyMomentSuggestionOverlap = {
+  kind: 'duplicate' | 'extension' | 'overlap';
+  overlap_sec: number;
+  moment_id?: string;
+  headline?: string;
+  start_time_sec: number;
+  end_time_sec: number;
+};
+
+export type KeyMomentSuggestionsState = {
+  status: 'ready' | 'not_available' | string;
+  reason?: string;
+  policy_version?: string;
+  candidate_generation_digest?: string;
+  candidate_count?: number;
+  accepted_count?: number;
+  rejected_count?: number;
+  unreviewed_count?: number;
+  candidates?: SuggestedKeyMomentCandidate[];
+  overlaps?: Record<string, KeyMomentSuggestionOverlap>;
+};
+
 export type KeyMomentEditorState = {
   key_moment_editor_allowed: boolean;
   reason?: string | null;
@@ -3465,6 +3498,8 @@ export type KeyMomentEditorState = {
   revision?: string;
   moments?: KeyMomentEditorialMoment[];
   has_editorial_sidecar?: boolean;
+  suggestions?: KeyMomentSuggestionsState;
+  accepted_moment?: KeyMomentEditorialMoment;
   public_report?: PublicMatchReport;
 };
 

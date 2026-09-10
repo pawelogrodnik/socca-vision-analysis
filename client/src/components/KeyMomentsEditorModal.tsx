@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyMomentEditorialMoment, KeyMomentEditorState, PublicMatchReport } from '../types';
+import { SuggestedKeyMoments } from './SuggestedKeyMoments';
 
 type Props = {
   state: KeyMomentEditorState;
@@ -7,6 +8,8 @@ type Props = {
   currentVideoTime?: (() => number | null) | null;
   onClose: () => void;
   onSave: (draft: { expected_revision: string; moments: KeyMomentEditorialMoment[] }) => Promise<void>;
+  onAcceptSuggestion?: (payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; moment: KeyMomentEditorialMoment }) => Promise<KeyMomentEditorState>;
+  onRejectSuggestion?: (payload: { candidate_id: string; candidate_generation_digest: string }) => Promise<KeyMomentEditorState>;
 };
 
 const categories = [
@@ -36,13 +39,16 @@ function timestampKey(moment: KeyMomentEditorialMoment, index: number) {
   return moment.moment_id || `new-${index}`;
 }
 
-export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose, onSave }: Props) {
-  const [moments, setMoments] = useState<KeyMomentEditorialMoment[]>(() => state.moments || []);
+export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose, onSave, onAcceptSuggestion, onRejectSuggestion }: Props) {
+  const [moments, setMoments] = useState<KeyMomentEditorialMoment[]>(() => ordered(state.moments || []));
+  const [baselineMoments, setBaselineMoments] = useState<KeyMomentEditorialMoment[]>(() => ordered(state.moments || []));
+  const [revision, setRevision] = useState(state.revision || '');
+  const [suggestions, setSuggestions] = useState(state.suggestions);
   const [timestampTexts, setTimestampTexts] = useState<Record<string, string>>({});
   const timestampTextsRef = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const dirty = useMemo(() => JSON.stringify(ordered(moments)) !== JSON.stringify(ordered(state.moments || [])), [moments, state.moments]);
+  const dirty = useMemo(() => JSON.stringify(ordered(moments)) !== JSON.stringify(ordered(baselineMoments)), [moments, baselineMoments]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
@@ -85,7 +91,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
   }
 
   async function save() {
-    if (!state.revision) return;
+    if (!revision) return;
     setSaving(true); setError('');
     try {
       const draft = moments.map((moment, index) => {
@@ -95,7 +101,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
         if (parsed === null) throw new Error('Podaj czas jako MM:SS, MM:SS.s lub liczbę sekund.');
         return { ...moment, time_sec: parsed };
       });
-      await onSave({ expected_revision: state.revision, moments: ordered(draft) });
+      await onSave({ expected_revision: revision, moments: ordered(draft) });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Nie udało się zapisać zmian.');
     } finally { setSaving(false); }
@@ -109,8 +115,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
         {currentVideoTime && <button type='button' className='secondary' onClick={() => add(currentVideoTime())}>Dodaj z aktualnego czasu</button>}
       </div>
       <div className='key-moment-editor-list'>
-        {ordered(moments).map((moment) => {
-          const index = moments.indexOf(moment);
+        {moments.map((moment, index) => {
           const key = timestampKey(moment, index);
           return <article className='key-moment-editor-row' key={moment.moment_id || `new-${index}`}>
             <strong>{formatTime(moment.time_sec)}{moment.origin === 'generated' ? ' · Automatyczny' : ''}</strong>
@@ -128,6 +133,34 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
           </article>;
         })}
       </div>
+      <SuggestedKeyMoments
+        state={suggestions}
+        report={report}
+        disabled={saving || dirty}
+        onAccept={onAcceptSuggestion && (async (candidate, moment) => {
+          if (!suggestions?.candidate_generation_digest) return;
+          try {
+            setSaving(true); setError('');
+            const saved = await onAcceptSuggestion({ expected_revision: revision, candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest, moment });
+            const accepted = saved.accepted_moment;
+            if (accepted) setMoments((items) => [...items, accepted]);
+            setBaselineMoments(saved.moments || baselineMoments);
+            setRevision(saved.revision || revision);
+            setSuggestions(saved.suggestions);
+          } catch (acceptError) { setError(acceptError instanceof Error ? acceptError.message : 'Nie udało się zaakceptować sugestii.'); }
+          finally { setSaving(false); }
+        })}
+        onReject={onRejectSuggestion && (async (candidate) => {
+          if (!suggestions?.candidate_generation_digest) return;
+          try {
+            setSaving(true); setError('');
+            const saved = await onRejectSuggestion({ candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest });
+            setRevision(saved.revision || revision);
+            setSuggestions(saved.suggestions);
+          } catch (rejectError) { setError(rejectError instanceof Error ? rejectError.message : 'Nie udało się odrzucić sugestii.'); }
+          finally { setSaving(false); }
+        })}
+      />
       {error && <p className='status'>{error}</p>}
       <div className='row end'><button type='button' className='secondary' onClick={close} disabled={saving}>Anuluj</button><button type='button' onClick={() => void save()} disabled={saving}>{saving ? 'Zapisuję…' : 'Zapisz'}</button></div>
     </section>

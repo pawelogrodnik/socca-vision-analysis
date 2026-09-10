@@ -81,7 +81,9 @@ from app.services.identity_reviewed_output_jobs import (
 )
 from app.services.key_moment_editor import (
     KeyMomentEditorError,
+    accept_suggested_candidate as accept_key_moment_suggestion,
     editor_state as key_moment_editor_state,
+    reject_suggested_candidate as reject_key_moment_suggestion,
     save_editorial_document as save_key_moment_editorial_document,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
@@ -4171,6 +4173,26 @@ def api_get_key_moment_editor(published_match_id: str) -> dict[str, Any]:
 def api_save_key_moment_editor(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return save_key_moment_editorial_document(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except KeyMomentEditorError as error:
+        raise _key_moment_editor_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/key-moments/editor/suggestions/accept")
+def api_accept_key_moment_suggestion(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return accept_key_moment_suggestion(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except KeyMomentEditorError as error:
+        raise _key_moment_editor_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/key-moments/editor/suggestions/reject")
+def api_reject_key_moment_suggestion(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return reject_key_moment_suggestion(published_match_id, payload)
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
     except KeyMomentEditorError as error:

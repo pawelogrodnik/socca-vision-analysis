@@ -919,6 +919,24 @@ export async function saveKeyMomentEditor(
   });
 }
 
+export async function acceptKeyMomentSuggestion(
+  publishedMatchId: string,
+  payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; moment: KeyMomentEditorialMoment },
+): Promise<KeyMomentEditorState> {
+  return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor/suggestions/accept`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function rejectKeyMomentSuggestion(
+  publishedMatchId: string,
+  payload: { candidate_id: string; candidate_generation_digest: string },
+): Promise<KeyMomentEditorState> {
+  return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor/suggestions/reject`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
 export async function getStaticPublicMatchReport(matchId: string): Promise<PublicMatchReport> {
   const artifactPath = `/published/matches/${encodeURIComponent(matchId)}/public_report.json`;
   let res: Response;
