@@ -2937,12 +2937,7 @@
           "time_sec": 607.5
         }
       ],
-      "warnings": [
-        {
-          "code": "match_phase_needs_review",
-          "message": "Match phase direction still uses an unconfirmed default."
-        }
-      ]
+      "warnings": []
     },
     "completed_passes": 60,
     "completion_rate": 46.9,
@@ -3232,7 +3227,7 @@
     "restart_passes": 1,
     "same_team_pass_candidates": 75
   },
-  "generated_at": "2026-09-09T08:16:47.583566+00:00",
+  "generated_at": "2026-09-10T11:13:57.860896+00:00",
   "id": "published-6d8fc20c",
   "identity_coverage": {
     "confirmed_named_observations": 118641,
@@ -3266,14 +3261,14 @@
         "named_coverage_status": "not_required_by_scope",
         "named_observation_coverage": 0.0,
         "named_player_review_required": false,
-        "reliable_observations": 124507,
+        "reliable_observations": 124512,
         "roster_scope": "team_stats_only",
         "scope": "team_stats_only",
         "team_known_observation_coverage": 1.0,
-        "team_known_observations": 124507,
+        "team_known_observations": 124512,
         "team_stats_required": true,
         "unresolved_observation_share": 1.0,
-        "unresolved_observations": 118146
+        "unresolved_observations": 118151
       },
       "U": {
         "confirmed_named_observations": 0,
@@ -3282,14 +3277,14 @@
         "named_coverage_status": "required",
         "named_observation_coverage": 0.0,
         "named_player_review_required": true,
-        "reliable_observations": 221,
+        "reliable_observations": 216,
         "roster_scope": "unspecified",
         "scope": "unspecified",
         "team_known_observation_coverage": 0.0,
         "team_known_observations": 0,
         "team_stats_required": true,
         "unresolved_observation_share": 1.0,
-        "unresolved_observations": 221
+        "unresolved_observations": 216
       }
     },
     "policy_version": "coverage-driven-review:v13-team-attribution-minimal-gain",
@@ -3298,7 +3293,7 @@
     "schema_version": "1.0.0",
     "scope": "combined",
     "team_known_observation_coverage": 0.9991,
-    "team_known_observations": 248756,
+    "team_known_observations": 248761,
     "team_stats_required": true,
     "unresolved_observation_share": 0.5235,
     "unresolved_observations": 118809
@@ -3334,17 +3329,17 @@
     },
     "status": "ready_with_review",
     "team_attribution_residual": {
-      "current_team_known_observations": 248756,
+      "current_team_known_observations": 248761,
       "evidence_status_counts": {},
-      "observations": 40,
-      "ordinary_optional_observations": 40,
-      "ordinary_optional_units": 4,
+      "observations": 35,
+      "ordinary_optional_observations": 35,
+      "ordinary_optional_units": 2,
       "required_observations": 0,
       "required_units": 0,
       "residual_budget_observations": 24897,
       "status": "accepted_within_tolerance",
       "target_team_known_observations": 224080,
-      "units": 4,
+      "units": 2,
       "within_tolerance": true
     }
   },
@@ -43773,7 +43768,7 @@
     }
   ],
   "report_type": "public_match_report",
-  "reviewed_identity_digest": "31af26a61105fea5a865a4c8f4b769420d51ea754e15dea57525a5ca09c67021",
+  "reviewed_identity_digest": "e7636e138498f6e3be06da055db03fda675c01af7fc0e6becfab00aae4f92c7d",
   "schema_version": "0.1.0",
   "source_match_id": "6d8fc20c",
   "stats_semantics": {
@@ -44651,7 +44646,7 @@
       "completed_passes": 27,
       "completion_rate": 42.9,
       "display_color": "#353e5c",
-      "estimated_short_gap_distance_m": 42.36,
+      "estimated_short_gap_distance_m": 42.52,
       "failed_passes": 36,
       "high_intensity_distance_m": 1282.03,
       "movement_authority": "reviewed_safe_team_observations",
@@ -44668,7 +44663,7 @@
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",
-      "total_distance_m": 6663.18,
+      "total_distance_m": 6663.34,
       "turnover_or_interception_candidates": 50
     }
   ]

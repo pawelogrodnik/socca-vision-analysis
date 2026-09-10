@@ -1713,12 +1713,7 @@
           "time_sec": 352.5
         }
       ],
-      "warnings": [
-        {
-          "code": "match_phase_needs_review",
-          "message": "Match phase direction still uses an unconfirmed default."
-        }
-      ]
+      "warnings": []
     },
     "completed_passes": 35,
     "completion_rate": 43.8,
@@ -1983,7 +1978,7 @@
     "restart_passes": 2,
     "same_team_pass_candidates": 41
   },
-  "generated_at": "2026-09-09T08:16:52.858869+00:00",
+  "generated_at": "2026-09-10T11:14:28.349293+00:00",
   "id": "published-5e62625e",
   "identity_coverage": {
     "confirmed_named_observations": 71389,
