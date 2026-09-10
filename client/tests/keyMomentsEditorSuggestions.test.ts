@@ -35,7 +35,7 @@ test('timestamp edits and manual additions keep the current curated card order s
   fireEvent.input(times[0], { target: { value: '2:30' } }); fireEvent.blur(times[0]);
   fireEvent.click(view.getByRole('button', { name: 'Dodaj moment' }));
   const rows = [...view.container.querySelectorAll('.key-moment-editor-row strong')].map((row) => row.textContent);
-  assert.deepEqual(rows.map((row) => row?.split('.')[0]), ['2:30', '1:20', '0:00']);
+  assert.deepEqual(rows.map((row) => row?.split('.')[0]), ['0:00', '2:30', '1:20']);
 });
 
 test('suggestion is separate, prefilled with its team, warns about overlap, and appends on accept', async () => {
@@ -54,7 +54,7 @@ test('suggestion is separate, prefilled with its team, warns about overlap, and 
   await waitFor(() => assert.ok(accepted));
   await waitFor(() => assert.equal(view.container.querySelectorAll('.key-moment-editor-row strong').length, 3));
   const rows = [...view.container.querySelectorAll('.key-moment-editor-row strong')].map((row) => row.textContent?.split('.')[0]);
-  assert.deepEqual(rows, ['0:40', '1:20', '1:45']);
+  assert.deepEqual(rows, ['1:45', '0:40', '1:20']);
   assert.ok(view.getByText('Sugerowane Key Moments (0)'));
 });
 

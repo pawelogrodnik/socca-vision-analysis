@@ -62,10 +62,10 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
   }
 
   function add(time?: number | null) {
-    setMoments((items) => [...items, {
+    setMoments((items) => [{
       time_sec: time ?? currentVideoTime?.() ?? 0,
       category: 'other', headline: 'Nowy moment', note: '', origin: 'manual',
-    }]);
+    }, ...items]);
   }
 
   function update(index: number, patch: Partial<KeyMomentEditorialMoment>) {
@@ -143,7 +143,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
             setSaving(true); setError('');
             const saved = await onAcceptSuggestion({ expected_revision: revision, candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest, moment });
             const accepted = saved.accepted_moment;
-            if (accepted) setMoments((items) => [...items, accepted]);
+            if (accepted) setMoments((items) => [accepted, ...items]);
             setBaselineMoments(saved.moments || baselineMoments);
             setRevision(saved.revision || revision);
             setSuggestions(saved.suggestions);
