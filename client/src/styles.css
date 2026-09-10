@@ -99,11 +99,18 @@ a { color: #93c5fd; }
 .redesign-note { margin: 9px 0 0; color: #a9c0d0; font-size: .84rem; }
 .redesign-video-section { padding: 17px; }
 .redesign-video-loading { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #bfdbfe; font-size: .88rem; }
+.redesign-video-actions { display: flex; align-items: center; gap: 8px; }
+.redesign-expand-analysis { display: inline-grid; width: 34px; height: 34px; padding: 0; place-items: center; font-size: 1.2rem; line-height: 1; }
 .redesign-video-layout { display: grid; grid-template-columns: minmax(0, 2.5fr) minmax(300px, 1fr); gap: 14px; }
 .redesign-video-layout.moments-only { grid-template-columns: minmax(0, 1fr); }
 .redesign-youtube-frame { align-self: stretch; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #204d68; border-radius: 12px; background: #020b17; }
 .redesign-youtube-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
 .redesign-moments-panel { display: grid; align-content: start; contain: size; overflow-y: auto; border: 1px solid #204d68; border-radius: 12px; background: rgba(3, 22, 42, .76); scrollbar-color: #3d7894 #08233d; }
+.redesign-analysis-backdrop { position: fixed; z-index: 49; inset: 0; background: rgba(0, 7, 18, .74); backdrop-filter: blur(3px); }
+.redesign-video-section.expanded { position: fixed; z-index: 50; inset: clamp(14px, 3vw, 42px); display: flex; min-height: 0; flex-direction: column; padding: clamp(18px, 2.3vw, 32px); box-shadow: 0 28px 80px rgba(0, 0, 0, .58); }
+.redesign-video-section.expanded .redesign-video-layout { min-height: 0; flex: 1; grid-template-columns: minmax(0, 3fr) minmax(360px, 1fr); }
+.redesign-video-section.expanded .redesign-youtube-frame { min-height: 0; }
+.redesign-video-section.expanded .redesign-moments-panel { min-height: 0; contain: none; }
 .redesign-moment-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border-bottom: 1px solid #1d405b; }
 .redesign-moment-row:last-child { border-bottom: 0; }
 .redesign-moment-row time { padding: 7px 8px; border-radius: 7px; background: #103a5e; color: #d8f6ff; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -167,6 +174,7 @@ a { color: #93c5fd; }
 @media (max-width: 980px) {
   .redesign-video-layout { grid-template-columns: minmax(0, 1fr); }
   .redesign-video-layout .redesign-moments-panel { contain: none; max-height: 420px; }
+  .redesign-expand-analysis { display: none; }
   .redesign-flow-grid { grid-template-columns: minmax(0, 1fr); }
   .redesign-heatmap-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
