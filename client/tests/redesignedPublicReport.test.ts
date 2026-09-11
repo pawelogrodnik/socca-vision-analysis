@@ -283,5 +283,44 @@ test('redesigned report renders Team Shape only when the canonical report carrie
     externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
   }));
   assert.match(withShape, /Ustawienie drużyn/);
+  assert.match(withShape, /Najczęściej zajmowane strefy/);
+  assert.match(withShape, /Jaśniejszy obszar oznacza strefę/);
+  assert.match(withShape, /Intensywność jest normalizowana osobno dla każdej drużyny/);
+  assert.match(withShape, /Kierunek ataku ↑/);
+  assert.match(withShape, /team-shape-density-map/);
+  assert.doesNotMatch(withShape, /Średnie ustawienie/);
+  assert.match(withShape, /20,5 m/);
+  assert.match(withShape, /56%/);
+  assert.ok(withShape.indexOf('Najczęściej zajmowane strefy') < withShape.indexOf('Zmiany ustawienia w czasie'));
+  assert.ok(withShape.indexOf('Zmiany ustawienia w czasie') < withShape.indexOf('Metryka wykresu zmian ustawienia'));
   assert.ok(withShape.indexOf('Heatmapy zawodników') < withShape.indexOf('Ustawienie drużyn'));
+});
+
+test('physical and merged reports share the same Team Shape presentation', () => {
+  const teamShape = {
+    available: true,
+    scope: 'all_in_play',
+    pitch_dimensions_m: { width_m: 30, length_m: 47.4 },
+    teams: ['A', 'B'].map((label) => ({
+      team_label: label,
+      team_name: label === 'A' ? 'Corgi' : 'Verisk',
+      summary: { average_width_m: 20.5, average_depth_m: 18, average_compactness_m: 7, average_block_height_percent: 56.4 },
+      average_shape: { grid: { columns: 6, rows: 10 }, cells: [{ column: 2, row: 7, value: 0.38 }] },
+      timeline: [{ label: '00:00', width_m: 20.5, depth_m: 18, compactness_m: 7, block_height_percent: 56.4 }],
+    })),
+    takeaways: [],
+  };
+  const physical = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: { ...reportWithPlayer, team_shape: teamShape } as PublicMatchReport,
+    externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  const merged = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: { ...reportWithPlayer, team_shape: teamShape, merged_provenance: { group_id: 'merged-group' } } as PublicMatchReport,
+    externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  for (const html of [physical, merged]) {
+    assert.match(html, /Najczęściej zajmowane strefy/);
+    assert.match(html, /team-shape-density-map/);
+    assert.doesNotMatch(html, /Średnie ustawienie/);
+  }
 });

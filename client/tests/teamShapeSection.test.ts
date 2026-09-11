@@ -54,7 +54,7 @@ const teamShape: TeamShapeDocument = {
   takeaways: ['Corgi grał średnio o 2.5 m szerzej niż Verisk.'],
 };
 
-test('available Team Shape renders coach-facing metrics and density pitches', () => {
+test('available Team Shape renders unchanged coach-facing metrics and semantically labelled density pitches', () => {
   const html = renderToStaticMarkup(createElement(TeamShapeSection, { teamShape, reportTeams }));
 
   assert.match(html, /Ustawienie drużyn/);
@@ -66,11 +66,15 @@ test('available Team Shape renders coach-facing metrics and density pitches', ()
   assert.match(html, /56%/);
   assert.match(html, /Corgi/);
   assert.match(html, /Verisk/);
-  assert.match(html, /Gęstość Corgi: 0.380/);
-  assert.match(html, /Gęstość Verisk: 0.420/);
-  assert.match(html, /Jaśniejsze pola pokazują strefy boiska częściej zajmowane przez zespół/);
-  assert.match(html, /Obie drużyny pokazano w tym samym kierunku ataku/);
+  assert.match(html, /Najczęściej zajmowane strefy/);
+  assert.match(html, /Jaśniejszy obszar oznacza strefę/);
+  assert.match(html, /Intensywność jest normalizowana osobno dla każdej drużyny/);
+  assert.match(html, /Kierunek ataku ↑/);
+  assert.match(html, /team-shape-density-map/);
+  assert.doesNotMatch(html, /Średnie ustawienie|Gęstość Corgi/);
   assert.match(html, /Zmiany ustawienia w czasie/);
+  assert.match(html, /Wybierz metrykę dla wykresu poniżej/);
+  assert.match(html, /Metryka wykresu zmian ustawienia/);
   assert.doesNotMatch(html, /Próbki|Block height|diagnostics|readiness|sample_count/);
 });
 
@@ -82,4 +86,18 @@ test('missing or unavailable Team Shape renders no section', () => {
     ),
     '',
   );
+});
+
+test('an older Team Shape payload without density cells stays readable', () => {
+  const legacy = {
+    ...teamShape,
+    teams: teamShape.teams?.map((team) => ({
+      ...team,
+      average_shape: { grid: { columns: 6, rows: 10 } },
+    })),
+  } as TeamShapeDocument;
+  const html = renderToStaticMarkup(createElement(TeamShapeSection, { teamShape: legacy, reportTeams }));
+  assert.match(html, /Ustawienie drużyn/);
+  assert.match(html, /20,5 m/);
+  assert.doesNotMatch(html, /team-shape-density-map/);
 });
