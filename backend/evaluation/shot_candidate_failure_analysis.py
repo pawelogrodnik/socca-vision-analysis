@@ -17,7 +17,6 @@ from evaluation.shot_candidate_benchmark import DEFAULT_TOLERANCE_SEC, benchmark
 
 FAILURE_ANALYSIS_SCHEMA_VERSION = "shot-candidate-failure-analysis:v1"
 CONTACT_SEARCH_WINDOW_SEC = 2.0
-RAW_EVIDENCE_WINDOW_SEC = 1.5
 
 
 def analyze_shot_candidate_failures(
@@ -77,48 +76,33 @@ def _trace_gold_shot(
     events_document = _mapping(source.get("event_candidates"))
     ball_tracks_document = _mapping(source.get("ball_tracks"))
     contacts = shot_candidates._contact_events(events_document)
-    contact, contact_delta, contact_index = _nearest_contact(contacts, source_time)
-    raw_evidence = _raw_ball_evidence(_mapping(source.get("ball_candidates")), source_time)
     timeline = shot_candidates._ball_timeline(ball_tracks_document)
-    selected_position = _nearest_row(timeline, source_time)
-    launch = None
-    trajectory: list[dict[str, Any]] | None = None
-    candidate: dict[str, Any] | None = None
-    rejection_reason: str | None = None
-    phase: dict[str, Any] = {"attack_direction": "unknown", "direction_source": "missing_contact"}
-    receiver: dict[str, Any] = {}
-    if contact is not None:
-        launch_time = _number(contact.get("end_time_sec"), source_time)
-        launch = shot_candidates._nearest_trusted_position(timeline, launch_time, shot_candidates.MAX_LAUNCH_POSITION_DELTA_SEC)
-        trajectory = shot_candidates._trajectory_from_launch(timeline, launch, launch_time) if launch is not None else None
-        next_contact = contacts[contact_index + 1] if contact_index is not None and contact_index + 1 < len(contacts) else None
-        team_label = _text(contact.get("team_label"))
-        if team_label:
-            phase = dict(direction_for_team_at_time(_mapping(source.get("match_phase_config")), team_label, launch_time))
-        candidate, rejection_reason = shot_candidates._candidate_from_contact(
+    ball_candidates_document = _mapping(source.get("ball_candidates"))
+    contact_paths = [
+        _trace_contact_path(
             contact,
-            next_contact,
-            timeline,
-            _mapping(source.get("match_phase_config")),
+            contacts[index + 1] if index + 1 < len(contacts) else None,
+            source_time=source_time,
+            timeline=timeline,
+            ball_candidates_document=ball_candidates_document,
+            phase_config=_mapping(source.get("match_phase_config")),
             source_match_id=_text(source.get("source_match_id")),
             pitch_width_m=_number(source.get("pitch_width_m"), 30.0),
             pitch_length_m=_number(source.get("pitch_length_m"), 47.4),
             logical_offset_sec=offset,
             policy_version=policy_version,
         )
-        receiver = _receiver_for_trace(next_contact, launch_time, contact)
-    generated = candidate is not None
-    trajectory_trace = _trajectory_trace(timeline, launch, _number(contact.get("end_time_sec"), source_time) if contact else source_time)
+        for index, contact in enumerate(contacts)
+        if abs(_number(contact.get("end_time_sec"), source_time) - source_time) <= CONTACT_SEARCH_WINDOW_SEC
+    ]
+    contact_paths.sort(key=lambda row: (abs(_number(row["contact"].get("timing_delta_sec"), 0.0)), str(row["contact"].get("nearest_contact_event_id") or "")))
+    nearest_path = contact_paths[0] if contact_paths else None
+    gold_time_ball_evidence = _raw_ball_evidence(ball_candidates_document, source_time, timeline)
     classification = _classify_failure(
         matched=matched,
-        contact=contact,
-        contact_delta=contact_delta,
-        raw_evidence=raw_evidence,
-        selected_position=selected_position,
-        launch=launch,
-        trajectory=trajectory,
-        rejection_reason=rejection_reason,
         gold_team=_text(gold.get("team")),
+        contact_paths=contact_paths,
+        gold_time_ball_evidence=gold_time_ball_evidence,
     )
     return {
         "gold_shot_id": gold.get("id"),
@@ -127,21 +111,65 @@ def _trace_gold_shot(
         "source_match_id": source.get("source_match_id"),
         "source_timestamp_sec": _round(source_time),
         "benchmark_matched": matched,
-        "contact": _contact_trace(contact, contact_delta),
+        "contact": nearest_path["contact"] if nearest_path else _contact_trace(None, None),
+        "contact_paths": contact_paths,
+        "gold_time_ball_evidence": gold_time_ball_evidence,
+        "ball_launch": nearest_path["ball_launch"] if nearest_path else {"exists": False, "valid_for_shot_generator": False},
+        "raw_ball_evidence": nearest_path["raw_ball_evidence"] if nearest_path else gold_time_ball_evidence,
+        "selected_ball_position_near_gold": gold_time_ball_evidence.get("nearest_selected_position"),
+        "trajectory": nearest_path["trajectory"] if nearest_path else {},
+        "phase": nearest_path["phase"] if nearest_path else {},
+        "receiver_context": nearest_path["receiver_context"] if nearest_path else {},
+        "shot_policy": nearest_path["shot_policy"] if nearest_path else {"generated": False, "rejection_stage": "contact", "rejection_reason": "no_plausible_contact", "confidence_if_scored": None},
+        "classification": classification,
+    }
+
+
+def _trace_contact_path(
+    contact: Mapping[str, Any],
+    next_contact: Mapping[str, Any] | None,
+    *,
+    source_time: float,
+    timeline: list[dict[str, Any]],
+    ball_candidates_document: Mapping[str, Any],
+    phase_config: Mapping[str, Any],
+    source_match_id: str | None,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    logical_offset_sec: float,
+    policy_version: str,
+) -> dict[str, Any]:
+    launch_time = _number(contact.get("end_time_sec"), source_time)
+    launch = shot_candidates._nearest_trusted_position(timeline, launch_time, shot_candidates.MAX_LAUNCH_POSITION_DELTA_SEC)
+    trajectory = shot_candidates._trajectory_from_launch(timeline, launch, launch_time) if launch is not None else None
+    team_label = _text(contact.get("team_label"))
+    phase = dict(direction_for_team_at_time(phase_config, team_label, launch_time)) if team_label else {"attack_direction": "unknown", "direction_source": "missing_team_attribution"}
+    candidate, rejection_reason = shot_candidates._candidate_from_contact(
+        contact,
+        next_contact,
+        timeline,
+        phase_config,
+        source_match_id=source_match_id,
+        pitch_width_m=pitch_width_m,
+        pitch_length_m=pitch_length_m,
+        logical_offset_sec=logical_offset_sec,
+        policy_version=policy_version,
+    )
+    return {
+        "contact": _contact_trace(contact, _round(launch_time - source_time)),
         "ball_launch": _launch_trace(launch, contact),
-        "raw_ball_evidence": raw_evidence,
-        "selected_ball_position_near_gold": _position_trace(selected_position, source_time),
-        "trajectory": trajectory_trace,
-        "phase": {"team_label": contact.get("team_label") if contact else None, **phase},
-        "receiver_context": receiver,
+        "raw_ball_evidence": _raw_ball_evidence(ball_candidates_document, launch_time, timeline),
+        "selected_ball_position_near_launch": _position_trace(_nearest_row(timeline, launch_time), launch_time),
+        "trajectory": _trajectory_trace(timeline, launch, launch_time),
+        "phase": {"team_label": team_label, **phase},
+        "receiver_context": _receiver_for_trace(next_contact, launch_time, contact),
         "shot_policy": {
-            "generated": generated,
+            "generated": candidate is not None,
             "rejection_stage": _rejection_stage(rejection_reason),
             "rejection_reason": rejection_reason,
             "confidence_if_scored": candidate.get("confidence") if candidate else None,
             "candidate_key_if_generated": candidate.get("candidate_key") if candidate else None,
         },
-        "classification": classification,
     }
 
 
@@ -155,33 +183,55 @@ def _source_for_logical_time(sources: list[Mapping[str, Any]], logical_time: flo
     return None
 
 
-def _nearest_contact(contacts: list[dict[str, Any]], source_time: float) -> tuple[dict[str, Any] | None, float | None, int | None]:
-    if not contacts:
-        return None, None, None
-    index = min(range(len(contacts)), key=lambda item: (abs(_number(contacts[item].get("end_time_sec"), 0.0) - source_time), _number(contacts[item].get("end_frame"), 0.0)))
-    contact = contacts[index]
-    delta = _number(contact.get("end_time_sec"), 0.0) - source_time
-    return (contact, _round(delta), index) if abs(delta) <= CONTACT_SEARCH_WINDOW_SEC else (None, _round(delta), None)
+def _raw_ball_evidence(
+    document: Mapping[str, Any],
+    source_time: float,
+    timeline: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Inspect only the production launch-neighborhood and aligned frames."""
 
-
-def _raw_ball_evidence(document: Mapping[str, Any], source_time: float) -> dict[str, Any]:
     frames = [
         dict(row) for row in document.get("frames") or []
-        if isinstance(row, Mapping) and abs(_number(row.get("time_sec"), -9999.0) - source_time) <= RAW_EVIDENCE_WINDOW_SEC
+        if isinstance(row, Mapping)
+        and abs(_number(row.get("time_sec"), -9999.0) - source_time) <= shot_candidates.MAX_LAUNCH_POSITION_DELTA_SEC
     ]
     accepted = [dict(candidate) for row in frames for candidate in row.get("candidates") or [] if isinstance(candidate, Mapping)]
     rejected = [dict(candidate) for row in frames for candidate in row.get("rejected_candidates") or [] if isinstance(candidate, Mapping)]
     raw_predictions = sum(int(_number(row.get("raw_predictions"), 0.0)) for row in frames)
     reasons = Counter(str(item.get("reason") or "unknown") for item in rejected)
+    selected_by_frame = {int(_number(row.get("frame"), -1.0)): row for row in timeline}
+    frame_traces = []
+    for frame in frames:
+        accepted_rows = [dict(row) for row in frame.get("candidates") or [] if isinstance(row, Mapping)]
+        rejected_rows = [dict(row) for row in frame.get("rejected_candidates") or [] if isinstance(row, Mapping)]
+        selected = selected_by_frame.get(int(_number(frame.get("frame"), -1.0)))
+        frame_traces.append({
+            "frame": frame.get("frame"),
+            "time_sec": frame.get("time_sec"),
+            "raw_predictions": frame.get("raw_predictions"),
+            "accepted_candidates": [_candidate_trace(row) for row in accepted_rows],
+            "accepted_candidate_ids": [row.get("candidate_id") for row in accepted_rows],
+            "rejected_candidates": [_candidate_trace(row) for row in rejected_rows],
+            "canonical_selected": _position_trace(selected, _number(frame.get("time_sec"), source_time)),
+        })
+    trusted_accepted = [row for row in accepted if _number(row.get("confidence"), 0.0) >= shot_candidates.MIN_BALL_CONFIDENCE]
+    simultaneous = [
+        row for row in frame_traces
+        if len(row["accepted_candidate_ids"]) > 1
+    ]
     return {
-        "window_sec": RAW_EVIDENCE_WINDOW_SEC,
+        "window_sec": shot_candidates.MAX_LAUNCH_POSITION_DELTA_SEC,
         "frame_count": len(frames),
         "raw_prediction_count": raw_predictions,
         "accepted_candidate_count": len(accepted),
+        "trusted_accepted_candidate_count": len(trusted_accepted),
         "rejected_candidate_count": len(rejected),
         "closest_candidate": _candidate_trace(_nearest_by_time(accepted, source_time)),
         "closest_rejected_candidate": _candidate_trace(_nearest_by_time(rejected, source_time)),
         "rejection_reasons": dict(sorted(reasons.items())),
+        "nearest_selected_position": _position_trace(_nearest_row(timeline, source_time), source_time),
+        "frames": frame_traces,
+        "simultaneous_accepted_candidate_frames": simultaneous,
     }
 
 
@@ -253,42 +303,79 @@ def _first_trajectory_boundary(timeline: list[dict[str, Any]], launch: Mapping[s
     return None, None
 
 
-def _classify_failure(*, matched: bool, contact: Mapping[str, Any] | None, contact_delta: float | None, raw_evidence: Mapping[str, Any], selected_position: Mapping[str, Any] | None, launch: Mapping[str, Any] | None, trajectory: list[dict[str, Any]] | None, rejection_reason: str | None, gold_team: str | None) -> dict[str, Any]:
+def _classify_failure(
+    *,
+    matched: bool,
+    gold_team: str | None,
+    contact_paths: list[Mapping[str, Any]],
+    gold_time_ball_evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Classify a miss from every eligible production contact path."""
+
     if matched:
         return {"primary_category": "EMITTED_OR_NEARBY_CANDIDATE", "first_failing_stage": None, "contributing_categories": []}
-    if contact is None:
-        closest_raw = raw_evidence.get("closest_candidate") if isinstance(raw_evidence.get("closest_candidate"), Mapping) else None
-        selected_candidate_id = _text(selected_position.get("candidate_id")) if isinstance(selected_position, Mapping) else None
-        if closest_raw and selected_candidate_id and _text(closest_raw.get("candidate_id")) != selected_candidate_id:
-            return {
-                "primary_category": "BALL_TRACK_SELECTION_FAILURE",
-                "first_failing_stage": "active_ball_selection",
-                "contributing_categories": ["CONTACT_OR_ATTRIBUTION_FAILURE"],
-            }
-        return {"primary_category": "CONTACT_OR_ATTRIBUTION_FAILURE", "first_failing_stage": "contact", "contributing_categories": []}
-    contact_team = _text(contact.get("team_name"))
-    if gold_team and contact_team and gold_team != contact_team:
+    if not contact_paths:
+        contributors = ["BALL_TRACK_SELECTION_FAILURE"] if _has_same_frame_selection_divergence(gold_time_ball_evidence) else []
+        return {"primary_category": "CONTACT_OR_ATTRIBUTION_FAILURE", "first_failing_stage": "contact", "contributing_categories": contributors}
+    team_consistent_paths = [
+        row for row in contact_paths
+        if not gold_team or _text(_mapping(row.get("contact")).get("team")) == gold_team
+    ]
+    if not team_consistent_paths:
         return {"primary_category": "CONTACT_OR_ATTRIBUTION_FAILURE", "first_failing_stage": "contact_attribution", "contributing_categories": []}
-    if rejection_reason == "missing_launch_ball_position":
-        accepted = int(_number(raw_evidence.get("accepted_candidate_count"), 0.0))
-        rejected = int(_number(raw_evidence.get("rejected_candidate_count"), 0.0))
-        raw = int(_number(raw_evidence.get("raw_prediction_count"), 0.0))
-        if rejected and not accepted:
-            category = "BALL_CANDIDATE_FILTERED"
-        elif accepted:
-            category = "BALL_TRACK_SELECTION_FAILURE"
-        elif raw:
-            category = "BALL_CANDIDATE_FILTERED"
-        else:
-            category = "RAW_DETECTOR_MISS"
-        return {"primary_category": category, "first_failing_stage": "launch_selection", "contributing_categories": []}
-    if rejection_reason in {"missing_continuous_ball_trajectory", "trajectory_not_meaningful"}:
+    path_categories = [_path_failure_category(row) for row in team_consistent_paths]
+    unique_categories = {(row["primary_category"], row["first_failing_stage"]) for row in path_categories}
+    if len(unique_categories) == 1:
+        return path_categories[0]
+    return {
+        "primary_category": "MIXED",
+        "first_failing_stage": "ambiguous_contact_paths",
+        "contributing_categories": sorted({row["primary_category"] for row in path_categories}),
+    }
+
+
+def _path_failure_category(path: Mapping[str, Any]) -> dict[str, Any]:
+    policy = _mapping(path.get("shot_policy"))
+    if bool(policy.get("generated")):
+        return {"primary_category": "MIXED", "first_failing_stage": "candidate_matching", "contributing_categories": ["EMITTED_BUT_NOT_ASSIGNED_TO_THIS_GOLD"]}
+    reason = _text(policy.get("rejection_reason"))
+    raw_evidence = _mapping(path.get("raw_ball_evidence"))
+    if reason == "missing_launch_ball_position":
+        return _launch_failure_category(raw_evidence)
+    if reason in {"missing_continuous_ball_trajectory", "trajectory_not_meaningful"}:
         return {"primary_category": "BALL_CONTINUITY_FAILURE", "first_failing_stage": "trajectory", "contributing_categories": []}
-    if rejection_reason in {"not_goalward", "unknown_team_without_goal_approach", "unsupported_attack_axis"}:
+    if reason in {"unknown_team_without_goal_approach", "unsupported_attack_axis"}:
         return {"primary_category": "CONTACT_OR_ATTRIBUTION_FAILURE", "first_failing_stage": "direction_or_attribution", "contributing_categories": []}
-    if rejection_reason:
+    if reason:
         return {"primary_category": "SHOT_HEURISTIC_FAILURE", "first_failing_stage": "shot_heuristic", "contributing_categories": []}
-    return {"primary_category": "MIXED", "first_failing_stage": "candidate_matching", "contributing_categories": ["BALL_CONTINUITY_FAILURE"] if trajectory is None else []}
+    return {"primary_category": "MIXED", "first_failing_stage": "candidate_matching", "contributing_categories": []}
+
+
+def _launch_failure_category(raw_evidence: Mapping[str, Any]) -> dict[str, Any]:
+    raw_count = int(_number(raw_evidence.get("raw_prediction_count"), 0.0))
+    trusted_accepted = int(_number(raw_evidence.get("trusted_accepted_candidate_count"), 0.0))
+    rejected = int(_number(raw_evidence.get("rejected_candidate_count"), 0.0))
+    if raw_count == 0:
+        return {"primary_category": "RAW_DETECTOR_MISS", "first_failing_stage": "launch_selection", "contributing_categories": []}
+    if trusted_accepted and _has_same_frame_selection_divergence(raw_evidence):
+        return {"primary_category": "BALL_TRACK_SELECTION_FAILURE", "first_failing_stage": "launch_selection", "contributing_categories": []}
+    if rejected:
+        return {"primary_category": "BALL_CANDIDATE_FILTERED", "first_failing_stage": "launch_selection", "contributing_categories": []}
+    if trusted_accepted:
+        return {"primary_category": "BALL_TRACK_SELECTION_FAILURE", "first_failing_stage": "launch_selection", "contributing_categories": []}
+    return {"primary_category": "RAW_DETECTOR_MISS", "first_failing_stage": "launch_selection", "contributing_categories": []}
+
+
+def _has_same_frame_selection_divergence(raw_evidence: Mapping[str, Any]) -> bool:
+    for frame in raw_evidence.get("simultaneous_accepted_candidate_frames") or []:
+        if not isinstance(frame, Mapping):
+            continue
+        selected = _mapping(frame.get("canonical_selected"))
+        selected_id = _text(selected.get("candidate_id"))
+        accepted_ids = {str(item) for item in frame.get("accepted_candidate_ids") or [] if item}
+        if selected_id and selected_id in accepted_ids and len(accepted_ids) > 1:
+            return True
+    return False
 
 
 def _contact_trace(contact: Mapping[str, Any] | None, delta: float | None) -> dict[str, Any]:
