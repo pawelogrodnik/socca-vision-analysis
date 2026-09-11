@@ -195,6 +195,9 @@ from app.services.review_workflow_state import (
     build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
+from app.services.reviewed_sprint_policy import (
+    reviewed_sprint_policy_matches_artifact,
+)
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -3242,6 +3245,8 @@ def get_match_reviewed_stats(match_id: str) -> dict[str, Any]:
     readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
     if stats.get("source_snapshot_digest") != snapshot.get("semantic_digest"):
         raise HTTPException(status_code=409, detail="Reviewed stats were generated from an older identity snapshot")
+    if not reviewed_sprint_policy_matches_artifact(stats):
+        raise HTTPException(status_code=409, detail="Reviewed stats use an obsolete sprint policy")
     return {"stats": stats, "readiness": readiness}
 
 

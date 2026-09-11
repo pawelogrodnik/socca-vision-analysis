@@ -48,6 +48,16 @@ class ReviewedMatchReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "same identity snapshot"):
                 build_reviewed_match_report(root)
 
+    def test_historical_report_without_sprint_policy_version_remains_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_fixture(root)
+
+            report = build_reviewed_match_report(root)
+
+            self.assertEqual(report["report_type"], "reviewed_match_report")
+            self.assertEqual(report["players"][0]["player_name"], "Paweł")
+
     def test_report_exposes_coverage_for_new_reviewed_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

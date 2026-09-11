@@ -11,7 +11,7 @@ export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distancePerMinute', label: 'Śr. dystans / min' },
   { key: 'detectedTime', label: 'Czas wykryty' },
   { key: 'highIntensity', label: 'HI / 5 min' },
-  { key: 'sprints', label: 'Sprinty / 5 min' },
+  { key: 'sprints', label: 'Speed bursts / 5 min' },
 ];
 
 const LEGACY_WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
@@ -19,7 +19,7 @@ const LEGACY_WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distancePerMinute', label: 'Śr. dystans / min' },
   { key: 'detectedTime', label: 'Czas wykryty' },
   { key: 'highIntensity', label: 'Wysoka intensywność' },
-  { key: 'sprints', label: 'Sprinty' },
+  { key: 'sprints', label: 'Speed bursts' },
 ];
 
 export function hasPlayerWorkload(player: PublicReportPlayer): player is PublicReportPlayer & { workload: PublicPlayerWorkload } {
@@ -230,6 +230,6 @@ export function workloadCellTooltip(
     const label = mode === 'normalized' ? 'HI / 5 min' : 'Wysoka intensywność';
     return `${heading}\n${label}: ${value}\nHI zarejestrowana: ${Math.round(window.high_intensity_distance_m)} m\n${detected}`;
   }
-  const label = mode === 'normalized' ? 'Sprinty / 5 min' : 'Sprinty';
-  return `${heading}\n${label}: ${value}\nSprinty zarejestrowane: ${window.sprint_count}\n${detected}`;
+  const label = mode === 'normalized' ? 'Speed bursts / 5 min' : 'Speed bursts';
+  return `${heading}\n${label}: ${value}\nZarejestrowane speed bursts: ${window.sprint_count}\n${detected}`;
 }

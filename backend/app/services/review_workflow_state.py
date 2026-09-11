@@ -26,6 +26,9 @@ from app.services.identity_review_scope import (
 from app.services.identity_seeded_review_reduction import (
     load_initial_audit_completion_evidence,
 )
+from app.services.reviewed_sprint_policy import (
+    reviewed_sprint_policy_matches_artifact,
+)
 from app.services.review_source_fingerprints import (
     FINGERPRINTS_FIELD,
     canonical_generation_maybe_current,
@@ -313,15 +316,11 @@ def get_review_workflow_state(
     job = reviewed_output_status_read_only(match_path, snapshot)
     approval = load_video_qa_approval(match_path)
     fingerprints = current_approval_fingerprint(snapshot, stats, job, output_manifest)
-    stats_current = bool(
-        stats
-        and snapshot.get("semantic_digest")
-        and stats.get("source_snapshot_digest") == snapshot.get("semantic_digest")
-        and review_scope_dependency_matches(match_doc, stats)
-        and (
-            not stats_readiness
-            or stats_readiness.get("status") == "completed"
-        )
+    stats_current = reviewed_stats_artifact_is_current(
+        stats,
+        stats_readiness,
+        snapshot_digest=str(snapshot.get("semantic_digest") or ""),
+        match_doc=match_doc,
     )
     output_current = bool(
         job.get("status") == "completed"
@@ -486,14 +485,11 @@ def _compact_workflow_state_for_generation(
     )
     approval = load_video_qa_approval(match_path)
     fingerprints = current_approval_fingerprint(snapshot_digest, stats, job, output_manifest)
-    stats_current = bool(
-        stats
-        and stats.get("source_snapshot_digest") == snapshot_digest
-        and review_scope_dependency_matches(match_doc, stats)
-        and (
-            not stats_readiness
-            or stats_readiness.get("status") == "completed"
-        )
+    stats_current = reviewed_stats_artifact_is_current(
+        stats,
+        stats_readiness,
+        snapshot_digest=snapshot_digest,
+        match_doc=match_doc,
     )
     output_current = bool(
         job.get("status") == "completed"
@@ -530,6 +526,24 @@ def _compact_workflow_state_for_generation(
     })
     state["compact_workflow"] = True
     return state
+
+
+def reviewed_stats_artifact_is_current(
+    stats: dict[str, Any],
+    stats_readiness: dict[str, Any],
+    *,
+    snapshot_digest: str,
+    match_doc: dict[str, Any],
+) -> bool:
+    """Check the small set of dependencies that make Reviewed stats reusable."""
+    return bool(
+        stats
+        and snapshot_digest
+        and stats.get("source_snapshot_digest") == snapshot_digest
+        and reviewed_sprint_policy_matches_artifact(stats)
+        and review_scope_dependency_matches(match_doc, stats)
+        and (not stats_readiness or stats_readiness.get("status") == "completed")
+    )
 
 
 def build_cheap_finalize_preflight_state(

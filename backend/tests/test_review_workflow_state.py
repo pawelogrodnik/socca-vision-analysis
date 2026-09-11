@@ -30,6 +30,7 @@ from app.services.identity_seeded_review_reduction import (
     build_initial_audit_completion_evidence,
 )
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
+from app.services.reviewed_sprint_policy import SPRINT_POLICY
 from app.services.review_workflow_store import (
     approval_is_current,
     current_approval_fingerprint,
@@ -767,6 +768,54 @@ class ReviewWorkflowStateTests(unittest.TestCase):
             approval = save_video_qa_approval(root, match_id="m1", fingerprints=fingerprints)
             self.assertTrue(approval_is_current(approval, fingerprints))
             self.assertFalse(approval_is_current(approval, {**fingerprints, "reviewed_output_fingerprint": "new-video"}))
+
+    def test_stats_freshness_requires_current_sprint_policy_in_full_and_compact_state(self) -> None:
+        complete = {"prepared": True, "complete": True, "completed": 1, "total": 1, "remaining": 0}
+        cases = (
+            ("current", SPRINT_POLICY, True),
+            ("legacy", "player_relative_v2", False),
+            ("missing", None, False),
+        )
+        for label, policy_version, expected_current in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                stats = {"source_snapshot_digest": "snapshot"}
+                if policy_version is not None:
+                    stats["sprint_policy_version"] = policy_version
+                write_json(root / "reviewed_player_stats.json", stats)
+                write_json(root / "reviewed_stats_readiness.json", {"status": "completed"})
+                write_json(root / "reviewed_identity_report.json", {
+                    "snapshot_digest": "snapshot",
+                    "source_file_fingerprints": {},
+                })
+                with patch(
+                    "app.services.review_workflow_state._analysis_completed", return_value=True
+                ), patch(
+                    "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                    return_value=complete,
+                ), patch(
+                    "app.services.review_workflow_state.review_scope_dependency_matches",
+                    return_value=True,
+                ), patch(
+                    "app.services.review_workflow_state.canonical_generation_maybe_current",
+                    return_value=True,
+                ), patch(
+                    "app.services.review_workflow_state._current_cached_progress_for_snapshot_digest",
+                    return_value=({}, None),
+                ):
+                    full = get_review_workflow_state(
+                        root,
+                        {"id": "m1", "status": "analyzed"},
+                        snapshot={"status": "partial_reviewed", "semantic_digest": "snapshot"},
+                        progress={},
+                        completion_evidence=complete,
+                    )
+                    compact = build_compact_review_workflow_state(
+                        root,
+                        {"id": "m1", "status": "analyzed"},
+                    )
+                self.assertEqual(full["freshness"]["reviewed_stats_current"], expected_current)
+                self.assertEqual(compact["freshness"]["reviewed_stats_current"], expected_current)
 
     def test_get_state_is_read_only_and_uses_cached_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

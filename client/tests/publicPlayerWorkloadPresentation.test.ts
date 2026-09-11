@@ -192,7 +192,7 @@ test('canonical activity matrix preserves reportable partial samples, unavailabl
   assert.match(distanceCell.getAttribute('title') || '', /Dystans: 274 m/);
 
   await act(async () => {
-    fireEvent.click(view.getByRole('button', { name: 'Sprinty / 5 min' }));
+    fireEvent.click(view.getByRole('button', { name: 'Speed bursts / 5 min' }));
   });
   assert.match(view.container.innerHTML, />0\.0</);
 });
@@ -236,7 +236,7 @@ test('HI, sprints, and detected time use their canonical semantics', async () =>
   assert.match(view.container.innerHTML, />96 m</);
 
   await act(async () => {
-    fireEvent.click(view.getByRole('button', { name: 'Sprinty / 5 min' }));
+    fireEvent.click(view.getByRole('button', { name: 'Speed bursts / 5 min' }));
   });
   assert.equal(
     windowValue({ ...player.workload!.activity_windows[0], sprint_count: 1, sprints_per_5min: 3.5 }, 'sprints', 'normalized'),

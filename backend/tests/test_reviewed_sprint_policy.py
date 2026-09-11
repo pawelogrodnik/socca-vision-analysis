@@ -4,6 +4,9 @@ import unittest
 
 from app.services.reviewed_sprint_policy import (
     SPRINT_MIN_DURATION_SEC,
+    _coalesce_adjacent_events,
+    _is_meaningful_burst_start,
+    _trusted_segment,
     classify_reviewed_sprints,
     reviewed_sprint_policy,
 )
@@ -115,6 +118,62 @@ class ReviewedSprintPolicyTests(unittest.TestCase):
         self.assertGreater(result["max_sprint_speed_kmh"], 16.5)
         self.assertLessEqual(result["max_sprint_speed_kmh"], 20.0)
 
+    def test_continuous_trusted_fragments_coalesce_without_counting_bridge_distance(self) -> None:
+        policy = reviewed_sprint_policy(
+            peak_sustained_speed_kmh=24.0, speed_quality="high", detected_time_sec=120.0
+        )
+        rows = _rows([6.0] * 31)
+        events = _coalesce_adjacent_events(
+            [_event(0, 10, 0.0, 1.0, distance=6.0), _event(15, 25, 1.5, 2.5, distance=7.0)],
+            [rows],
+            fps=10.0,
+            policy=policy,
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["start_time_sec"], 0.0)
+        self.assertEqual(events[0]["end_time_sec"], 2.5)
+        self.assertEqual(events[0]["qualifying_time_sec"], 2.0)
+        self.assertEqual(events[0]["qualifying_distance_m"], 13.0)
+        self.assertEqual(events[0]["merged_fragment_count"], 2)
+
+    def test_coalescing_refuses_tracklet_identity_and_large_gap_boundaries(self) -> None:
+        policy = reviewed_sprint_policy(
+            peak_sustained_speed_kmh=24.0, speed_quality="high", detected_time_sec=120.0
+        )
+        rows = _rows([6.0] * 31)
+        first = _event(0, 10, 0.0, 1.0)
+        self.assertEqual(len(_coalesce_adjacent_events(
+            [first, {**_event(15, 25, 1.5, 2.5), "tracklet_id": "other"}], [rows], fps=10.0, policy=policy,
+        )), 2)
+        self.assertEqual(len(_coalesce_adjacent_events(
+            [first, {**_event(15, 25, 1.5, 2.5), "_canonical_player_id": "other-player"}], [rows], fps=10.0, policy=policy,
+        )), 2)
+        self.assertEqual(len(_coalesce_adjacent_events(
+            [first, _event(20, 30, 2.0, 3.0)], [rows], fps=10.0, policy=policy,
+        )), 2)
+
+    def test_stable_moderate_running_near_threshold_is_not_a_burst(self) -> None:
+        policy = reviewed_sprint_policy(
+            peak_sustained_speed_kmh=20.0, speed_quality="high", detected_time_sec=120.0
+        )
+        # A trusted 17.6 km/h cruise follows the same 17.6 km/h baseline.
+        rows = _rows([4.9] * 18)
+        segments = [
+            segment
+            for left, right in zip(rows, rows[1:])
+            if (segment := _trusted_segment(left, right, 10.0)) is not None
+        ]
+        self.assertFalse(
+            _is_meaningful_burst_start(
+                {"start_frame": 8, "speed_mps": 4.9},
+                rows=rows,
+                segments=segments,
+                fps=10.0,
+                policy=policy,
+                previous_accepted=None,
+            )
+        )
+
 
 def _rows(
     speeds_mps: list[float],
@@ -131,6 +190,31 @@ def _rows(
         x += speed * (frame_gap / 10)
         rows.append({"frame": frame_values[index + 1], "time_sec": frame_values[index + 1] / 10, "tracklet_id": tracklet, "pitch_m": [x, 0.0]})
     return rows
+
+
+def _event(
+    start_frame: int,
+    end_frame: int,
+    start_time_sec: float,
+    end_time_sec: float,
+    *,
+    distance: float = 6.0,
+) -> dict[str, object]:
+    return {
+        "start_frame": start_frame,
+        "end_frame": end_frame,
+        "start_time_sec": start_time_sec,
+        "end_time_sec": end_time_sec,
+        "tracklet_id": "tracklet",
+        "qualifying_time_sec": 1.0,
+        "qualifying_distance_m": distance,
+        "max_speed_mps": 6.0,
+        "raw_segment_peak_mps": 6.2,
+        "qualifying_segment_count": 10,
+        "merged_fragment_count": 1,
+        "_fragment_index": 0,
+        "_canonical_player_id": "player-1",
+    }
 
 
 if __name__ == "__main__":

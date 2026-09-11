@@ -128,6 +128,8 @@ test('players appear before canonical activity and heatmaps in the redesigned se
   const heatmaps = html.indexOf('Heatmapy zawodników');
   assert.ok(players >= 0 && players < activity && activity < heatmaps);
   assert.match(html, /redesign-workload-legend/);
+  assert.match(html, /Speed bursts \/ 5 min/);
+  assert.match(html, /Speed bursts/);
   assert.match(html, /Heatmapa Kowalski/);
   assert.match(html, /Heatmapa Goalkeeper/);
   assert.doesNotMatch(html, /Wybór heatmapy zawodnika/);

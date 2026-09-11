@@ -2937,12 +2937,7 @@
           "time_sec": 607.5
         }
       ],
-      "warnings": [
-        {
-          "code": "match_phase_needs_review",
-          "message": "Match phase direction still uses an unconfirmed default."
-        }
-      ]
+      "warnings": []
     },
     "completed_passes": 60,
     "completion_rate": 46.9,
@@ -3232,7 +3227,7 @@
     "restart_passes": 1,
     "same_team_pass_candidates": 75
   },
-  "generated_at": "2026-09-09T08:16:47.583566+00:00",
+  "generated_at": "2026-09-11T10:27:22.996887+00:00",
   "id": "published-6d8fc20c",
   "identity_coverage": {
     "confirmed_named_observations": 118641,
@@ -3266,14 +3261,14 @@
         "named_coverage_status": "not_required_by_scope",
         "named_observation_coverage": 0.0,
         "named_player_review_required": false,
-        "reliable_observations": 124507,
+        "reliable_observations": 124512,
         "roster_scope": "team_stats_only",
         "scope": "team_stats_only",
         "team_known_observation_coverage": 1.0,
-        "team_known_observations": 124507,
+        "team_known_observations": 124512,
         "team_stats_required": true,
         "unresolved_observation_share": 1.0,
-        "unresolved_observations": 118146
+        "unresolved_observations": 118151
       },
       "U": {
         "confirmed_named_observations": 0,
@@ -3282,14 +3277,14 @@
         "named_coverage_status": "required",
         "named_observation_coverage": 0.0,
         "named_player_review_required": true,
-        "reliable_observations": 221,
+        "reliable_observations": 216,
         "roster_scope": "unspecified",
         "scope": "unspecified",
         "team_known_observation_coverage": 0.0,
         "team_known_observations": 0,
         "team_stats_required": true,
         "unresolved_observation_share": 1.0,
-        "unresolved_observations": 221
+        "unresolved_observations": 216
       }
     },
     "policy_version": "coverage-driven-review:v13-team-attribution-minimal-gain",
@@ -3298,7 +3293,7 @@
     "schema_version": "1.0.0",
     "scope": "combined",
     "team_known_observation_coverage": 0.9991,
-    "team_known_observations": 248756,
+    "team_known_observations": 248761,
     "team_stats_required": true,
     "unresolved_observation_share": 0.5235,
     "unresolved_observations": 118809
@@ -3334,17 +3329,17 @@
     },
     "status": "ready_with_review",
     "team_attribution_residual": {
-      "current_team_known_observations": 248756,
+      "current_team_known_observations": 248761,
       "evidence_status_counts": {},
-      "observations": 40,
-      "ordinary_optional_observations": 40,
-      "ordinary_optional_units": 4,
+      "observations": 35,
+      "ordinary_optional_observations": 35,
+      "ordinary_optional_units": 2,
       "required_observations": 0,
       "required_units": 0,
       "residual_budget_observations": 24897,
       "status": "accepted_within_tolerance",
       "target_team_known_observations": 224080,
-      "units": 4,
+      "units": 2,
       "within_tolerance": true
     }
   },
@@ -8831,7 +8826,7 @@
       "playing_time_sec": 570.98,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
-      "sprint_count": 13,
+      "sprint_count": 11,
       "sprint_distance_m": 73.34,
       "sprint_time_sec": 15.62,
       "team_id": "team-corgi-1fc405",
@@ -8852,8 +8847,8 @@
             "high_intensity_time_sec": 19.246999999999943,
             "observed_distance_m": 506.24,
             "rate_status": "reportable",
-            "sprint_count": 8,
-            "sprints_per_5min": 8.13,
+            "sprint_count": 7,
+            "sprints_per_5min": 7.11,
             "start_time_sec": 0.0,
             "total_distance_m": 508.8,
             "window_index": 0
@@ -8870,8 +8865,8 @@
             "high_intensity_time_sec": 17.10200000000026,
             "observed_distance_m": 503.3,
             "rate_status": "reportable",
-            "sprint_count": 5,
-            "sprints_per_5min": 5.44,
+            "sprint_count": 4,
+            "sprints_per_5min": 4.35,
             "start_time_sec": 300.0,
             "total_distance_m": 504.01,
             "window_index": 1
@@ -8901,7 +8896,7 @@
           "distance_per_5min_m": 548.54,
           "end_time_sec": 600.0,
           "high_intensity_distance_m": 91.23,
-          "sprint_count": 5,
+          "sprint_count": 4,
           "start_time_sec": 300.0,
           "total_distance_m": 504.01,
           "window_index": 1
@@ -8917,12 +8912,17 @@
         "minimum_rate_sample_sec": 120.0,
         "rate_window_sec": 300.0,
         "semantics": "reviewed_confirmed_detected_in_play",
-        "sprint_count": 13,
+        "sprint_count": 11,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 16.0,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 20.61,
           "reference_source": "fallback_absolute",
           "reference_speed_quality": "low",
@@ -8930,7 +8930,7 @@
         },
         "sprint_distance_m": 73.34,
         "sprint_time_sec": 15.625,
-        "sprints_per_5min": 6.83
+        "sprints_per_5min": 5.78
       }
     },
     {
@@ -11133,7 +11133,7 @@
       "playing_time_sec": 223.59,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
-      "sprint_count": 3,
+      "sprint_count": 2,
       "sprint_distance_m": 18.67,
       "sprint_time_sec": 3.66,
       "team_id": "team-corgi-1fc405",
@@ -11154,8 +11154,8 @@
             "high_intensity_time_sec": 6.739999999999996,
             "observed_distance_m": 231.78,
             "rate_status": "reportable",
-            "sprint_count": 3,
-            "sprints_per_5min": 4.83,
+            "sprint_count": 2,
+            "sprints_per_5min": 3.22,
             "start_time_sec": 0.0,
             "total_distance_m": 232.4,
             "window_index": 0
@@ -11203,7 +11203,7 @@
           "distance_per_5min_m": 374.06,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 36.48,
-          "sprint_count": 3,
+          "sprint_count": 2,
           "start_time_sec": 0.0,
           "total_distance_m": 232.4,
           "window_index": 0
@@ -11219,12 +11219,17 @@
         "minimum_rate_sample_sec": 120.0,
         "rate_window_sec": 300.0,
         "semantics": "reviewed_confirmed_detected_in_play",
-        "sprint_count": 3,
+        "sprint_count": 2,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 16.91,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 22.55,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "medium",
@@ -11232,7 +11237,7 @@
         },
         "sprint_distance_m": 18.67,
         "sprint_time_sec": 3.663,
-        "sprints_per_5min": 4.03
+        "sprints_per_5min": 2.68
       }
     },
     {
@@ -15835,7 +15840,7 @@
       "playing_time_sec": 375.95,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
-      "sprint_count": 7,
+      "sprint_count": 6,
       "sprint_distance_m": 27.44,
       "sprint_time_sec": 5.51,
       "team_id": "team-corgi-1fc405",
@@ -15874,8 +15879,8 @@
             "high_intensity_time_sec": 19.45599999999962,
             "observed_distance_m": 546.26,
             "rate_status": "reportable",
-            "sprint_count": 7,
-            "sprints_per_5min": 7.24,
+            "sprint_count": 6,
+            "sprints_per_5min": 6.2,
             "start_time_sec": 300.0,
             "total_distance_m": 547.76,
             "window_index": 1
@@ -15905,7 +15910,7 @@
           "distance_per_5min_m": 566.47,
           "end_time_sec": 600.0,
           "high_intensity_distance_m": 104.2,
-          "sprint_count": 7,
+          "sprint_count": 6,
           "start_time_sec": 300.0,
           "total_distance_m": 547.76,
           "window_index": 1
@@ -15921,12 +15926,17 @@
         "minimum_rate_sample_sec": 120.0,
         "rate_window_sec": 300.0,
         "semantics": "reviewed_confirmed_detected_in_play",
-        "sprint_count": 7,
+        "sprint_count": 6,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 16.0,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 19.94,
           "reference_source": "fallback_absolute",
           "reference_speed_quality": "low",
@@ -15934,7 +15944,7 @@
         },
         "sprint_distance_m": 27.44,
         "sprint_time_sec": 5.51,
-        "sprints_per_5min": 5.59
+        "sprints_per_5min": 4.79
       }
     },
     {
@@ -19298,8 +19308,8 @@
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 3,
-      "sprint_distance_m": 33.05,
-      "sprint_time_sec": 7.46,
+      "sprint_distance_m": 32.9,
+      "sprint_time_sec": 7.42,
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
@@ -19385,17 +19395,22 @@
         "semantics": "reviewed_confirmed_detected_in_play",
         "sprint_count": 3,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 15.0,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 19.43,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "medium",
           "start_threshold_kmh": 16.5
         },
-        "sprint_distance_m": 33.05,
-        "sprint_time_sec": 7.459,
+        "sprint_distance_m": 32.9,
+        "sprint_time_sec": 7.425,
         "sprints_per_5min": 3.84
       }
     },
@@ -21002,10 +21017,15 @@
         "semantics": "reviewed_confirmed_detected_in_play",
         "sprint_count": 1,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 15.65,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 20.87,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "medium",
@@ -23876,7 +23896,7 @@
       "playing_time_sec": 193.19,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
-      "sprint_count": 4,
+      "sprint_count": 2,
       "sprint_distance_m": 14.93,
       "sprint_time_sec": 3.02,
       "team_id": "team-corgi-1fc405",
@@ -23915,8 +23935,8 @@
             "high_intensity_time_sec": 9.46699999999953,
             "observed_distance_m": 287.96,
             "rate_status": "reportable",
-            "sprint_count": 4,
-            "sprints_per_5min": 7.24,
+            "sprint_count": 2,
+            "sprints_per_5min": 3.62,
             "start_time_sec": 300.0,
             "total_distance_m": 292.26,
             "window_index": 1
@@ -23952,12 +23972,17 @@
         "minimum_rate_sample_sec": 120.0,
         "rate_window_sec": 300.0,
         "semantics": "reviewed_confirmed_detected_in_play",
-        "sprint_count": 4,
+        "sprint_count": 2,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 15.86,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 21.14,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "medium",
@@ -23965,7 +23990,7 @@
         },
         "sprint_distance_m": 14.93,
         "sprint_time_sec": 3.023,
-        "sprints_per_5min": 6.21
+        "sprints_per_5min": 3.11
       }
     },
     {
@@ -28148,7 +28173,7 @@
       "playing_time_sec": 331.67,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
-      "sprint_count": 6,
+      "sprint_count": 5,
       "sprint_distance_m": 22.15,
       "sprint_time_sec": 4.67,
       "team_id": "team-corgi-1fc405",
@@ -28187,8 +28212,8 @@
             "high_intensity_time_sec": 12.86999999999972,
             "observed_distance_m": 368.66,
             "rate_status": "reportable",
-            "sprint_count": 5,
-            "sprints_per_5min": 6.75,
+            "sprint_count": 4,
+            "sprints_per_5min": 5.4,
             "start_time_sec": 300.0,
             "total_distance_m": 369.43,
             "window_index": 1
@@ -28218,7 +28243,7 @@
           "distance_per_5min_m": 498.5,
           "end_time_sec": 600.0,
           "high_intensity_distance_m": 69.95,
-          "sprint_count": 5,
+          "sprint_count": 4,
           "start_time_sec": 300.0,
           "total_distance_m": 369.43,
           "window_index": 1
@@ -28234,12 +28259,17 @@
         "minimum_rate_sample_sec": 120.0,
         "rate_window_sec": 300.0,
         "semantics": "reviewed_confirmed_detected_in_play",
-        "sprint_count": 6,
+        "sprint_count": 5,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 15.77,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 21.02,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "medium",
@@ -28247,7 +28277,7 @@
         },
         "sprint_distance_m": 22.15,
         "sprint_time_sec": 4.67,
-        "sprints_per_5min": 5.43
+        "sprints_per_5min": 4.52
       }
     },
     {
@@ -34305,7 +34335,7 @@
       "playing_time_sec": 600.97,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
-      "sprint_count": 15,
+      "sprint_count": 13,
       "sprint_distance_m": 74.75,
       "sprint_time_sec": 16.94,
       "team_id": "team-corgi-1fc405",
@@ -34326,8 +34356,8 @@
             "high_intensity_time_sec": 14.541000000000217,
             "observed_distance_m": 494.95,
             "rate_status": "reportable",
-            "sprint_count": 9,
-            "sprints_per_5min": 9.09,
+            "sprint_count": 8,
+            "sprints_per_5min": 8.08,
             "start_time_sec": 0.0,
             "total_distance_m": 498.14,
             "window_index": 0
@@ -34344,8 +34374,8 @@
             "high_intensity_time_sec": 10.380000000000223,
             "observed_distance_m": 495.66,
             "rate_status": "reportable",
-            "sprint_count": 6,
-            "sprints_per_5min": 6.03,
+            "sprint_count": 5,
+            "sprints_per_5min": 5.03,
             "start_time_sec": 300.0,
             "total_distance_m": 498.26,
             "window_index": 1
@@ -34375,7 +34405,7 @@
           "distance_per_5min_m": 502.95,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 80.23,
-          "sprint_count": 9,
+          "sprint_count": 8,
           "start_time_sec": 0.0,
           "total_distance_m": 498.14,
           "window_index": 0
@@ -34391,12 +34421,17 @@
         "minimum_rate_sample_sec": 120.0,
         "rate_window_sec": 300.0,
         "semantics": "reviewed_confirmed_detected_in_play",
-        "sprint_count": 15,
+        "sprint_count": 13,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 15.0,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 19.9,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "medium",
@@ -34404,7 +34439,7 @@
         },
         "sprint_distance_m": 74.75,
         "sprint_time_sec": 16.936,
-        "sprints_per_5min": 7.49
+        "sprints_per_5min": 6.49
       }
     },
     {
@@ -38425,10 +38460,15 @@
         "semantics": "reviewed_confirmed_detected_in_play",
         "sprint_count": 2,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 16.0,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 20.12,
           "reference_source": "fallback_absolute",
           "reference_speed_quality": "low",
@@ -43757,10 +43797,15 @@
         "semantics": "reviewed_confirmed_detected_in_play",
         "sprint_count": 4,
         "sprint_detection": {
+          "acceleration_band_kmh": 1.5,
+          "acceleration_context_sec": 0.5,
           "allowed_dip_sec": 0.2,
+          "coalesce_max_bridge_speed_mps": 12.0,
+          "coalesce_max_gap_sec": 0.75,
           "continue_threshold_kmh": 16.37,
+          "minimum_acceleration_kmh": 1.5,
           "minimum_duration_sec": 0.4,
-          "policy": "player_relative_v2",
+          "policy": "player_relative_v3_burst_calibration",
           "reference_peak_sustained_speed_kmh": 21.82,
           "reference_source": "current_match_peak_sustained",
           "reference_speed_quality": "high",
@@ -43773,7 +43818,7 @@
     }
   ],
   "report_type": "public_match_report",
-  "reviewed_identity_digest": "31af26a61105fea5a865a4c8f4b769420d51ea754e15dea57525a5ca09c67021",
+  "reviewed_identity_digest": "e7636e138498f6e3be06da055db03fda675c01af7fc0e6becfab00aae4f92c7d",
   "schema_version": "0.1.0",
   "source_match_id": "6d8fc20c",
   "stats_semantics": {
@@ -44638,7 +44683,7 @@
       "progressive_pass_candidates": 16,
       "restart_passes": 1,
       "same_team_pass_candidates": 44,
-      "sprint_count": 58,
+      "sprint_count": 49,
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
@@ -44651,7 +44696,7 @@
       "completed_passes": 27,
       "completion_rate": 42.9,
       "display_color": "#353e5c",
-      "estimated_short_gap_distance_m": 42.36,
+      "estimated_short_gap_distance_m": 42.52,
       "failed_passes": 36,
       "high_intensity_distance_m": 1282.03,
       "movement_authority": "reviewed_safe_team_observations",
@@ -44668,7 +44713,7 @@
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",
-      "total_distance_m": 6663.18,
+      "total_distance_m": 6663.34,
       "turnover_or_interception_candidates": 50
     }
   ]
