@@ -80,11 +80,15 @@ test('Key Moments seek one persistent no-cookie YouTube player without replacing
   assert.ok(iframe);
   assert.match(iframe.getAttribute('src') || '', /^https:\/\/www\.youtube-nocookie\.com\/embed\/AbCdEfGhI_1\?/);
   assert.match(iframe.getAttribute('src') || '', /enablejsapi=1/);
+  const playButtons = view.getAllByRole('button', { name: 'Odtwórz' });
+  assert.equal(playButtons.length, 2);
+  assert.ok(playButtons.every((button) => button.classList.contains('key-moment-action-button')));
+  assert.ok(playButtons.every((button) => button.textContent === '▶'));
   await waitFor(() => assert.equal(players.length, 1));
   await act(async () => { players[0].ready(); });
 
-  fireEvent.click(view.getAllByRole('button', { name: 'Odtwórz' })[0]);
-  fireEvent.click(view.getAllByRole('button', { name: 'Odtwórz' })[1]);
+  fireEvent.click(playButtons[0]);
+  fireEvent.click(playButtons[1]);
 
   assert.deepEqual(players[0].seekCalls, [[146, true], [261, true]]);
   assert.equal(players[0].playCalls, 2);

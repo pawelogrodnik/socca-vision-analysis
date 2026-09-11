@@ -22,12 +22,24 @@ export function SuggestedKeyMoments({ state, report, disabled, onPlayAt, onAccep
     <h3>Sugerowane Key Moments ({state?.unreviewed_count ?? candidates.length})</h3>
     {!candidates.length ? <p className='muted'>Brak nieprzejrzanych sugestii.</p> : candidates.map((candidate) => {
       const overlap = state?.overlaps?.[candidate.candidate_id];
-      return <article className='suggested-key-moment-card' key={candidate.candidate_id}>
-        <div className='row between'><strong>{formatKeyMomentTime(candidate.start_time_sec)}–{formatKeyMomentTime(candidate.end_time_sec)}</strong><span>{candidate.team_id ? teams.get(candidate.team_id) || candidate.team_id : '—'}</span></div>
-        <p className='muted'>Sygnały: {evidence(candidate)}</p>
-        {overlap ? <p className='suggestion-overlap'>⚠ {overlap.kind === 'duplicate' ? 'Możliwy duplikat' : overlap.kind === 'extension' ? 'Możliwe rozszerzenie istniejącego momentu' : 'Nachodzi na istniejący Key Moment'}: {overlap.headline || formatKeyMomentTime(overlap.start_time_sec)}</p> : null}
-        <p className='muted'>Wynik {candidate.interestingness_score?.toFixed(2) ?? '—'} · pewność {candidate.confidence?.toFixed(2) ?? '—'}</p>
-        <div className='row end'><button type='button' disabled={!onPlayAt} onClick={() => onPlayAt?.(candidate.start_time_sec)}>Odtwórz</button><button type='button' disabled={disabled || !onAccept} onClick={() => void onAccept?.(candidate)}>Akceptuj</button><button type='button' className='secondary' disabled={disabled || !onReject} onClick={() => void onReject?.(candidate)}>Odrzuć</button></div>
+      const teamName = candidate.team_id ? teams.get(candidate.team_id) || candidate.team_id : 'Nieprzypisana drużyna';
+      return <article className='redesign-moment-row suggested-key-moment-card' key={candidate.candidate_id}>
+        <time className='suggested-key-moment-range'>
+          <span>{formatKeyMomentTime(candidate.start_time_sec)}</span>
+          <span aria-hidden='true'>–</span>
+          <span>{formatKeyMomentTime(candidate.end_time_sec)}</span>
+        </time>
+        <div>
+          <h3>{teamName}</h3>
+          <p>Sygnały: {evidence(candidate)}</p>
+          {overlap ? <p className='suggestion-overlap'>⚠ {overlap.kind === 'duplicate' ? 'Możliwy duplikat' : overlap.kind === 'extension' ? 'Możliwe rozszerzenie istniejącego momentu' : 'Nachodzi na istniejący Key Moment'}: {overlap.headline || formatKeyMomentTime(overlap.start_time_sec)}</p> : null}
+          <p>Wynik {candidate.interestingness_score?.toFixed(2) ?? '—'} · pewność {candidate.confidence?.toFixed(2) ?? '—'}</p>
+        </div>
+        <div className='key-moment-action-list'>
+          <button type='button' className='key-moment-action-button' aria-label='Odtwórz' title='Odtwórz' disabled={!onPlayAt} onClick={() => onPlayAt?.(candidate.start_time_sec)}><span aria-hidden='true'>▶</span></button>
+          <button type='button' className='key-moment-action-button accept' aria-label='Akceptuj' title='Akceptuj' disabled={disabled || !onAccept} onClick={() => void onAccept?.(candidate)}><span aria-hidden='true'>✓</span></button>
+          <button type='button' className='key-moment-action-button reject' aria-label='Odrzuć' title='Odrzuć' disabled={disabled || !onReject} onClick={() => void onReject?.(candidate)}><span aria-hidden='true'>×</span></button>
+        </div>
       </article>;
     })}
   </section>;

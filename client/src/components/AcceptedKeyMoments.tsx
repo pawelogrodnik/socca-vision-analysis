@@ -23,10 +23,10 @@ export function AcceptedKeyMoments({ moments, report, onPlayAt, onAdd, onEdit, o
         <h3>{moment.headline}</h3>
         {moment.note ? <p>{moment.note}</p> : moment.team_id ? <p>{teamNames.get(moment.team_id) || moment.team_id}</p> : null}
       </div>
-      <div className='row'>
-        <button type='button' onClick={() => onPlayAt(moment.time_sec)}>Odtwórz</button>
-        <button type='button' className='secondary' onClick={() => onEdit(moment)}>Edytuj</button>
-        <button type='button' className='secondary' onClick={() => onDelete(moment)}>Usuń</button>
+      <div className='key-moment-action-list'>
+        <button type='button' className='key-moment-action-button' aria-label='Odtwórz' title='Odtwórz' onClick={() => onPlayAt(moment.time_sec)}><span aria-hidden='true'>▶</span></button>
+        <button type='button' className='key-moment-action-button' aria-label='Edytuj' title='Edytuj' onClick={() => onEdit(moment)}><span aria-hidden='true'>✎</span></button>
+        <button type='button' className='key-moment-action-button danger' aria-label='Usuń' title='Usuń' onClick={() => onDelete(moment)}><span aria-hidden='true'>×</span></button>
       </div>
     </article>)}
     {!moments.length ? <p className='redesign-empty-state'>Brak opublikowanych momentów dla tego raportu.</p> : null}
