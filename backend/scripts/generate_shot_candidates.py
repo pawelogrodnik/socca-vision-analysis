@@ -15,6 +15,8 @@ from typing import Any
 
 from app import config
 from app.services.shot_candidates import (
+    POLICY_VERSION,
+    PREVIOUS_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -27,6 +29,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group-id", default=DEFAULT_GROUP_ID)
     parser.add_argument("--output", type=Path, help="Shadow-only logical output path.")
+    parser.add_argument("--policy-version", choices=(PREVIOUS_POLICY_VERSION, POLICY_VERSION), default=POLICY_VERSION)
     args = parser.parse_args()
 
     manifest_path = config.PUBLISHED_DIR / "match-groups" / args.group_id / "manifest.json"
@@ -48,6 +51,7 @@ def main() -> None:
             pitch_width_m=_dimension(pitch, "width_m", config.DEFAULT_PITCH_WIDTH_M),
             pitch_length_m=_dimension(pitch, "length_m", config.DEFAULT_PITCH_LENGTH_M),
             logical_offset_sec=float(member.get("logical_start_sec") or 0.0),
+            policy_version=args.policy_version,
         )
         source_documents.append({
             "source_match_id": source_match_id,
@@ -55,7 +59,11 @@ def main() -> None:
             "shot_candidates": candidate_document,
         })
     timeline_span = float((manifest.get("timing") or {}).get("timeline_span_sec") or 0.0)
-    logical = build_logical_shot_candidates_document(source_documents, timeline_span_sec=timeline_span)
+    logical = build_logical_shot_candidates_document(
+        source_documents,
+        timeline_span_sec=timeline_span,
+        policy_version=args.policy_version,
+    )
     logical["logical_match_group_id"] = args.group_id
     logical["source_documents"] = [
         {"source_match_id": row["source_match_id"], "logical_offset_sec": row["logical_offset_sec"], "candidate_count": len(row["shot_candidates"]["candidates"])}

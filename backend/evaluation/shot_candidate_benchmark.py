@@ -86,6 +86,7 @@ def benchmark_shot_candidates(
             "candidate_reason_distribution": dict(sorted(Counter(reason for candidate in candidates for reason in candidate.get("reasons") or []).items())),
             "confidence_distribution": _confidence_distribution(candidates),
         },
+        "review_budget": _review_budget_metrics(candidates_doc, goldset_doc, tolerance_sec),
         "outcome_recall": _breakdown(gold, matches, "outcome", "gold_outcome"),
         "team_recall": _breakdown(gold, matches, "team", "gold_team"),
         "player_attribution_diagnostics": _player_diagnostics(matches),
@@ -106,6 +107,56 @@ def benchmark_shot_candidates(
             "Manual timestamps are approximate anchors and are matched with the explicit tolerance above.",
         ],
     }
+
+
+def _review_budget_metrics(
+    candidates_doc: Mapping[str, Any],
+    goldset_doc: Mapping[str, Any],
+    tolerance_sec: float,
+) -> dict[str, dict[str, float | int | None]]:
+    """Measure recall at fixed operator-review budgets, ranked by confidence."""
+
+    ranked = sorted(
+        (dict(row) for row in candidates_doc.get("candidates") or [] if isinstance(row, Mapping)),
+        key=lambda row: (-_number(row.get("confidence"), 0.0), _candidate_time(row), str(row.get("candidate_key") or "")),
+    )
+    gold = [dict(row) for row in goldset_doc.get("shots") or [] if isinstance(row, Mapping)]
+    gold_count = len(gold)
+    result: dict[str, dict[str, float | int | None]] = {}
+    for requested in (25, 50, 75, 100):
+        subset = ranked[:requested]
+        assignments = _maximum_cardinality_minimum_error_matching(
+            gold,
+            subset,
+            tolerance_sec,
+        )
+        hard_negative_hits = sum(
+            1
+            for row in goldset_doc.get("hard_negatives") or []
+            if isinstance(row, Mapping)
+            and any(abs(_candidate_time(candidate) - _time(row)) <= tolerance_sec for candidate in subset)
+        )
+        result[f"at_{requested}"] = {
+            "requested_candidate_count": requested,
+            "available_candidate_count": len(subset),
+            "matched_gold_shots": len(assignments),
+            "recall": _ratio(len(assignments), gold_count),
+            "hard_negative_hits": hard_negative_hits,
+        }
+    all_assignments = _maximum_cardinality_minimum_error_matching(gold, ranked, tolerance_sec)
+    result["all"] = {
+        "requested_candidate_count": None,
+        "available_candidate_count": len(ranked),
+        "matched_gold_shots": len(all_assignments),
+        "recall": _ratio(len(all_assignments), gold_count),
+        "hard_negative_hits": sum(
+            1
+            for row in goldset_doc.get("hard_negatives") or []
+            if isinstance(row, Mapping)
+            and any(abs(_candidate_time(candidate) - _time(row)) <= tolerance_sec for candidate in ranked)
+        ),
+    }
+    return result
 
 
 @dataclass
