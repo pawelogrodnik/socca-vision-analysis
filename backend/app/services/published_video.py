@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.artifact_lineage import canonical_json_sha256
+from app.services.identity_review_scope import identity_review_scope_digest
 
 
 PUBLISHED_VIDEO_DESCRIPTOR_FILENAME = "published_video.json"
@@ -55,19 +56,35 @@ def build_publication_video_descriptor(match_path: Path) -> dict[str, Any] | Non
     # immutable video available as historical provenance, but never let a
     # consumer mistake it for a current visual generation.
     current_identity_digest = ""
+    current_scope_digest = ""
     try:
         from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 
         current_identity = get_reviewed_identity_status(match_path)
         if current_identity.get("status") not in {"missing", "stale", "blocked"}:
             current_identity_digest = str(current_identity.get("semantic_digest") or "")
+        match_document = _load_object(match_path / "match.json")
+        if match_document:
+            current_scope_digest = identity_review_scope_digest(match_document)
     except (OSError, ValueError):
         # Publication remains fail-closed for the visual-current claim below.
         current_identity_digest = ""
     source_identity_digest = str(rendered.get("source_snapshot_digest") or "")
+    render_job = _load_object(match_path / "reviewed_video_job.json")
+    source_scope_digest = str(
+        rendered.get("source_review_scope_digest")
+        or video.get("source_review_scope_digest")
+        or render_job.get("source_review_scope_digest")
+        or ""
+    )
     visual_generation_status = (
         "current"
-        if current_identity_digest and source_identity_digest == current_identity_digest
+        if (
+            current_identity_digest
+            and source_identity_digest == current_identity_digest
+            and current_scope_digest
+            and source_scope_digest == current_scope_digest
+        )
         else "historical"
     )
     descriptor = {
@@ -82,9 +99,10 @@ def build_publication_video_descriptor(match_path: Path) -> dict[str, Any] | Non
         "codec": "h264",
         "pix_fmt": "yuv420p",
         "source_reviewed_identity_digest": source_identity_digest,
-        "source_review_scope_digest": str(rendered.get("source_review_scope_digest") or ""),
+        "source_review_scope_digest": source_scope_digest,
         "visual_generation_status": visual_generation_status,
         "current_reviewed_identity_digest": current_identity_digest or None,
+        "current_review_scope_digest": current_scope_digest or None,
     }
     if descriptor["duration_sec"] <= 0 or descriptor["width"] <= 0 or descriptor["height"] <= 0 or descriptor["fps"] <= 0:
         return None

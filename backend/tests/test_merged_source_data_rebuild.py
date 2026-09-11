@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import app.services.merged_source_data_rebuild as rebuild
 from app.services.review_workflow_store import approval_is_current, current_approval_fingerprint
+from app.services.identity_review_scope import identity_review_scope_digest
 
 
 class MergedSourceDataRebuildTests(unittest.TestCase):
@@ -18,7 +19,12 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         match_path.mkdir(parents=True)
         (match_path / "match.json").write_text(json.dumps({"id": "source-one"}), encoding="utf-8")
         (match_path / "reviewed_video_job.json").write_text(
-            json.dumps({"status": "completed", "source_snapshot_digest": job_snapshot, "source_video_digest": "raw-video"}),
+            json.dumps({
+                "status": "completed",
+                "source_snapshot_digest": job_snapshot,
+                "source_review_scope_digest": identity_review_scope_digest({"id": "source-one"}),
+                "source_video_digest": "raw-video",
+            }),
             encoding="utf-8",
         )
         (match_path / "reviewed_identity_progress.json").write_text(
@@ -61,6 +67,19 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         self.assertEqual(result["classification"], "safe_stats_only")
         self.assertEqual(result["video_disposition"], "current_preserved")
         self.assertEqual(result["qa_disposition"], "current_preserved")
+
+    def test_changed_review_scope_keeps_video_and_qa_historical_with_same_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            member, patches = self._preflight_patches(Path(temporary), job_snapshot="identity-new")
+            job_path = Path(temporary) / "matches" / "source-one" / "reviewed_video_job.json"
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            job["source_review_scope_digest"] = "scope-before-change"
+            job_path.write_text(json.dumps(job), encoding="utf-8")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+                result = rebuild._preflight_source(member)
+        self.assertEqual(result["classification"], "safe_stats_only")
+        self.assertEqual(result["video_disposition"], "historical_preserved")
+        self.assertEqual(result["qa_disposition"], "historical_preserved")
 
     def test_unproven_raw_video_binding_blocks_before_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -127,6 +146,20 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         publish.assert_not_called()
         refresh.assert_not_called()
 
+    def test_writer_reservation_race_blocks_before_stats_mutation(self) -> None:
+        source = {
+            "published_id": "published-source-one",
+            "source_match_id": "source-one",
+            "classification": "safe_stats_only",
+        }
+        with patch.object(rebuild, "reserve_reviewed_output_idle", side_effect=rebuild.ReviewedOutputBusyError("busy")), patch.object(
+            rebuild, "build_reviewed_stats"
+        ) as build_stats, patch.object(rebuild, "import_match_package") as publish:
+            with self.assertRaisesRegex(rebuild.SourceDataRebuildError, "Reviewed render"):
+                rebuild._rebuild_one_source(source, lambda _path: {}, progress=lambda _phase: None)
+        build_stats.assert_not_called()
+        publish.assert_not_called()
+
     def test_data_provenance_refresh_never_rebinds_visual_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             match_path = Path(temporary)
@@ -157,6 +190,48 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         self.assertEqual(updated["review_video_generation"]["status"], "historical")
         self.assertEqual(updated["review_video_generation"]["source_identity_digest"], "identity-old")
 
+    def test_scope_change_marks_visual_generation_historical_without_touching_video(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            match_path = Path(temporary)
+            original_video = {
+                "status": "completed",
+                "digest": "video-bytes",
+                "source_snapshot_digest": "identity-same",
+                "source_review_scope_digest": "scope-before-change",
+            }
+            (match_path / "reviewed_output_manifest.json").write_text(json.dumps({
+                "reviewed_identity": {"status": "fresh", "digest": "identity-same"},
+                "stats": {"status": "completed", "source_snapshot_digest": "identity-same"},
+                "video": original_video,
+            }), encoding="utf-8")
+            (match_path / "reviewed_video_job.json").write_text(json.dumps({
+                "source_review_scope_digest": "scope-before-change"}), encoding="utf-8")
+            documents = {
+                "reviewed_player_stats.json": {"players": [{"player_id": "one"}]},
+                "reviewed_stats_readiness.json": {"status": "completed"},
+            }
+            rebuild._refresh_data_provenance(
+                match_path,
+                {"semantic_digest": "identity-same"},
+                {"id": "source-one", "identity_review_scope": {"teams": {"A": "complete_roster", "B": "team_stats_only"}}},
+                documents,
+            )
+            updated = json.loads((match_path / "reviewed_output_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(updated["video"], original_video)
+        self.assertEqual(updated["review_video_generation"]["status"], "historical")
+        old_fingerprints = current_approval_fingerprint(
+            "identity-same", {"version": "old"}, {"video_digest": "video-bytes"}, {"video": original_video}
+        )
+        approval = {
+            key: value
+            for key, value in old_fingerprints.items()
+            if key not in {"reviewed_output_data_maintenance", "reviewed_visual_generation_status"}
+        }
+        refreshed = current_approval_fingerprint(
+            "identity-same", {"version": "new"}, {"video_digest": "video-bytes"}, updated
+        )
+        self.assertFalse(approval_is_current(approval, refreshed))
+
     def test_stats_only_change_keeps_qa_current_only_when_visual_identity_still_matches(self) -> None:
         job = {"video_digest": "video-bytes"}
         old_manifest = {"video": {"source_snapshot_digest": "identity-same"}}
@@ -167,6 +242,7 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         refreshed_manifest = {
             "video": {"source_snapshot_digest": "identity-same"},
             "data_generation": {"maintenance": "stats_only"},
+            "review_video_generation": {"status": "current"},
         }
         refreshed = current_approval_fingerprint(
             "identity-same", {"version": "new"}, job, refreshed_manifest

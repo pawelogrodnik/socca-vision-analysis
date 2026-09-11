@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import threading
 from typing import Any
+import uuid
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
@@ -36,6 +38,35 @@ logger = logging.getLogger(__name__)
 
 class ReviewedOutputBusyError(RuntimeError):
     pass
+
+
+@contextmanager
+def reserve_reviewed_output_idle(match_path: Path, *, operation: str):
+    """Reserve the Reviewed-output writer domain without starting a render.
+
+    Stats-only maintenance writes reviewed stats and the output lineage next to
+    a render. It therefore uses the same durable lock as the renderer, rather
+    than relying on a preceding read-only status check.
+    """
+    reservation_key = f"reservation:{operation}:{uuid.uuid4().hex}"
+    owner = {
+        "pid": os.getpid(),
+        "job_key": reservation_key,
+        "created_at": _now(),
+        "ownership_mode": "single_host_filesystem_pid_lock",
+        "operation": operation,
+    }
+    lock_path = match_path / LOCK_FILENAME
+    if not _acquire_lock(lock_path, owner):
+        raise ReviewedOutputBusyError(
+            "Reviewed render lub przebudowa danych dla tego meczu jest już uruchomiona."
+        )
+    _active_job_keys.add(_active_token(match_path, reservation_key))
+    try:
+        yield
+    finally:
+        _active_job_keys.discard(_active_token(match_path, reservation_key))
+        _release_lock(lock_path, reservation_key)
 
 
 def rebind_reviewed_output_snapshot_provenance(
@@ -352,6 +383,7 @@ def _run(
     stats_already_current: bool,
 ) -> None:
     job_key = str(job["job_key"])
+    source_scope_digest = str(job["source_review_scope_digest"])
     last_progress: dict[str, Any] = {"stage": "queued"}
 
     def progress(event: dict[str, Any]) -> None:
@@ -392,21 +424,28 @@ def _run(
                 "match_id": snapshot.get("match_id"),
                 "job_key": job_key,
                 "reviewed_identity": {"status": "fresh", "digest": snapshot["semantic_digest"]},
-                "source_review_scope_digest": identity_review_scope_digest(match_doc),
+                "source_review_scope_digest": source_scope_digest,
                 "video": {
                     "status": "completed",
                     "path": "reviewed_video.mp4",
                     "digest": manifest["digest"],
                     "source_snapshot_digest": snapshot["semantic_digest"],
-                    "source_review_scope_digest": identity_review_scope_digest(match_doc),
+                    "source_review_scope_digest": source_scope_digest,
                 },
                 "minimap": manifest["minimap"],
                 "semantic_checks": manifest["semantic_checks"],
                 "stats": {
                     "status": "completed",
                     "source_snapshot_digest": snapshot["semantic_digest"],
-                    "source_review_scope_digest": identity_review_scope_digest(match_doc),
+                    "source_review_scope_digest": source_scope_digest,
                     "players": len(stats["reviewed_player_stats.json"].get("players") or []),
+                },
+                "review_video_generation": {
+                    "status": "current",
+                    "source_identity_digest": snapshot["semantic_digest"],
+                    "current_identity_digest": snapshot["semantic_digest"],
+                    "source_review_scope_digest": source_scope_digest,
+                    "current_review_scope_digest": source_scope_digest,
                 },
                 "stale": False,
                 "safety": manifest["safety"],

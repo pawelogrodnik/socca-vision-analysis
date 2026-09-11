@@ -48,6 +48,11 @@ def current_approval_fingerprint(
         if isinstance(output_manifest, dict) and isinstance(output_manifest.get("data_generation"), dict)
         else {}
     )
+    visual_generation = (
+        output_manifest.get("review_video_generation")
+        if isinstance(output_manifest, dict) and isinstance(output_manifest.get("review_video_generation"), dict)
+        else {}
+    )
     return {
         "reviewed_identity_fingerprint": identity_digest,
         "reviewed_stats_fingerprint": _digest(stats),
@@ -61,6 +66,10 @@ def current_approval_fingerprint(
         "reviewed_output_data_maintenance": (
             "stats_only" if data_generation.get("maintenance") == "stats_only" else "standard"
         ),
+        # Pre-maintenance manifests have no separate generation marker. Their
+        # normal workflow gate still verifies the exact identity/scope; only a
+        # stats-only refresh writes this marker, and then it is authoritative.
+        "reviewed_visual_generation_status": _text(visual_generation.get("status")) or "current",
     }
 
 
@@ -72,6 +81,8 @@ def approval_is_current(
         return False
     if fingerprints.get("reviewed_output_data_maintenance") == "stats_only":
         return bool(
+            fingerprints.get("reviewed_visual_generation_status") == "current"
+            and
             fingerprints.get("reviewed_identity_fingerprint")
             and fingerprints.get("reviewed_output_fingerprint")
             and approval.get("reviewed_identity_fingerprint") == fingerprints.get("reviewed_identity_fingerprint")
@@ -81,7 +92,7 @@ def approval_is_current(
         fingerprints.get(key)
         and approval.get(key) == fingerprints.get(key)
         for key in fingerprints
-        if key != "reviewed_output_data_maintenance"
+        if key not in {"reviewed_output_data_maintenance", "reviewed_visual_generation_status"}
     )
 
 

@@ -104,6 +104,37 @@ class PublishedVideoTests(unittest.TestCase):
         self.assertEqual(descriptor["source_reviewed_identity_digest"], "identity-old")
         self.assertEqual(descriptor["current_reviewed_identity_digest"], "identity-new")
 
+    def test_descriptor_marks_same_identity_render_historical_when_review_scope_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            video = source / PUBLISHED_VIDEO_ARTIFACT
+            video.write_bytes(b"final-reviewed-video")
+            digest = _sha256(video)
+            _write(source / "match.json", {
+                "identity_review_scope": {"teams": {"A": "complete_roster", "B": "team_stats_only"}},
+            })
+            _write(source / "reviewed_video_manifest.json", {
+                "status": "completed", "path": PUBLISHED_VIDEO_ARTIFACT, "digest": digest,
+                "duration_sec": 12.5, "resolution": [1280, 720], "fps": 25,
+                "source_snapshot_digest": "identity-same",
+            })
+            _write(source / "reviewed_video_job.json", {
+                "status": "completed", "source_snapshot_digest": "identity-same",
+                "source_review_scope_digest": "scope-before-change",
+            })
+            _write(source / "reviewed_output_manifest.json", {
+                "video": {"status": "completed", "path": PUBLISHED_VIDEO_ARTIFACT, "digest": digest},
+            })
+            with patch(
+                "app.services.identity_reviewed_snapshot.get_reviewed_identity_status",
+                return_value={"status": "partial_reviewed", "semantic_digest": "identity-same"},
+            ):
+                descriptor = build_publication_video_descriptor(source)
+        self.assertIsNotNone(descriptor)
+        self.assertEqual(descriptor["visual_generation_status"], "historical")
+        self.assertEqual(descriptor["source_reviewed_identity_digest"], "identity-same")
+        self.assertNotEqual(descriptor["source_review_scope_digest"], descriptor["current_review_scope_digest"])
+
 
 def _write(path: Path, document: dict[str, object]) -> None:
     path.write_text(json.dumps(document), encoding="utf-8")

@@ -21,7 +21,11 @@ from app.config import MATCHES_DIR
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_output_jobs import JOB_FILENAME as REVIEWED_VIDEO_JOB_FILENAME
-from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
+from app.services.identity_reviewed_output_jobs import (
+    ReviewedOutputBusyError,
+    reserve_reviewed_output_idle,
+    reviewed_output_status_read_only,
+)
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_video import reviewed_source_video_path
@@ -227,30 +231,52 @@ def _rebuild_one_source(source: dict[str, Any], package_builder: PackageBuilder,
     if source["classification"] == "already_current":
         return {**source, "result": "already_current"}
     match_path = MATCHES_DIR / str(source["source_match_id"])
-    snapshot = get_reviewed_identity_status(match_path)
-    meta = _load_required(match_path / "match.json")
-    pitch = _load(match_path / "pitch_config.json")
-    progress("building_stats")
-    documents = build_reviewed_stats(match_path, snapshot, meta, pitch)
-    _refresh_data_provenance(match_path, snapshot, meta, documents)
-    progress("building_report")
-    package = package_builder(match_path)
-    validation = package.get("package_validation") if isinstance(package.get("package_validation"), dict) else {}
-    if validation.get("status") == "blocked":
-        missing = ", ".join(str(item) for item in validation.get("missing_required") or [])
+    try:
+        with reserve_reviewed_output_idle(match_path, operation="stats-only-source-rebuild"):
+            # The group lock cannot exclude a physical render. Recheck after
+            # acquiring this source-level writer reservation, then mutate.
+            authoritative = _preflight_source({
+                "published_id": source["published_id"],
+                "source_match_id": source["source_match_id"],
+            })
+            if authoritative["classification"] == "blocked":
+                raise SourceDataRebuildError(
+                    str(authoritative.get("blocking_code") or "source_preflight_changed"),
+                    str(authoritative.get("blocking_reason") or "Source prerequisites changed before rebuild."),
+                    member=str(source["published_id"]),
+                )
+            if authoritative["classification"] == "already_current":
+                return {**authoritative, "result": "already_current"}
+            snapshot = get_reviewed_identity_status(match_path)
+            meta = _load_required(match_path / "match.json")
+            pitch = _load(match_path / "pitch_config.json")
+            progress("building_stats")
+            documents = build_reviewed_stats(match_path, snapshot, meta, pitch)
+            _refresh_data_provenance(match_path, snapshot, meta, documents)
+            progress("building_report")
+            package = package_builder(match_path)
+            validation = package.get("package_validation") if isinstance(package.get("package_validation"), dict) else {}
+            if validation.get("status") == "blocked":
+                missing = ", ".join(str(item) for item in validation.get("missing_required") or [])
+                raise SourceDataRebuildError(
+                    "package_not_publishable",
+                    f"Rebuilt source package is not publishable: {missing or 'unknown prerequisite'}.",
+                    member=source["published_id"],
+                )
+            package_source = str((package.get("match") or {}).get("id") or "")
+            if package_source != source["source_match_id"]:
+                raise SourceDataRebuildError("package_source_mismatch", "Rebuilt package source identity does not match the physical publication.", member=source["published_id"])
+            progress("publishing_source")
+            published = import_match_package(package, replace=True)
+            if str(published.get("id") or "") != source["published_id"]:
+                raise SourceDataRebuildError("published_id_changed", "Stats-only rebuild changed a stable physical publication ID.", member=source["published_id"])
+            return {**authoritative, "result": "rebuilt"}
+    except ReviewedOutputBusyError as error:
         raise SourceDataRebuildError(
-            "package_not_publishable",
-            f"Rebuilt source package is not publishable: {missing or 'unknown prerequisite'}.",
-            member=source["published_id"],
-        )
-    package_source = str((package.get("match") or {}).get("id") or "")
-    if package_source != source["source_match_id"]:
-        raise SourceDataRebuildError("package_source_mismatch", "Rebuilt package source identity does not match the physical publication.", member=source["published_id"])
-    progress("publishing_source")
-    published = import_match_package(package, replace=True)
-    if str(published.get("id") or "") != source["published_id"]:
-        raise SourceDataRebuildError("published_id_changed", "Stats-only rebuild changed a stable physical publication ID.", member=source["published_id"])
-    return {**source, "result": "rebuilt"}
+            "reviewed_render_in_progress",
+            "Reviewed render jest uruchomiony; poczekaj na jego zakończenie przed przebudową danych.",
+            member=str(source["published_id"]),
+        ) from error
 
 
 def _preflight(group_id: str, merged_id: str) -> dict[str, Any]:
@@ -370,7 +396,15 @@ def _preflight_source(member: dict[str, Any]) -> dict[str, Any]:
     if not job or str(job.get("source_video_digest") or "") != raw_video_digest:
         return _blocked(result, "source_video_binding_unproven", "Existing Review-video provenance does not prove the current source video.")
     video_digest = str(job.get("source_snapshot_digest") or "")
-    if job.get("status") == "completed" and video_digest == snapshot.get("semantic_digest"):
+    current_scope_digest = identity_review_scope_digest(meta)
+    rendered_scope_digest = str(job.get("source_review_scope_digest") or "")
+    result["current_review_scope_digest"] = current_scope_digest
+    result["review_video_scope_digest"] = rendered_scope_digest or None
+    if (
+        job.get("status") == "completed"
+        and video_digest == snapshot.get("semantic_digest")
+        and rendered_scope_digest == current_scope_digest
+    ):
         result["video_disposition"] = "current_preserved"
         result["qa_disposition"] = "current_preserved"
     elif job.get("status") == "completed" and video_digest:
@@ -423,10 +457,23 @@ def _refresh_data_provenance(
     }
     visual = output.get("video") if isinstance(output.get("video"), dict) else {}
     visual_digest = str(visual.get("source_snapshot_digest") or "")
+    current_scope_digest = identity_review_scope_digest(meta)
+    render_job = _load(match_path / REVIEWED_VIDEO_JOB_FILENAME)
+    visual_scope_digest = str(
+        visual.get("source_review_scope_digest")
+        or render_job.get("source_review_scope_digest")
+        or ""
+    )
     output["review_video_generation"] = {
-        "status": "current" if visual_digest == snapshot_digest else "historical",
+        "status": (
+            "current"
+            if visual_digest == snapshot_digest and visual_scope_digest == current_scope_digest
+            else "historical"
+        ),
         "source_identity_digest": visual_digest or None,
         "current_identity_digest": snapshot_digest,
+        "source_review_scope_digest": visual_scope_digest or None,
+        "current_review_scope_digest": current_scope_digest,
     }
     write_identity_json_atomic(output_path, output)
 
