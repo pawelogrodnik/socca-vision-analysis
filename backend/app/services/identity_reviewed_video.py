@@ -11,7 +11,7 @@ import json
 import shutil
 import subprocess
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
@@ -126,6 +126,7 @@ def render_reviewed_video(
     *,
     include_minimap: bool = True,
     include_ball: bool = True,
+    include_ball_main_frame: bool = False,
     show_roster_number: bool = False,
     progress_callback: RenderProgressCallback | None = None,
 ) -> dict[str, Any]:
@@ -150,7 +151,7 @@ def render_reviewed_video(
     emitter.emit("load_render_inputs")
     positions = _positions_by_frame(match_path, snapshot)
     pitch = _load_optional(match_path / "pitch_config.json")
-    balls = _ball_by_frame(match_path) if include_ball else {}
+    balls = _ball_by_frame(match_path) if include_ball or include_ball_main_frame else {}
     capture = cv2.VideoCapture(str(source))
     if not capture.isOpened():
         raise RuntimeError("Source video could not be opened")
@@ -206,6 +207,8 @@ def render_reviewed_video(
             stage_started = time.perf_counter()
             _draw_rows(frame, rows, show_roster_number)
             profile.draw_labels_sec += time.perf_counter() - stage_started
+            if include_ball_main_frame:
+                draw_ball_evidence_on_main_frame(frame, balls.get(count))
             minimap = {"status": "not_available", "reason": "pitch positions unavailable"}
             stage_started = time.perf_counter()
             if include_minimap and pitch:
@@ -275,6 +278,7 @@ def render_reviewed_video(
     config = {
         "include_minimap": include_minimap,
         "include_ball": include_ball,
+        "include_ball_main_frame": include_ball_main_frame,
         "show_roster_number": show_roster_number,
     }
     semantic_checks = {
@@ -448,6 +452,53 @@ def _draw_rows(frame: Any, rows: list[dict[str,Any]], show_number: bool) -> None
         occupied.append(label_box)
         cv2.rectangle(frame, (left, top), (right, bottom), (10, 14, 20), -1)
         cv2.putText(frame, label, (left + 3, bottom - base - 2), cv2.FONT_HERSHEY_SIMPLEX, .5, color, 1, cv2.LINE_AA)
+
+
+def draw_ball_evidence_on_main_frame(frame: Any, ball: Mapping[str, Any] | None) -> str:
+    """Draw only persisted selected-ball evidence; never synthesize a bbox.
+
+    ``detected`` rows may show their stored YOLO bbox. ``interpolated`` rows
+    receive only a small marker, and unknown/untrusted rows intentionally leave
+    the main frame untouched. The return value is useful for diagnostic renders.
+    """
+
+    if not isinstance(ball, Mapping):
+        return "unknown"
+    source = str(ball.get("source") or "unknown")
+    point = ball.get("position_px")
+    if source not in {"detected", "interpolated"} or not isinstance(point, list) or len(point) < 2:
+        return "unknown"
+
+    import cv2
+
+    x, y = int(round(float(point[0]))), int(round(float(point[1])))
+    confidence = float(ball.get("confidence") or 0.0)
+    if source == "detected":
+        color = (0, 215, 255)
+        bbox = ball.get("bbox_xyxy")
+        if isinstance(bbox, list) and len(bbox) >= 4:
+            x1, y1, x2, y2 = (int(round(float(value))) for value in bbox[:4])
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+            _draw_ball_evidence_label(frame, f"BALL {confidence:.2f}", x, y, color)
+            return "detected_bbox"
+        cv2.circle(frame, (x, y), 5, color, 1, cv2.LINE_AA)
+        _draw_ball_evidence_label(frame, f"BALL {confidence:.2f}", x, y, color)
+        return "detected_marker"
+
+    color = (255, 255, 0)
+    cv2.circle(frame, (x, y), 5, color, 1, cv2.LINE_AA)
+    cv2.line(frame, (x - 7, y), (x + 7, y), color, 1, cv2.LINE_AA)
+    cv2.line(frame, (x, y - 7), (x, y + 7), color, 1, cv2.LINE_AA)
+    _draw_ball_evidence_label(frame, "BALL interpolated", x, y, color)
+    return "interpolated_marker"
+
+
+def _draw_ball_evidence_label(frame: Any, label: str, x: int, y: int, color: tuple[int, int, int]) -> None:
+    import cv2
+
+    origin = (max(0, min(x + 10, frame.shape[1] - 150)), max(16, y - 10))
+    cv2.putText(frame, label, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(frame, label, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
 
 
 def _choose_label_box(x1: int, y1: int, y2: int, width: int, height: int, base: int, frame_width: int, frame_height: int, occupied: list[tuple[int, int, int, int]]) -> tuple[int, int, int, int]:
