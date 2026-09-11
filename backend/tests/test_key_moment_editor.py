@@ -14,9 +14,11 @@ from app.services.key_moment_editor import (
     _editorial_content,
     _revision,
     apply_editorial_key_moments,
+    assert_editorial_projection_recoverable,
     editor_state,
     key_moment_editor_capability,
     load_editorial_document,
+    recover_existing_editorial_projection,
     accept_suggested_candidate,
     reject_suggested_candidate,
     save_editorial_document,
@@ -89,6 +91,61 @@ class KeyMomentEditorTests(unittest.TestCase):
                 applied = apply_editorial_key_moments(report, "published-one", source_kind="physical")
         self.assertEqual(applied["moments"], curated)
         self.assertEqual(applied["policy_version"], "editorial-curated:v1")
+
+    def test_known_curated_projection_blocks_when_durable_editorial_state_is_missing(self) -> None:
+        report = _report()
+        report["key_moments"] = {"policy_version": "editorial-curated:v1", "status": "ready", "moments": [{"moment_id": "manual-1"}]}
+        with tempfile.TemporaryDirectory() as temporary, patch("app.services.key_moment_editor.EDITORIAL_DIRECTORY", Path(temporary)):
+            with self.assertRaises(KeyMomentEditorError) as failure:
+                assert_editorial_projection_recoverable("published-one", report)
+        self.assertEqual(failure.exception.code, "key_moment_editorial_recovery_required")
+
+    def test_curated_projection_preserves_accepted_and_rejected_editorial_state_while_suggestions_change(self) -> None:
+        report = _report()
+        accepted = {"moment_id": "manual-accepted", "time_sec": 12.0, "type": "good_action", "headline": "Zaakceptowany", "origin": "manual"}
+        rejected_review = {"candidate_id": "old-rejected", "candidate_generation_digest": "old", "review_status": "rejected"}
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "published-one.json").write_text(json.dumps({
+                "schema_version": "1.1.0", "published_id": "published-one", "curated_override": True,
+                "moments": [accepted], "suggested_candidate_reviews": [rejected_review],
+            }), encoding="utf-8")
+            regenerated = _report()
+            regenerated["key_moments"]["moments"] = [{"moment_id": "new-generated", "time_sec": 80.0}]
+            with patch("app.services.key_moment_editor.EDITORIAL_DIRECTORY", directory):
+                assert_editorial_projection_recoverable("published-one", {"key_moments": {"policy_version": "editorial-curated:v1"}})
+                applied = apply_editorial_key_moments(regenerated, "published-one", source_kind="merged")
+                sidecar = load_editorial_document("published-one")
+        self.assertEqual(applied["moments"], [accepted])
+        self.assertNotIn("old-rejected", {row.get("moment_id") for row in applied["moments"]})
+        self.assertEqual(sidecar["suggested_candidate_reviews"], [rejected_review])
+
+    def test_recovery_promotes_only_the_existing_durable_editorial_list(self) -> None:
+        report = _report()
+        curated = [{"moment_id": "manual-km-1", "time_sec": 12.0, "type": "tactical_note", "public_category": "tactical_note", "headline": "Zachowaj", "team_id": "team-a", "origin": "manual"}]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            canonical = root / "published" / "published-one"; mirror = root / "client-public" / "published-one"
+            canonical.mkdir(parents=True); mirror.mkdir(parents=True)
+            (canonical / "public_report.json").write_text(json.dumps(report), encoding="utf-8")
+            (canonical / "provenance.json").write_text(json.dumps({}), encoding="utf-8")
+            (mirror / "public_report.json").write_text(json.dumps(report), encoding="utf-8")
+            editorial = root / "editorial"; editorial.mkdir()
+            (editorial / "published-one.json").write_text(json.dumps({
+                "schema_version": "1.1.0", "published_id": "published-one", "curated_override": False,
+                "moments": curated, "suggested_candidate_reviews": [{"candidate_id": "rejected", "review_status": "rejected"}],
+            }), encoding="utf-8")
+            with patch("app.services.key_moment_editor.EDITORIAL_DIRECTORY", editorial), patch(
+                "app.services.key_moment_editor.PUBLISHED_MATCHES_DIR", root / "published"
+            ), patch("app.services.key_moment_editor.CLIENT_PUBLIC_MATCHES_DIR", root / "client-public"), patch(
+                "app.services.key_moment_editor.get_published_match", return_value={"public_report": report, "source_kind": "merged"}
+            ):
+                before = load_editorial_document("published-one")
+                recovered = recover_existing_editorial_projection("published-one", expected_revision=before["revision"])
+                restored = load_editorial_document("published-one")
+        self.assertTrue(restored["curated_override"])
+        self.assertEqual(recovered["public_report"]["key_moments"]["moments"], curated)
+        self.assertEqual(restored["suggested_candidate_reviews"][0]["review_status"], "rejected")
 
     def test_invalid_timestamp_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "poza zakresem"):

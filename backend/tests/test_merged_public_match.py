@@ -537,6 +537,64 @@ class MergedPublicMatchTests(unittest.TestCase):
             self.assertEqual(provenance["manifest_digest"], manifest["aggregate_semantic_digest"])
             self.assertEqual(check_merged_projection(merged_id)["status"], "current")
 
+    def test_one_click_source_rebuild_keeps_one_real_maintenance_lock_through_final_refresh(self) -> None:
+        """Regression for #132: the final refresh must not reacquire O_EXCL."""
+
+        import app.services.merged_source_data_rebuild as rebuild
+        from app.services.match_groups import get_match_group
+        from app.services.merged_public_match import get_or_reserve_merged_published_id
+
+        with self._store() as root, patch.object(rebuild, "MATCH_GROUPS_DIR", root / "groups"), patch(
+            "app.services.match_group_external_video.MATCH_GROUPS_DIR", root / "groups"
+        ), patch("app.services.match_group_external_video.CLIENT_PUBLIC_MATCHES_DIR", root / "client-public"), patch(
+            "app.services.key_moment_editor.EDITORIAL_DIRECTORY", root / "editorial"
+        ):
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            merged_id = get_or_reserve_merged_published_id(group_id)
+            approved = [
+                {"moment_id": f"manual-{index}", "time_sec": float(index + 1), "type": "other", "headline": f"Approved {index}", "origin": "manual"}
+                for index in range(21)
+            ]
+            sidecar = root / "editorial" / f"{merged_id}.json"
+            sidecar.parent.mkdir(parents=True)
+            sidecar.write_text(json.dumps({
+                "schema_version": "1.1.0", "published_id": merged_id, "curated_override": True,
+                "moments": approved,
+                "suggested_candidate_reviews": [{"candidate_id": "rejected", "candidate_generation_digest": "before", "review_status": "rejected"}],
+            }), encoding="utf-8")
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            sidecar_before = sidecar.read_bytes()
+            members = get_match_group(group_id)["members"]
+            sources = [{
+                "published_id": row["published_id"],
+                "source_match_id": row["source_match_id"],
+                "classification": "safe_stats_only" if row["published_id"] == "published-two" else "already_current",
+            } for row in members]
+            job = {"job_id": "one-click-real-lock", "group_id": group_id, "merged_published_match_id": merged_id, "status": "queued", "sources": []}
+
+            def rebuild_source(source, _builder, *, progress):
+                progress("publishing_source")
+                if source["published_id"] == "published-two":
+                    _write_source(root, "published-two", "physical-two", duration=400)
+                    return {**source, "result": "rebuilt"}
+                return {**source, "result": "already_current"}
+
+            with patch.object(rebuild, "_preflight", return_value={"status": "ready", "sources": sources}), patch.object(
+                rebuild, "_rebuild_one_source", side_effect=rebuild_source
+            ):
+                result = rebuild._run_job(job, lambda _path: {})
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["merged"]["merged_published_match_id"], merged_id)
+            merged_report = store_get_published_match(merged_id)["public_report"]
+            self.assertEqual(merged_report["match"]["duration_sec"], 1000.0)
+            self.assertEqual(merged_report["key_moments"]["policy_version"], "editorial-curated:v1")
+            self.assertEqual(merged_report["key_moments"]["moments"], approved)
+            self.assertEqual(sidecar.read_bytes(), sidecar_before)
+
     def test_tampered_live_report_reads_as_stale_not_silent(self) -> None:
         from app.services.merged_public_match import check_merged_projection
 

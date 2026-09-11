@@ -177,6 +177,27 @@ def apply_editorial_key_moments(report: Mapping[str, Any], published_id: str, *,
     return _curated_key_moments(report, editorial["moments"], source_kind or _source_kind(published_id))
 
 
+def assert_editorial_projection_recoverable(published_id: str, report: Mapping[str, Any]) -> None:
+    """Fail closed if a known curated projection lost its durable authority.
+
+    A report which has never been editorially curated can safely use newly
+    generated suggestions.  Once the live projection declares itself
+    ``editorial-curated:v1``, however, its sidecar is the operator-owned
+    authority and a missing/disabled sidecar must never silently downgrade it.
+    """
+
+    key_moments = _record(report.get("key_moments"))
+    if key_moments.get("policy_version") != "editorial-curated:v1":
+        return
+    editorial = load_editorial_document(published_id)
+    if not editorial["_exists"] or not editorial.get("curated_override", True):
+        raise KeyMomentEditorError(
+            "key_moment_editorial_recovery_required",
+            "Opublikowane momenty redakcyjne nie mają dostępnego trwałego źródła; przebudowa została zablokowana.",
+            409,
+        )
+
+
 def _editor_dto(row: Mapping[str, Any]) -> dict[str, Any]:
     category = str(row.get("category") or row.get("public_category") or row.get("type") or "other")
     return {
@@ -337,6 +358,45 @@ def save_editorial_document(published_id: str, payload: Mapping[str, Any]) -> di
     moments = _candidate_moments(payload, report, current_rows)
     candidate = _next_document(current, published_id, moments=moments, curated_override=True)
     candidate["revision"] = _revision(candidate)
+    source_kind = _source_kind(published_id)
+    candidate_report = copy.deepcopy(report)
+    candidate_report["key_moments"] = _curated_key_moments(report, moments, source_kind)
+    _promote_projection(published_id, candidate, candidate_report, source_kind)
+    return {**editor_state(published_id), "public_report": candidate_report}
+
+
+def recover_existing_editorial_projection(published_id: str, *, expected_revision: str) -> dict[str, Any]:
+    """Re-enable a durable editorial list after a projection-only downgrade.
+
+    This deliberately accepts no caller-supplied moments.  It can promote only
+    the exact list already persisted in the editorial store, validates that
+    list against the current report, and uses the normal atomic projection
+    promotion shared by editor saves.
+    """
+
+    match = get_published_match(published_id)
+    report = _record(match.get("public_report"))
+    current = load_editorial_document(published_id)
+    if not current["_exists"] or current.get("curated_override", False):
+        raise KeyMomentEditorError(
+            "key_moment_editorial_recovery_unavailable",
+            "Brakuje wyłączonej trwałej listy redakcyjnej do odzyskania.",
+            409,
+        )
+    if expected_revision != current["revision"]:
+        raise KeyMomentEditorError("key_moment_editor_revision_conflict", "Stan momentów zmienił się na serwerze. Odśwież edytor.", 409)
+    # Validate against today’s report contract, but keep the operator’s
+    # persisted rows byte/semantic equivalent rather than normalizing them
+    # through an edit action.
+    _candidate_moments({"moments": current["moments"]}, report, current["moments"])
+    moments = copy.deepcopy(current["moments"])
+    candidate = _next_document(
+        current,
+        published_id,
+        moments=moments,
+        curated_override=True,
+        reviews=copy.deepcopy(current.get("suggested_candidate_reviews") or []),
+    )
     source_kind = _source_kind(published_id)
     candidate_report = copy.deepcopy(report)
     candidate_report["key_moments"] = _curated_key_moments(report, moments, source_kind)

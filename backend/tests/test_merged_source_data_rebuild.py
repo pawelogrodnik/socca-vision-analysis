@@ -80,6 +80,20 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         self.assertEqual(result["classification"], "blocked")
         self.assertEqual(result["blocking_code"], "physical_publication_binding_unproven")
 
+    def test_known_curated_physical_projection_without_sidecar_blocks_source_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            member, patches = self._preflight_patches(Path(temporary), job_snapshot="identity-new")
+            published = {
+                "source_kind": "physical", "source_match_id": "source-one", "package": {},
+                "public_report": {"key_moments": {"policy_version": "editorial-curated:v1", "moments": [{"moment_id": "manual-1"}]}},
+            }
+            with patches[0], patch.object(rebuild, "get_published_match", return_value=published), patch(
+                "app.services.key_moment_editor.EDITORIAL_DIRECTORY", Path(temporary) / "editorial"
+            ):
+                result = rebuild._preflight_source(member)
+        self.assertEqual(result["classification"], "blocked")
+        self.assertEqual(result["blocking_code"], "key_moment_editorial_recovery_required")
+
     def test_missing_review_progress_blocks_before_stats_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             member, patches = self._preflight_patches(Path(temporary), job_snapshot="identity-new")
@@ -89,6 +103,29 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
                 result = rebuild._preflight_source(member)
         self.assertEqual(result["classification"], "blocked")
         self.assertEqual(result["blocking_code"], "review_progress_missing")
+
+    def test_active_reviewed_render_blocks_before_any_stats_or_publication_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            member, patches = self._preflight_patches(Path(temporary), job_snapshot="identity-new")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patch.object(
+                rebuild, "reviewed_output_status_read_only", return_value={"status": "running"}
+            ):
+                source = rebuild._preflight_source(member)
+        self.assertEqual(source["classification"], "blocked")
+        self.assertEqual(source["blocking_code"], "reviewed_render_in_progress")
+        with patch.object(rebuild, "_group_id_for_merged", return_value="match-group-one"), patch.object(
+            rebuild, "_preflight", return_value={"status": "blocked", "sources": [source], "blocking_reasons": [{"code": "reviewed_render_in_progress"}]}
+        ), patch.object(rebuild, "_rebuild_one_source") as rebuild_one, patch.object(
+            rebuild, "import_match_package"
+        ) as publish, patch.object(rebuild, "_refresh_merged_match_to_latest_locked") as refresh:
+            result = rebuild.run_merged_source_data_rebuild(
+                "published-merged-00000000-0000-4000-8000-000000000001",
+                package_builder=lambda _path: {},
+            )
+        self.assertEqual(result["status"], "blocked")
+        rebuild_one.assert_not_called()
+        publish.assert_not_called()
+        refresh.assert_not_called()
 
     def test_data_provenance_refresh_never_rebinds_visual_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -157,7 +194,7 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
             rebuild, "_preflight", return_value={"status": "ready", "sources": sources}
         ), patch.object(rebuild, "_rebuild_one_source", side_effect=[
             {**sources[0], "result": "rebuilt"}, {**sources[1], "result": "already_current"},
-        ]) as rebuild_one, patch.object(rebuild, "refresh_merged_match_to_latest", return_value={"status": "refreshed"}) as refresh, patch.object(
+        ]) as rebuild_one, patch.object(rebuild, "_refresh_merged_match_to_latest_locked", return_value={"status": "refreshed"}) as refresh, patch.object(
             rebuild, "_write_job", side_effect=lambda _group, value: writes.append(dict(value))
         ):
             result = rebuild._run_job(job, lambda _path: {})
@@ -171,7 +208,7 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
     def test_blocked_preflight_does_not_rebuild_or_refresh(self) -> None:
         with patch.object(rebuild, "_group_id_for_merged", return_value="match-group-one"), patch.object(
             rebuild, "_preflight", return_value={"status": "blocked", "sources": [], "blocking_reasons": [{"code": "blocked"}]}
-        ), patch.object(rebuild, "refresh_merged_match_to_latest") as refresh:
+        ), patch.object(rebuild, "_refresh_merged_match_to_latest_locked") as refresh:
             result = rebuild.run_merged_source_data_rebuild("published-merged-00000000-0000-4000-8000-000000000001", package_builder=lambda _path: {})
         self.assertEqual(result["status"], "blocked")
         refresh.assert_not_called()
@@ -188,7 +225,7 @@ class MergedSourceDataRebuildTests(unittest.TestCase):
         with patch.object(rebuild, "reserve_match_group_video_idle", return_value=nullcontext()), patch.object(
             rebuild, "_preflight", return_value={"status": "ready", "sources": [source]}
         ), patch.object(rebuild, "_rebuild_one_source", side_effect=ValueError("package staging failed")), patch.object(
-            rebuild, "refresh_merged_match_to_latest"
+            rebuild, "_refresh_merged_match_to_latest_locked"
         ) as refresh, patch.object(rebuild, "_write_job"):
             result = rebuild._run_job(job, lambda _path: {})
         self.assertEqual(result["status"], "failed")

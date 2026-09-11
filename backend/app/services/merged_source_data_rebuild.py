@@ -21,6 +21,7 @@ from app.config import MATCHES_DIR
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_output_jobs import JOB_FILENAME as REVIEWED_VIDEO_JOB_FILENAME
+from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_video import reviewed_source_video_path
@@ -28,9 +29,9 @@ from app.services.json_publish_store import get_published_match, import_match_pa
 from app.services.match_group_video import reserve_match_group_video_idle
 from app.services.match_groups import MATCH_GROUPS_DIR, MatchGroupError, get_match_group
 from app.services.merged_public_match import (
+    _refresh_merged_match_to_latest_locked,
     group_id_for_merged_published_id,
     is_merged_published_id,
-    refresh_merged_match_to_latest,
 )
 from app.services.review_workflow_state import reviewed_stats_artifact_is_current
 from app.services.reviewed_sprint_policy import reviewed_sprint_policy_matches_artifact
@@ -193,7 +194,7 @@ def _run_job(job: dict[str, Any], package_builder: PackageBuilder) -> dict[str, 
                 running["sources"] = [*results, *preflight["sources"][index:]]
                 _write_job(group_id, running)
             _update_phase(group_id, running, "refreshing_merged", len(preflight["sources"]), len(preflight["sources"]), None)
-            refreshed = refresh_merged_match_to_latest(group_id)
+            refreshed = _refresh_merged_match_to_latest_locked(group_id)
             completed = {
                 **running,
                 "status": "completed",
@@ -256,6 +257,21 @@ def _preflight(group_id: str, merged_id: str) -> dict[str, Any]:
     group = get_match_group(group_id)
     sources = [_preflight_source(member) for member in group.get("members") or [] if isinstance(member, dict)]
     blocked = [source for source in sources if source["classification"] == "blocked"]
+    editorial_blocking_reason: dict[str, str] | None = None
+    try:
+        from app.services.key_moment_editor import (
+            KeyMomentEditorError,
+            assert_editorial_projection_recoverable,
+        )
+
+        existing = get_published_match(merged_id)
+        report = existing.get("public_report") if isinstance(existing.get("public_report"), dict) else {}
+        assert_editorial_projection_recoverable(merged_id, report)
+    except KeyMomentEditorError as error:
+        editorial_blocking_reason = {"code": error.code, "detail": error.detail}
+    except KeyError:
+        # A missing projection may be created by the canonical refresh path.
+        pass
     if not sources:
         return {
             "status": "blocked",
@@ -266,7 +282,7 @@ def _preflight(group_id: str, merged_id: str) -> dict[str, Any]:
             "blocking_reasons": [{"code": "group_sources_missing", "detail": "The merged group has no ordered physical sources."}],
         }
     return {
-        "status": "blocked" if blocked else "ready",
+        "status": "blocked" if blocked or editorial_blocking_reason else "ready",
         "merged_published_match_id": merged_id,
         "group_id": group_id,
         "source_count": len(sources),
@@ -274,7 +290,7 @@ def _preflight(group_id: str, merged_id: str) -> dict[str, Any]:
         "blocking_reasons": [
             {"published_id": source["published_id"], "source_match_id": source["source_match_id"], "code": source.get("blocking_code"), "detail": source.get("blocking_reason")}
             for source in blocked
-        ],
+        ] + ([editorial_blocking_reason] if editorial_blocking_reason else []),
     }
 
 
@@ -299,6 +315,16 @@ def _preflight_source(member: dict[str, Any]) -> dict[str, Any]:
         return _blocked(result, "physical_publication_required", "Merged publications cannot be a source of stats-only maintenance.")
     if str(published.get("source_match_id") or "") != source_match_id:
         return _blocked(result, "physical_publication_binding_unproven", "Published source identity does not match the group member.")
+    try:
+        from app.services.key_moment_editor import (
+            KeyMomentEditorError,
+            assert_editorial_projection_recoverable,
+        )
+
+        published_report = published.get("public_report") if isinstance(published.get("public_report"), dict) else {}
+        assert_editorial_projection_recoverable(published_id, published_report)
+    except KeyMomentEditorError as error:
+        return _blocked(result, error.code, error.detail)
     match_path = MATCHES_DIR / source_match_id
     if not match_path.is_dir():
         return _blocked(result, "local_source_missing", "Local source match is missing.")
@@ -331,6 +357,9 @@ def _preflight_source(member: dict[str, Any]) -> dict[str, Any]:
         return _blocked(result, "review_identity_incomplete", "Required Reviewed Identity work remains unresolved.")
     if readiness.get("allows_finalize") is not True:
         return _blocked(result, "review_identity_incomplete", "Required Reviewed Identity work remains unresolved.")
+    render_status = reviewed_output_status_read_only(match_path, snapshot)
+    if render_status.get("status") in {"queued", "running"}:
+        return _blocked(result, "reviewed_render_in_progress", "Reviewed render jest uruchomiony; poczekaj na jego zakończenie przed przebudową danych.")
     job = _load(match_path / REVIEWED_VIDEO_JOB_FILENAME)
     try:
         # The cache-filling digest helper belongs to rendering. Maintenance
