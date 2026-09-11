@@ -94,6 +94,46 @@ class ShotCandidateFailureAnalysisTests(unittest.TestCase):
         self.assertEqual(evidence["raw_prediction_count"], 0)
         self.assertEqual(_launch_failure_category(evidence)["primary_category"], "RAW_DETECTOR_MISS")
 
+    def test_low_confidence_accepted_ball_selected_by_canonical_track_is_not_detector_miss(self) -> None:
+        evidence = _raw_ball_evidence(
+            {"frames": [{
+                "frame": 300,
+                "time_sec": 10.0,
+                "raw_predictions": 1,
+                "candidates": [{"candidate_id": "c00", "frame": 300, "time_sec": 10.0, "confidence": 0.20}],
+                "rejected_candidates": [],
+            }]},
+            10.0,
+            [{"frame": 300, "time_sec": 10.0, "position_m": [25.0, 35.0], "source": "detected", "confidence": 0.20, "candidate_id": "c00"}],
+        )
+
+        classification = _launch_failure_category(evidence)
+        self.assertEqual(classification["primary_category"], "BALL_CONTINUITY_FAILURE")
+        self.assertEqual(classification["diagnostic_reason"], "low_confidence_launch_evidence")
+
+    def test_low_confidence_candidate_with_other_same_frame_selection_is_selection_failure(self) -> None:
+        evidence = _raw_ball_evidence(
+            {"frames": [{
+                "frame": 300,
+                "time_sec": 10.0,
+                "raw_predictions": 2,
+                "candidates": [
+                    {"candidate_id": "c00", "frame": 300, "time_sec": 10.0, "confidence": 0.20},
+                    {"candidate_id": "c01", "frame": 300, "time_sec": 10.0, "confidence": 0.80},
+                ],
+                "rejected_candidates": [],
+            }]},
+            10.0,
+            [{"frame": 300, "time_sec": 10.0, "position_m": [25.0, 35.0], "source": "detected", "confidence": 0.80, "candidate_id": "c01"}],
+        )
+
+        self.assertEqual(_launch_failure_category(evidence)["primary_category"], "BALL_TRACK_SELECTION_FAILURE")
+
+    def test_no_raw_prediction_near_launch_is_detector_miss(self) -> None:
+        evidence = _raw_ball_evidence({"frames": []}, 10.0, [])
+
+        self.assertEqual(_launch_failure_category(evidence)["primary_category"], "RAW_DETECTOR_MISS")
+
     def test_same_frame_multiple_balls_preserves_candidates_and_selected_identity(self) -> None:
         evidence = _raw_ball_evidence(
             {"frames": [{

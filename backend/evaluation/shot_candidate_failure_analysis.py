@@ -211,6 +211,16 @@ def _raw_ball_evidence(
             "raw_predictions": frame.get("raw_predictions"),
             "accepted_candidates": [_candidate_trace(row) for row in accepted_rows],
             "accepted_candidate_ids": [row.get("candidate_id") for row in accepted_rows],
+            "trusted_accepted_candidate_ids": [
+                row.get("candidate_id")
+                for row in accepted_rows
+                if _number(row.get("confidence"), 0.0) >= shot_candidates.MIN_BALL_CONFIDENCE
+            ],
+            "low_confidence_accepted_candidate_ids": [
+                row.get("candidate_id")
+                for row in accepted_rows
+                if _number(row.get("confidence"), 0.0) < shot_candidates.MIN_BALL_CONFIDENCE
+            ],
             "rejected_candidates": [_candidate_trace(row) for row in rejected_rows],
             "canonical_selected": _position_trace(selected, _number(frame.get("time_sec"), source_time)),
         })
@@ -353,17 +363,65 @@ def _path_failure_category(path: Mapping[str, Any]) -> dict[str, Any]:
 
 def _launch_failure_category(raw_evidence: Mapping[str, Any]) -> dict[str, Any]:
     raw_count = int(_number(raw_evidence.get("raw_prediction_count"), 0.0))
+    accepted = int(_number(raw_evidence.get("accepted_candidate_count"), 0.0))
     trusted_accepted = int(_number(raw_evidence.get("trusted_accepted_candidate_count"), 0.0))
     rejected = int(_number(raw_evidence.get("rejected_candidate_count"), 0.0))
     if raw_count == 0:
-        return {"primary_category": "RAW_DETECTOR_MISS", "first_failing_stage": "launch_selection", "contributing_categories": []}
-    if trusted_accepted and _has_same_frame_selection_divergence(raw_evidence):
-        return {"primary_category": "BALL_TRACK_SELECTION_FAILURE", "first_failing_stage": "launch_selection", "contributing_categories": []}
+        return _launch_classification("RAW_DETECTOR_MISS", "no_raw_launch_evidence")
+    if not accepted:
+        return _launch_classification("BALL_CANDIDATE_FILTERED", "launch_candidate_filtered")
+    selection_states = _low_confidence_selection_states(raw_evidence)
+    if trusted_accepted == 0:
+        if rejected or len(selection_states) > 1:
+            return _launch_classification("MIXED", "contradictory_launch_evidence")
+        if selection_states == {"selected_low_confidence_candidate"}:
+            return _launch_classification("BALL_CONTINUITY_FAILURE", "low_confidence_launch_evidence")
+        if selection_states == {"selected_another_candidate"}:
+            return _launch_classification("BALL_TRACK_SELECTION_FAILURE", "low_confidence_candidate_not_selected")
+        if selection_states == {"canonical_selection_missing"}:
+            return _launch_classification("BALL_TRACK_SELECTION_FAILURE", "low_confidence_candidate_without_canonical_selection")
+        return _launch_classification("MIXED", "low_confidence_candidate_identity_unavailable")
     if rejected:
-        return {"primary_category": "BALL_CANDIDATE_FILTERED", "first_failing_stage": "launch_selection", "contributing_categories": []}
+        return _launch_classification("MIXED", "accepted_and_filtered_launch_evidence")
+    if _has_same_frame_selection_divergence(raw_evidence):
+        return _launch_classification("BALL_TRACK_SELECTION_FAILURE", "simultaneous_ball_candidate_selection")
     if trusted_accepted:
-        return {"primary_category": "BALL_TRACK_SELECTION_FAILURE", "first_failing_stage": "launch_selection", "contributing_categories": []}
-    return {"primary_category": "RAW_DETECTOR_MISS", "first_failing_stage": "launch_selection", "contributing_categories": []}
+        return _launch_classification("BALL_TRACK_SELECTION_FAILURE", "accepted_launch_candidate_not_usable_by_canonical_track")
+    return _launch_classification("MIXED", "unclassified_launch_evidence")
+
+
+def _launch_classification(primary_category: str, diagnostic_reason: str) -> dict[str, Any]:
+    return {
+        "primary_category": primary_category,
+        "first_failing_stage": "launch_selection",
+        "contributing_categories": [],
+        "diagnostic_reason": diagnostic_reason,
+    }
+
+
+def _low_confidence_selection_states(raw_evidence: Mapping[str, Any]) -> set[str]:
+    """Relate low-confidence accepted detections to canonical selection per frame."""
+
+    states: set[str] = set()
+    for frame in raw_evidence.get("frames") or []:
+        if not isinstance(frame, Mapping):
+            continue
+        low_confidence_ids = {
+            str(candidate_id)
+            for candidate_id in frame.get("low_confidence_accepted_candidate_ids") or []
+            if candidate_id
+        }
+        if not low_confidence_ids:
+            continue
+        selected = _mapping(frame.get("canonical_selected"))
+        selected_id = _text(selected.get("candidate_id"))
+        if selected_id is None:
+            states.add("canonical_selection_missing")
+        elif selected_id in low_confidence_ids:
+            states.add("selected_low_confidence_candidate")
+        else:
+            states.add("selected_another_candidate")
+    return states
 
 
 def _has_same_frame_selection_divergence(raw_evidence: Mapping[str, Any]) -> bool:
