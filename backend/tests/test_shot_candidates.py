@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.services.shot_candidates import (
     POLICY_VERSION,
+    PREVIOUS_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -167,6 +168,47 @@ class ShotCandidatesTests(unittest.TestCase):
         }
         document = candidates([event("gap", start=0.0, end=1.0)], [], ball_document=ball_document)
 
+        self.assertEqual(document["candidates"], [])
+
+    def test_strong_short_goalward_prefix_before_explicit_boundary_is_a_candidate(self) -> None:
+        document = candidates(
+            [event("short-prefix", start=0.0, end=1.0)],
+            [(1.0, 15.0, 14.5), (1.1, 15.0, 13.85), (1.2, 15.0, 13.2)],
+            unknown_at=1.3,
+        )
+
+        self.assertEqual(len(document["candidates"]), 1)
+        self.assertIn("strong_trusted_prefix_before_boundary", document["candidates"][0]["reasons"])
+
+    def test_short_fast_forward_pass_before_boundary_is_not_a_candidate(self) -> None:
+        document = candidates(
+            [event("short-pass", start=0.0, end=1.0)],
+            [(1.0, 15.0, 31.0), (1.1, 15.0, 30.3), (1.2, 15.0, 29.6)],
+            unknown_at=1.3,
+        )
+
+        self.assertEqual(document["candidates"], [])
+
+    def test_short_goalward_prefix_to_a_teammate_remains_suppressed(self) -> None:
+        document = candidates(
+            [event("short-pass", start=0.0, end=1.0), event("receiver", start=1.2, end=1.25, player="A02")],
+            [(1.0, 15.0, 14.5), (1.1, 15.0, 13.85), (1.2, 15.0, 13.2)],
+            unknown_at=1.3,
+        )
+
+        self.assertEqual(document["candidates"], [])
+        self.assertGreater(document["summary"]["skipped_evidence_reasons"]["same_team_receiver_before_goal"], 0)
+
+    def test_v1_reproduction_does_not_apply_the_v2_short_prefix_path(self) -> None:
+        document = build_shot_candidates_document(
+            {"events": [event("short-prefix", start=0.0, end=1.0)]},
+            ball_rows([(1.0, 15.0, 14.5), (1.1, 15.0, 13.85), (1.2, 15.0, 13.2)], unknown_at=1.3),
+            PHASE_Y_MIN,
+            source_match_id="m1",
+            policy_version=PREVIOUS_POLICY_VERSION,
+        )
+
+        self.assertEqual(document["policy_version"], PREVIOUS_POLICY_VERSION)
         self.assertEqual(document["candidates"], [])
 
     def test_trusted_interpolated_ball_rows_remain_continuous_trajectory(self) -> None:
