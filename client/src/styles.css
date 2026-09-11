@@ -3884,6 +3884,78 @@ summary:focus-visible {
   color: #fbbf24;
 }
 
+.redesign-moments-panel .key-moment-suggestions {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.redesign-moments-panel .key-moment-suggestions > h3 {
+  margin: 0;
+  padding: 14px 12px;
+  border-bottom: 1px solid #1d405b;
+  color: #a9c0d0;
+  font-size: .9rem;
+  text-align: center;
+}
+
+.redesign-moments-panel .suggested-key-moment-card {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid #1d405b;
+  border-radius: 0;
+  background: transparent;
+}
+
+.redesign-moments-panel .suggested-key-moment-card:last-child {
+  border-bottom: 0;
+}
+
+.redesign-moments-panel .suggested-key-moment-card time {
+  white-space: nowrap;
+}
+
+.redesign-moments-panel .suggested-key-moment-card p {
+  margin: 3px 0 0;
+}
+
+.key-moment-action-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.redesign-moment-row .key-moment-action-button {
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #2c607c;
+  border-radius: 10px;
+  background: #0c3150;
+  color: #dff5ff;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.redesign-moment-row .key-moment-action-button.accept {
+  color: #86efac;
+}
+
+.redesign-moment-row .key-moment-action-button.reject,
+.redesign-moment-row .key-moment-action-button.danger {
+  color: #fda4af;
+}
+
 @media (max-width: 720px) {
   .suggested-key-moment-form { grid-template-columns: 1fr; }
+  .redesign-moment-row .key-moment-action-list {
+    grid-column: 2;
+    flex-direction: row;
+    justify-self: start;
+  }
 }
