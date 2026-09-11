@@ -1,0 +1,486 @@
+{
+  "schema_version": "shot-goldset:v1",
+  "scope": "evaluation_only",
+  "source": "GitHub issue #133: Frozen manual shot goldset v1",
+  "match_id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
+  "timestamp_semantics": "Each timestamp is the manually reviewed visible shot/contact anchor. All anchors marked with ~ in the source are approximate, not frame-perfect.",
+  "outcome_mapping": {
+    "source_saved": "on_target",
+    "shots_on_target": [
+      "goal",
+      "on_target"
+    ]
+  },
+  "shots": [
+    {
+      "id": "shot-001",
+      "timestamp_sec": 51,
+      "timestamp_display": "00:51~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał ponad bramką"
+    },
+    {
+      "id": "shot-002",
+      "timestamp_sec": 124,
+      "timestamp_display": "02:04~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B01",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał ponad bramką"
+    },
+    {
+      "id": "shot-003",
+      "timestamp_sec": 140,
+      "timestamp_display": "02:20~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "obroniony nogą przez bramkarza"
+    },
+    {
+      "id": "shot-004",
+      "timestamp_sec": 223,
+      "timestamp_display": "03:43~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B03",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał niecelny"
+    },
+    {
+      "id": "shot-005",
+      "timestamp_sec": 431,
+      "timestamp_display": "07:11~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "obroniony przez bramkarza Corgi Mati GK"
+    },
+    {
+      "id": "shot-006",
+      "timestamp_sec": 460,
+      "timestamp_display": "07:40~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B04",
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał zablokowany"
+    },
+    {
+      "id": "shot-007",
+      "timestamp_sec": 589,
+      "timestamp_display": "09:49~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Krzysiek",
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "obroniony przez bramkarza"
+    },
+    {
+      "id": "shot-008",
+      "timestamp_sec": 595,
+      "timestamp_display": "09:55~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Krzysiek",
+      "outcome": "goal",
+      "confidence": "operator_confirmed",
+      "operator_notes": "gol po rykoszecie od obrońcy Verisk"
+    },
+    {
+      "id": "shot-009",
+      "timestamp_sec": 654,
+      "timestamp_display": "10:54~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B04",
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "zablokowany przez Paweł/Andrzej"
+    },
+    {
+      "id": "shot-010",
+      "timestamp_sec": 818,
+      "timestamp_display": "13:38~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Paweł",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "bardzo niecelny strzał po wrzutce z autu"
+    },
+    {
+      "id": "shot-011",
+      "timestamp_sec": 891,
+      "timestamp_display": "14:51~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Mateusz",
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "broni bramkarz Verisk"
+    },
+    {
+      "id": "shot-012",
+      "timestamp_sec": 975,
+      "timestamp_display": "16:15~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Krzysiek",
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "obrona bramkarza Verisk"
+    },
+    {
+      "id": "shot-013",
+      "timestamp_sec": 1024,
+      "timestamp_display": "17:04~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Krzysiek",
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "zablokowany przez zawodnika Verisk"
+    },
+    {
+      "id": "shot-014",
+      "timestamp_sec": 1052,
+      "timestamp_display": "17:32~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Przemek",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "bardzo niecelny ponad bramką"
+    },
+    {
+      "id": "shot-015",
+      "timestamp_sec": 1093,
+      "timestamp_display": "18:13~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B02",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "niecelny"
+    },
+    {
+      "id": "shot-016",
+      "timestamp_sec": 1132,
+      "timestamp_display": "18:52~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Krzysiek",
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "zablokowany przez obrońcę Verisk"
+    },
+    {
+      "id": "shot-017",
+      "timestamp_sec": 1234,
+      "timestamp_display": "20:34~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Mateusz",
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "obrona bramkarza"
+    },
+    {
+      "id": "shot-018",
+      "timestamp_sec": 1368,
+      "timestamp_display": "22:48~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał zablokowany"
+    },
+    {
+      "id": "shot-019",
+      "timestamp_sec": 1401,
+      "timestamp_display": "23:21~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B07",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał niecelny"
+    },
+    {
+      "id": "shot-020",
+      "timestamp_sec": 1455,
+      "timestamp_display": "24:15~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "zablokowany przez obrońcę Corgi"
+    },
+    {
+      "id": "shot-021",
+      "timestamp_sec": 1542,
+      "timestamp_display": "25:42~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Paweł",
+      "outcome": "goal",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał z bliska po podaniu od Romana; gol na 2:0 dla Corgi"
+    },
+    {
+      "id": "shot-022",
+      "timestamp_sec": 1563,
+      "timestamp_display": "26:03~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B01",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "niecelny"
+    },
+    {
+      "id": "shot-023",
+      "timestamp_sec": 1716,
+      "timestamp_display": "28:36~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B05",
+      "outcome": "goal",
+      "confidence": "operator_confirmed",
+      "operator_notes": "gol na 2:1"
+    },
+    {
+      "id": "shot-024",
+      "timestamp_sec": 1785,
+      "timestamp_display": "29:45~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "blocked",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał z rzutu wolnego w mur"
+    },
+    {
+      "id": "shot-025",
+      "timestamp_sec": 1787,
+      "timestamp_display": "29:47~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "z odbitej piłki strzał z pierwszej piłki, obroniony przez Mati GK"
+    },
+    {
+      "id": "shot-026",
+      "timestamp_sec": 1792,
+      "timestamp_display": "29:52~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Mateusz",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "ponad bramką"
+    },
+    {
+      "id": "shot-027",
+      "timestamp_sec": 1834,
+      "timestamp_display": "30:34~",
+      "timestamp_precision": "approximate",
+      "team": "Corgi",
+      "player": "Patryk",
+      "outcome": "on_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "obrona bramkarza"
+    },
+    {
+      "id": "shot-028",
+      "timestamp_sec": 1930,
+      "timestamp_display": "32:10~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B08",
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "strzał z daleka, niecelny"
+    },
+    {
+      "id": "shot-029",
+      "timestamp_sec": 2010,
+      "timestamp_display": "33:30~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": null,
+      "outcome": "off_target",
+      "confidence": "operator_confirmed",
+      "operator_notes": "niecelny"
+    },
+    {
+      "id": "shot-030",
+      "timestamp_sec": 2043,
+      "timestamp_display": "34:03~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B13",
+      "outcome": "goal",
+      "confidence": "operator_confirmed",
+      "operator_notes": "Mati GK próbuje bronić; gol na 2:2; możliwy lekki rykoszet"
+    },
+    {
+      "id": "shot-031",
+      "timestamp_sec": 2099,
+      "timestamp_display": "34:59~",
+      "timestamp_precision": "approximate",
+      "team": "Verisk",
+      "player": "B01",
+      "outcome": "goal",
+      "confidence": "operator_confirmed",
+      "operator_notes": "gol na 2:3"
+    }
+  ],
+  "hard_negatives": [
+    {
+      "id": "hard-negative-001",
+      "timestamp_sec": 188,
+      "timestamp_display": "03:08~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "throw_in_delivery",
+      "operator_notes": "wrzutka z autu, może wyglądać jak strzał, ale nim nie jest"
+    },
+    {
+      "id": "hard-negative-002",
+      "timestamp_sec": 349,
+      "timestamp_display": "05:49~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "long_pass_defensive_delivery",
+      "operator_notes": "wrzutka z obrony na napastnika, może wyglądać jak strzał"
+    },
+    {
+      "id": "hard-negative-003",
+      "timestamp_sec": 414,
+      "timestamp_display": "06:54~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "cross_delivery",
+      "operator_notes": "wrzutka w stronę bramkarza Verisk, może wyglądać jak strzał"
+    },
+    {
+      "id": "hard-negative-004",
+      "timestamp_sec": 520,
+      "timestamp_display": "08:40~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "cross",
+      "operator_notes": "wrzutka Andrzeja; interweniował bramkarz Verisk; to nie był strzał"
+    },
+    {
+      "id": "hard-negative-005",
+      "timestamp_sec": 870,
+      "timestamp_display": "14:30~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "throw_in_delivery",
+      "operator_notes": "wrzutka Piotrka z autu lecąca w stronę bramki"
+    },
+    {
+      "id": "hard-negative-006",
+      "timestamp_sec": 1116,
+      "timestamp_display": "18:36~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "pass",
+      "operator_notes": "niecelne podanie w światło bramki, złapane przez bramkarza Verisk"
+    },
+    {
+      "id": "hard-negative-007",
+      "timestamp_sec": 1186,
+      "timestamp_display": "19:46~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "strong_pass",
+      "operator_notes": "mocne podanie dla napastnika Verisk"
+    },
+    {
+      "id": "hard-negative-008",
+      "timestamp_sec": 1284,
+      "timestamp_display": "21:24~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "defender_to_forward_pass",
+      "operator_notes": "podanie od obrońcy do napastnika Verisk zmierzające w bramkę Corgi"
+    },
+    {
+      "id": "hard-negative-009",
+      "timestamp_sec": 1316,
+      "timestamp_display": "21:56~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "defender_to_forward_pass",
+      "operator_notes": "podobny przypadek: podanie od obrońcy do napastnika Verisk zmierzające w bramkę"
+    },
+    {
+      "id": "hard-negative-010",
+      "timestamp_sec": 1338,
+      "timestamp_display": "22:18~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "defender_to_forward_pass",
+      "operator_notes": "podobny przypadek jak wyżej"
+    },
+    {
+      "id": "hard-negative-011",
+      "timestamp_sec": 1704,
+      "timestamp_display": "28:24~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "long_ball",
+      "operator_notes": "długa piłka w stronę bramki Verisk"
+    },
+    {
+      "id": "hard-negative-012",
+      "timestamp_sec": 1820,
+      "timestamp_display": "30:20~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "defender_to_forward_pass",
+      "operator_notes": "długa piłka od obrońcy do napastnika Verisk"
+    },
+    {
+      "id": "hard-negative-013",
+      "timestamp_sec": 1880,
+      "timestamp_display": "31:20~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "defender_to_forward_pass",
+      "operator_notes": "długa piłka od obrońcy Verisk na napastnika, łapie bramkarz"
+    },
+    {
+      "id": "hard-negative-014",
+      "timestamp_sec": 1903,
+      "timestamp_display": "31:43~",
+      "timestamp_precision": "approximate",
+      "team": null,
+      "negative_type": "long_ball_into_box",
+      "operator_notes": "Przemek gra długą piłkę w pole karne Verisk"
+    }
+  ],
+  "uncertain": []
+}
