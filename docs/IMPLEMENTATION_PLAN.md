@@ -692,7 +692,7 @@ Jako użytkownik chcę zobaczyć coverage piłki: ile czasu wykryta, ile interpo
 
 # Milestone 10 — Possession and simple event candidates
 
-**Status:** `[~]` conservative possession/contact candidate layer is implemented. It generates candidate JSON artifacts and overlay from `ball_tracks.json` + trusted stable player positions, contact-candidate review is auto-classified with optional manual override, and `event_candidates.json` is derived from reviewed contacts. Pass candidates now exist in Milestone 11; full event correction and shot candidates are not implemented yet.
+**Status:** `[~]` conservative possession/contact candidate layer is implemented. It generates candidate JSON artifacts and overlay from `ball_tracks.json` + trusted stable player positions, contact-candidate review is auto-classified with optional manual override, and `event_candidates.json` is derived from reviewed contacts. Pass candidates now exist in Milestone 11. A separate deterministic `shot-candidates:v1` shadow generator now produces operator-only suggestions from canonical contact/ball/phase evidence; it has no review UI, canonical stats or public-report integration yet.
 
 ## Cel
 
