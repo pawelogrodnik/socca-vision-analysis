@@ -24,7 +24,11 @@ export function SuggestedKeyMoments({ state, report, disabled, onPlayAt, onAccep
       const overlap = state?.overlaps?.[candidate.candidate_id];
       const teamName = candidate.team_id ? teams.get(candidate.team_id) || candidate.team_id : 'Nieprzypisana drużyna';
       return <article className='redesign-moment-row suggested-key-moment-card' key={candidate.candidate_id}>
-        <time>{formatKeyMomentTime(candidate.start_time_sec)}–{formatKeyMomentTime(candidate.end_time_sec)}</time>
+        <time className='suggested-key-moment-range'>
+          <span>{formatKeyMomentTime(candidate.start_time_sec)}</span>
+          <span aria-hidden='true'>–</span>
+          <span>{formatKeyMomentTime(candidate.end_time_sec)}</span>
+        </time>
         <div>
           <h3>{teamName}</h3>
           <p>Sygnały: {evidence(candidate)}</p>

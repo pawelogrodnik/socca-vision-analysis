@@ -116,6 +116,9 @@ test('operator starts on Accepted and Suggested playback keeps the one persisten
   assert.equal(view.getByRole('tab', { name: 'Zaakceptowane 2' }).getAttribute('aria-selected'), 'true');
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
   assert.ok(view.getByText('Sugerowane Key Moments (1)'));
+  const range = view.container.querySelector('.suggested-key-moment-range');
+  assert.equal(range?.textContent, '1:40.0–1:52.0');
+  assert.equal(range?.querySelectorAll('span').length, 3);
   fireEvent.click(view.getByRole('button', { name: 'Odtwórz' }));
 
   assert.deepEqual(players[0].seekCalls, [[100, true]]);

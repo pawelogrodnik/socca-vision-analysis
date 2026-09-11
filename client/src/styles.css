@@ -3914,6 +3914,10 @@ summary:focus-visible {
 }
 
 .redesign-moments-panel .suggested-key-moment-card time {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+  gap: 1px;
   white-space: nowrap;
 }
 
