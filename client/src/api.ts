@@ -47,6 +47,8 @@ import type {
   MatchGroupExternalVideoStatus,
   MatchGroupVideoStatus,
   MatchGroupSource,
+  SourceDataRebuildJob,
+  SourceDataRebuildPreflight,
   StablePlayerReviewPayload,
   StablePlayersReviewState,
   Team,
@@ -1044,6 +1046,25 @@ export async function refreshMergedToLatest(publishedMatchId: string): Promise<P
   return request<PublishedMatchDetail>(
     `/api/published/matches/${encodeURIComponent(publishedMatchId)}/refresh-to-latest`,
     { method: 'POST' },
+  );
+}
+
+export async function previewMergedSourceDataRebuild(publishedMatchId: string): Promise<SourceDataRebuildPreflight> {
+  return request<SourceDataRebuildPreflight>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/rebuild-source-data/preview`,
+  );
+}
+
+export async function rebuildMergedSourceData(publishedMatchId: string): Promise<SourceDataRebuildJob> {
+  return request<SourceDataRebuildJob>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/rebuild-source-data`,
+    { method: 'POST' },
+  );
+}
+
+export async function getMergedSourceDataRebuildStatus(publishedMatchId: string): Promise<SourceDataRebuildJob> {
+  return request<SourceDataRebuildJob>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/rebuild-source-data/status`,
   );
 }
 

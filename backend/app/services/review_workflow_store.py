@@ -43,11 +43,24 @@ def current_approval_fingerprint(
         if isinstance(snapshot, dict)
         else _text(snapshot)
     )
+    data_generation = (
+        output_manifest.get("data_generation")
+        if isinstance(output_manifest, dict) and isinstance(output_manifest.get("data_generation"), dict)
+        else {}
+    )
     return {
         "reviewed_identity_fingerprint": identity_digest,
         "reviewed_stats_fingerprint": _digest(stats),
         "reviewed_output_fingerprint": _text((output_job or {}).get("video_digest")),
         "reviewed_output_manifest_fingerprint": _digest(output_manifest),
+        # A stats-only maintenance generation changes stats and the data part
+        # of the output manifest, but not what an operator actually approved
+        # visually. This explicit marker lets approval_is_current retain the
+        # existing visual QA only when the identity and video digest still
+        # match exactly.
+        "reviewed_output_data_maintenance": (
+            "stats_only" if data_generation.get("maintenance") == "stats_only" else "standard"
+        ),
     }
 
 
@@ -57,10 +70,18 @@ def approval_is_current(
 ) -> bool:
     if not approval:
         return False
+    if fingerprints.get("reviewed_output_data_maintenance") == "stats_only":
+        return bool(
+            fingerprints.get("reviewed_identity_fingerprint")
+            and fingerprints.get("reviewed_output_fingerprint")
+            and approval.get("reviewed_identity_fingerprint") == fingerprints.get("reviewed_identity_fingerprint")
+            and approval.get("reviewed_output_fingerprint") == fingerprints.get("reviewed_output_fingerprint")
+        )
     return all(
         fingerprints.get(key)
         and approval.get(key) == fingerprints.get(key)
         for key in fingerprints
+        if key != "reviewed_output_data_maintenance"
     )
 
 

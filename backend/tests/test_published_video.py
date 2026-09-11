@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.published_video import (
@@ -78,6 +79,30 @@ class PublishedVideoTests(unittest.TestCase):
             _write(source / "reviewed_video_manifest.json", {"status": "completed", "path": PUBLISHED_VIDEO_ARTIFACT, "digest": "0" * 64})
             _write(source / "reviewed_output_manifest.json", {"video": {"status": "completed", "digest": "0" * 64}})
             self.assertIsNone(build_publication_video_descriptor(source))
+
+    def test_descriptor_marks_an_old_visual_generation_historical_without_deleting_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            video = source / PUBLISHED_VIDEO_ARTIFACT
+            video.write_bytes(b"final-reviewed-video")
+            digest = _sha256(video)
+            _write(source / "reviewed_video_manifest.json", {
+                "status": "completed", "path": PUBLISHED_VIDEO_ARTIFACT, "digest": digest,
+                "duration_sec": 12.5, "resolution": [1280, 720], "fps": 25,
+                "source_snapshot_digest": "identity-old",
+            })
+            _write(source / "reviewed_output_manifest.json", {
+                "video": {"status": "completed", "path": PUBLISHED_VIDEO_ARTIFACT, "digest": digest},
+            })
+            with patch(
+                "app.services.identity_reviewed_snapshot.get_reviewed_identity_status",
+                return_value={"status": "partial_reviewed", "semantic_digest": "identity-new"},
+            ):
+                descriptor = build_publication_video_descriptor(source)
+        self.assertIsNotNone(descriptor)
+        self.assertEqual(descriptor["visual_generation_status"], "historical")
+        self.assertEqual(descriptor["source_reviewed_identity_digest"], "identity-old")
+        self.assertEqual(descriptor["current_reviewed_identity_digest"], "identity-new")
 
 
 def _write(path: Path, document: dict[str, object]) -> None:

@@ -142,11 +142,16 @@ def reviewed_identity_package_status(package: dict[str, Any]) -> dict[str, Any]:
             "missing": [],
         }
     digest = next(iter(digests))
+    data_generation = manifest.get("data_generation") if isinstance(manifest.get("data_generation"), dict) else {}
+    data_current = (
+        data_generation.get("status") == "current"
+        and data_generation.get("source_identity_digest") == digest
+    )
     if (
         readiness.get("status") != "completed"
         or manifest_stats.get("status") != "completed"
         or manifest_identity.get("status") != "fresh"
-        or manifest.get("stale") is True
+        or (manifest.get("stale") is True and not data_current)
     ):
         return {
             "present": True,

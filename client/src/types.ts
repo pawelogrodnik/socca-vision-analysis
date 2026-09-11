@@ -3232,6 +3232,56 @@ export type MatchGroupRefreshResult = {
   external_video: MatchGroupExternalVideoStatus;
 };
 
+export type SourceDataRebuildVideoDisposition = 'current_preserved' | 'historical_preserved' | 'unavailable';
+
+export type SourceDataRebuildSource = {
+  published_id: string;
+  source_match_id: string;
+  classification: 'already_current' | 'safe_stats_only' | 'blocked';
+  derived_data_status: 'current' | 'stale' | 'unknown';
+  video_disposition: SourceDataRebuildVideoDisposition;
+  qa_disposition: SourceDataRebuildVideoDisposition;
+  reviewed_identity_status?: string;
+  reviewed_identity_digest?: string;
+  review_video_identity_digest?: string;
+  blocking_code?: string;
+  blocking_reason?: string;
+  result?: 'rebuilt' | 'already_current';
+};
+
+export type SourceDataRebuildPreflight = {
+  status: 'ready' | 'blocked';
+  merged_published_match_id: string;
+  group_id: string;
+  source_count: number;
+  sources: SourceDataRebuildSource[];
+  blocking_reasons: Array<{
+    published_id: string;
+    source_match_id: string;
+    code: string;
+    detail: string;
+  }>;
+};
+
+export type SourceDataRebuildJob = {
+  status: 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'blocked';
+  merged_published_match_id: string;
+  group_id: string;
+  preflight?: SourceDataRebuildPreflight;
+  sources?: SourceDataRebuildSource[];
+  progress?: {
+    phase: 'preflight' | 'building_stats' | 'building_report' | 'publishing_source' | 'refreshing_merged' | 'completed' | 'failed' | 'already_current' | string;
+    source_index: number;
+    source_total: number;
+    source_match_id?: string | null;
+    published_id?: string | null;
+    processed_units?: number;
+    total_units?: number;
+  };
+  failure?: { code: string; detail: string; published_id?: string };
+  merged?: { status: 'refreshed' | 'current'; merged_published_match_id: string; group_id: string };
+};
+
 export type MatchGroupReportResponse = {
   report: AggregatePublicMatchReport;
   validation: MatchGroupCompatibility;

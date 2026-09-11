@@ -577,6 +577,12 @@ def _validated_video_inputs(group: dict[str, Any], *, verify_content: bool) -> l
         )
         if video is None:
             raise MatchGroupVideoError("unavailable_source_video", "A selected publication has no proven final reviewed video.", member=published_id)
+        if str(video.get("visual_generation_status") or "current") != "current":
+            raise MatchGroupVideoError(
+                "source_review_video_historical",
+                "A selected publication keeps only a historical Review-video generation.",
+                member=published_id,
+            )
         path = source_dir / PUBLISHED_VIDEO_ARTIFACT
         logical_start, logical_end = float(member.get("logical_start_sec") or 0), float(member.get("logical_end_sec") or 0)
         if abs(float(video.get("duration_sec") or 0) - (logical_end - logical_start)) > VIDEO_DURATION_TOLERANCE_SEC:

@@ -50,6 +50,26 @@ def build_publication_video_descriptor(match_path: Path) -> dict[str, Any] | Non
     resolution = rendered.get("resolution") if isinstance(rendered.get("resolution"), list) else []
     if len(resolution) != 2 or not all(isinstance(value, (int, float)) for value in resolution):
         return None
+    # A stats-only refresh may legitimately advance the canonical Reviewed
+    # Identity without rerendering this expensive visual artifact.  Keep the
+    # immutable video available as historical provenance, but never let a
+    # consumer mistake it for a current visual generation.
+    current_identity_digest = ""
+    try:
+        from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
+
+        current_identity = get_reviewed_identity_status(match_path)
+        if current_identity.get("status") not in {"missing", "stale", "blocked"}:
+            current_identity_digest = str(current_identity.get("semantic_digest") or "")
+    except (OSError, ValueError):
+        # Publication remains fail-closed for the visual-current claim below.
+        current_identity_digest = ""
+    source_identity_digest = str(rendered.get("source_snapshot_digest") or "")
+    visual_generation_status = (
+        "current"
+        if current_identity_digest and source_identity_digest == current_identity_digest
+        else "historical"
+    )
     descriptor = {
         "schema_version": PUBLISHED_VIDEO_SCHEMA_VERSION,
         "status": "available",
@@ -61,8 +81,10 @@ def build_publication_video_descriptor(match_path: Path) -> dict[str, Any] | Non
         "fps": float(rendered.get("fps") or 0),
         "codec": "h264",
         "pix_fmt": "yuv420p",
-        "source_reviewed_identity_digest": str(rendered.get("source_snapshot_digest") or ""),
+        "source_reviewed_identity_digest": source_identity_digest,
         "source_review_scope_digest": str(rendered.get("source_review_scope_digest") or ""),
+        "visual_generation_status": visual_generation_status,
+        "current_reviewed_identity_digest": current_identity_digest or None,
     }
     if descriptor["duration_sec"] <= 0 or descriptor["width"] <= 0 or descriptor["height"] <= 0 or descriptor["fps"] <= 0:
         return None

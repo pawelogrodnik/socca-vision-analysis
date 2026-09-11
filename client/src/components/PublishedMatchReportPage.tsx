@@ -133,6 +133,7 @@ export function PublishedMatchReportPage() {
           mergedId={matchId}
           report={publicReport}
           keyMomentEditorAllowed={Boolean(keyMomentEditor?.key_moment_editor_allowed)}
+          devAllowed={devPresentation}
           onEditKeyMoments={() => setKeyMomentEditorOpen(true)}
           onLocalVideoTimeGetter={captureLocalVideoTimeGetter}
           onReportUpdated={(updated, nextReport) => {
