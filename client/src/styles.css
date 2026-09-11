@@ -169,14 +169,18 @@ a { color: #93c5fd; }
 .redesigned-report .team-shape-section .chart-filter-button.active, .redesigned-report .player-workload-card .chart-filter-button.active { border-color: #48ead0; background: #1fd1b3; color: #03251f; }
 .redesigned-report .team-shape-section .team-shape-pitch { min-height: 260px; }
 .redesigned-report .player-workload-card h2 + .muted { display: none; }
+.redesigned-report .redesign-workload-card .chart-filter-button { padding: 6px 9px; font-size: .8rem; font-weight: 600; line-height: 1.2; }
 .redesigned-report .player-workload-notes { color: #a9c0d0; font-size: .8rem; }
 .redesign-workload-legend { display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: #a9c0d0; font-size: .75rem; }
 .redesign-workload-legend i { width: 22px; height: 10px; border-radius: 3px; }
 .redesign-workload-legend i:nth-of-type(1) { background: #ed5b4c; }.redesign-workload-legend i:nth-of-type(2) { background: #f5a742; }.redesign-workload-legend i:nth-of-type(3) { background: #d9e83b; }.redesign-workload-legend i:nth-of-type(4) { background: #2fcf85; }
-.redesigned-report .redesign-workload-card .workload-matrix td.workload-measured { background: hsl(var(--redesign-workload-hue) 78% 45%); color: #031426; font-weight: 800; }
+.redesigned-report .redesign-workload-card .workload-matrix { font-size: .8rem; }
+.redesigned-report .redesign-workload-card .workload-matrix thead th { font-size: .75rem; font-weight: 650; }
+.redesigned-report .redesign-workload-card .workload-matrix tbody th { font-size: .82rem; font-weight: 650; }
+.redesigned-report .redesign-workload-card .workload-matrix td.workload-measured { background: hsl(var(--redesign-workload-hue) 78% 45%); color: #031426; font-weight: 650; }
 .redesigned-report .redesign-workload-card .workload-matrix td.workload-unavailable, .redesigned-report .redesign-workload-card .workload-matrix td.workload-evidence-cell { background: #172536; color: #9eb1c0; }
 .redesigned-report .redesign-workload-card .workload-matrix tr.workload-goalkeeper-row > th { color: #9eb1c0; }
-.redesigned-report .redesign-workload-card .workload-matrix td.workload-goalkeeper-cell { background: #172536; color: #9eb1c0; font-weight: 700; }
+.redesigned-report .redesign-workload-card .workload-matrix td.workload-goalkeeper-cell { background: #172536; color: #9eb1c0; font-weight: 600; }
 .redesigned-report .redesign-workload-card .workload-matrix { border-collapse: separate; border-spacing: 6px; }
 .redesigned-report .redesign-workload-card .workload-matrix th, .redesigned-report .redesign-workload-card .workload-matrix td { border: 0; }
 .redesigned-report .redesign-workload-card .workload-matrix td { border-radius: 6px; background-clip: padding-box; }
