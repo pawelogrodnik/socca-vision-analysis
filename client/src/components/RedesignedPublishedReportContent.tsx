@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -38,6 +38,7 @@ type Props = {
   onSaveEditor?: (draft: { expected_revision: string; moments: KeyMomentEditorialMoment[] }) => Promise<KeyMomentEditorState>;
   onAcceptSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; moment: KeyMomentEditorialMoment }) => Promise<KeyMomentEditorState>;
   onRejectSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string }) => Promise<KeyMomentEditorState>;
+  sourceDataRebuildPanel?: ReactNode;
 };
 
 type ComparisonRow = {
@@ -213,7 +214,7 @@ function TeamComparison({ report }: { report: PublicMatchReport }) {
   );
 }
 
-export function RedesignedPublishedReportContent({ report, externalVideo, externalVideoLoading = false, editorState, onSaveEditor, onAcceptSuggestion, onRejectSuggestion }: Props) {
+export function RedesignedPublishedReportContent({ report, externalVideo, externalVideoLoading = false, editorState, onSaveEditor, onAcceptSuggestion, onRejectSuggestion, sourceDataRebuildPanel }: Props) {
   const teamOptions = report.teams.map((team, index) => ({ key: publicReportTeamKey(team, index), team }));
   const [selectedTeamKey, setSelectedTeamKey] = useState<string | null>(teamOptions[0]?.key || null);
   const selectedTeam = teamOptions.find((item) => item.key === selectedTeamKey)?.team || teamOptions[0]?.team;
@@ -224,6 +225,7 @@ export function RedesignedPublishedReportContent({ report, externalVideo, extern
     <div className='redesigned-report'>
       <Hero report={report} />
       <div className='redesigned-report-content'>
+        {sourceDataRebuildPanel}
         <RedesignedReportVideoMoments report={report} externalVideo={externalVideo} externalVideoLoading={externalVideoLoading} editorState={editorState} onSaveEditor={onSaveEditor} onAcceptSuggestion={onAcceptSuggestion} onRejectSuggestion={onRejectSuggestion} />
         <MatchFlow report={report} />
         <TeamComparison report={report} />

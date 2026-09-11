@@ -10,7 +10,8 @@ import {
   rejectKeyMomentSuggestion,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport } from '../types';
+import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, PublishedMatchDetail } from '../types';
+import { MergedSourceDataRebuildPanel } from './MergedSourceDataRebuildPanel';
 import { RedesignedPublishedReportContent } from './RedesignedPublishedReportContent';
 
 export function RedesignedPublishedMatchReportPage() {
@@ -79,6 +80,17 @@ export function RedesignedPublishedMatchReportPage() {
         const saved = await rejectKeyMomentSuggestion(matchId, payload);
         setEditor(saved); return saved;
       }}
+      sourceDataRebuildPanel={
+        devPresentation && report.merged_provenance && matchId
+          ? <MergedSourceDataRebuildPanel
+              mergedId={matchId}
+              devAllowed
+              onReportUpdated={(updated: PublishedMatchDetail) => {
+                if (updated.public_report) setReport(updated.public_report);
+              }}
+            />
+          : null
+      }
     /> : null}
   </main>;
 }
