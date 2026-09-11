@@ -18,7 +18,7 @@ from app.services.global_identity import (
 )
 
 
-SPRINT_POLICY = "player_relative_v2"
+SPRINT_POLICY = "player_relative_v3_burst_calibration"
 SPRINT_START_RATIO = 0.82
 SPRINT_START_FLOOR_KMH = 16.5
 SPRINT_CONTINUE_RATIO = 0.75
@@ -28,6 +28,16 @@ SPRINT_FALLBACK_CONTINUE_KMH = 16.0
 SPRINT_MIN_DURATION_SEC = 0.4
 SPRINT_ALLOWED_DIP_SEC = 0.2
 SPRINT_MIN_REFERENCE_SAMPLE_SEC = 120.0
+SPRINT_COALESCE_MAX_GAP_SEC = 0.75
+SPRINT_ACCELERATION_CONTEXT_SEC = 0.5
+SPRINT_ACCELERATION_BAND_KMH = 1.5
+SPRINT_MIN_ACCELERATION_KMH = 1.5
+SPRINT_COALESCE_MAX_BRIDGE_SPEED_MPS = 12.0
+
+
+def reviewed_sprint_policy_matches_artifact(artifact: dict[str, Any] | None) -> bool:
+    """Return whether a Reviewed artifact was built with this sprint policy."""
+    return bool(artifact and artifact.get("sprint_policy_version") == SPRINT_POLICY)
 
 
 def reviewed_sprint_policy(
@@ -57,6 +67,11 @@ def reviewed_sprint_policy(
         "continue_threshold_kmh": round(continuation, 2),
         "minimum_duration_sec": SPRINT_MIN_DURATION_SEC,
         "allowed_dip_sec": SPRINT_ALLOWED_DIP_SEC,
+        "coalesce_max_gap_sec": SPRINT_COALESCE_MAX_GAP_SEC,
+        "acceleration_context_sec": SPRINT_ACCELERATION_CONTEXT_SEC,
+        "acceleration_band_kmh": SPRINT_ACCELERATION_BAND_KMH,
+        "minimum_acceleration_kmh": SPRINT_MIN_ACCELERATION_KMH,
+        "coalesce_max_bridge_speed_mps": SPRINT_COALESCE_MAX_BRIDGE_SPEED_MPS,
     }
 
 
@@ -75,11 +90,18 @@ def classify_reviewed_sprints(
     events: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    for fragment in fragments:
-        result = _classify_fragment(fragment, fps=max(float(fps), 0.001), policy=policy)
+    fps_safe = max(float(fps), 0.001)
+    for fragment_index, fragment in enumerate(fragments):
+        result = _classify_fragment(
+            fragment,
+            fps=fps_safe,
+            policy=policy,
+            fragment_index=fragment_index,
+        )
         events.extend(result["events"])
         candidates.extend(result["candidates"])
         rejected.extend(result["rejected"])
+    events = _coalesce_adjacent_events(events, fragments, fps=fps_safe, policy=policy)
     total_time = sum(float(event["qualifying_time_sec"]) for event in events)
     total_distance = sum(float(event["qualifying_distance_m"]) for event in events)
     max_speed_kmh = max((float(event["max_speed_mps"]) * 3.6 for event in events), default=0.0)
@@ -90,7 +112,7 @@ def classify_reviewed_sprints(
     best_candidate = _best_candidate(candidates)
     best_rejected = _best_candidate(rejected)
     return {
-        "events": events,
+        "events": [_public_event(event) for event in events],
         "sprint_count": len(events),
         "sprint_time_sec": round(total_time, 3),
         "sprint_distance_m": round(total_distance, 2),
@@ -106,22 +128,30 @@ def classify_reviewed_sprints(
     }
 
 
-def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[str, Any]) -> dict[str, Any]:
+def _classify_fragment(
+    rows: list[dict[str, Any]],
+    *,
+    fps: float,
+    policy: dict[str, Any],
+    fragment_index: int,
+) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
+    last_accepted: dict[str, Any] | None = None
     grace_sec = 0.0
     minimum_duration = _policy_number(policy, "minimum_duration_sec", SPRINT_MIN_DURATION_SEC)
     allowed_dip = _policy_number(policy, "allowed_dip_sec", SPRINT_ALLOWED_DIP_SEC)
 
     def close_current() -> None:
-        nonlocal current, grace_sec
+        nonlocal current, grace_sec, last_accepted
         if current is None:
             return
         if current["qualifying_time_sec"] >= minimum_duration:
             current["reason"] = "accepted"
             events.append(current)
+            last_accepted = current
         else:
             current["reason"] = "too_short"
             rejected.append(current)
@@ -153,8 +183,24 @@ def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[s
         speed_kmh = float(sustained_speed_mps or 0.0) * 3.6
         duration = float(segment["duration_sec"])
         if current is None:
-            if sustained_speed_mps is not None and speed_kmh >= float(policy["start_threshold_kmh"]):
-                current = _new_event(sustained_window, segments)
+            if (
+                sustained_speed_mps is not None
+                and speed_kmh >= float(policy["start_threshold_kmh"])
+                and _is_meaningful_burst_start(
+                    sustained_window,
+                    rows=rows,
+                    segments=segments,
+                    fps=fps,
+                    policy=policy,
+                    previous_accepted=last_accepted,
+                )
+            ):
+                current = _new_event(
+                    sustained_window,
+                    segments,
+                    rows=rows,
+                    fragment_index=fragment_index,
+                )
             continue
         if sustained_speed_mps is not None and speed_kmh >= float(policy["continue_threshold_kmh"]):
             _append_qualifying(current, segment, sustained_speed_mps)
@@ -164,13 +210,38 @@ def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[s
             grace_sec += duration
             continue
         close_current()
-        if sustained_speed_mps is not None and speed_kmh >= float(policy["start_threshold_kmh"]):
-            current = _new_event(sustained_window, segments)
+        if (
+            sustained_speed_mps is not None
+            and speed_kmh >= float(policy["start_threshold_kmh"])
+            and _is_meaningful_burst_start(
+                sustained_window,
+                rows=rows,
+                segments=segments,
+                fps=fps,
+                policy=policy,
+                previous_accepted=last_accepted,
+            )
+        ):
+            current = _new_event(
+                sustained_window,
+                segments,
+                rows=rows,
+                fragment_index=fragment_index,
+            )
     close_current()
     return {"events": events, "candidates": candidates, "rejected": rejected}
 
 
 def _trusted_segment(left: dict[str, Any], right: dict[str, Any], fps: float) -> dict[str, Any] | None:
+    if left.get("visual_trusted") is False or right.get("visual_trusted") is False:
+        return None
+    identity_states = {str(row.get("identity_status") or "") for row in (left, right)}
+    if identity_states - {"", "confirmed"}:
+        return None
+    left_owner = str(left.get("canonical_player_id") or "")
+    right_owner = str(right.get("canonical_player_id") or "")
+    if left_owner and right_owner and left_owner != right_owner:
+        return None
     if not _valid_pitch(left.get("pitch_m")) or not _valid_pitch(right.get("pitch_m")):
         return None
     if str(left.get("tracklet_id") or "") != str(right.get("tracklet_id") or ""):
@@ -233,7 +304,11 @@ def _sustained_window_by_end_frame(
 
 
 def _new_event(
-    sustained_window: dict[str, float | int], segments: list[dict[str, Any]]
+    sustained_window: dict[str, float | int],
+    segments: list[dict[str, Any]],
+    *,
+    rows: list[dict[str, Any]],
+    fragment_index: int,
 ) -> dict[str, Any]:
     start_frame = int(sustained_window["start_frame"])
     end_frame = int(sustained_window["end_frame"])
@@ -244,6 +319,10 @@ def _new_event(
     ]
     if not qualifying_segments:
         raise ValueError("Sustained sprint window must contain trusted segments")
+    start_row = next(
+        (row for row in rows if int(row.get("frame") or 0) == start_frame),
+        {},
+    )
     return {
         "start_frame": start_frame,
         "end_frame": end_frame,
@@ -259,6 +338,9 @@ def _new_event(
             float(segment["speed_mps"]) for segment in qualifying_segments
         ),
         "qualifying_segment_count": len(qualifying_segments),
+        "merged_fragment_count": 1,
+        "_fragment_index": fragment_index,
+        "_canonical_player_id": str(start_row.get("canonical_player_id") or ""),
     }
 
 
@@ -274,6 +356,248 @@ def _append_qualifying(
         float(event["raw_segment_peak_mps"]), float(segment["speed_mps"])
     )
     event["qualifying_segment_count"] = int(event["qualifying_segment_count"]) + 1
+
+
+def _is_meaningful_burst_start(
+    sustained_window: dict[str, float | int],
+    *,
+    rows: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    fps: float,
+    policy: dict[str, Any],
+    previous_accepted: dict[str, Any] | None,
+) -> bool:
+    """Require acceleration only for starts close to the player threshold.
+
+    A clearly faster sustained window is already meaningful.  Near the dynamic
+    player-relative threshold, a trusted preceding movement baseline avoids
+    promoting steady moderate running while retaining events without enough
+    earlier evidence to make a safe comparison.
+    """
+    speed_kmh = float(sustained_window["speed_mps"]) * 3.6
+    start_threshold = float(policy["start_threshold_kmh"])
+    band = _policy_number(policy, "acceleration_band_kmh", SPRINT_ACCELERATION_BAND_KMH)
+    if speed_kmh >= start_threshold + band:
+        return True
+    if _continues_recent_accepted_burst(
+        previous_accepted,
+        sustained_window=sustained_window,
+        rows=rows,
+        fps=fps,
+        policy=policy,
+    ):
+        return True
+    baseline_kmh = _preceding_baseline_speed_kmh(
+        int(sustained_window["start_frame"]),
+        rows=rows,
+        segments=segments,
+        fps=fps,
+        context_sec=_policy_number(
+            policy,
+            "acceleration_context_sec",
+            SPRINT_ACCELERATION_CONTEXT_SEC,
+        ),
+    )
+    if baseline_kmh is None:
+        # The start of a trusted fragment has no earlier physical context.
+        # Preserve the established sustained-speed decision in that case;
+        # inventing a "steady" baseline would turn missing evidence into a
+        # false rejection.  Where the context exists, use it below.
+        return True
+    minimum_acceleration = _policy_number(
+        policy,
+        "minimum_acceleration_kmh",
+        SPRINT_MIN_ACCELERATION_KMH,
+    )
+    return speed_kmh - baseline_kmh >= minimum_acceleration
+
+
+def _continues_recent_accepted_burst(
+    previous: dict[str, Any] | None,
+    *,
+    sustained_window: dict[str, float | int],
+    rows: list[dict[str, Any]],
+    fps: float,
+    policy: dict[str, Any],
+) -> bool:
+    if previous is None:
+        return False
+    gap_sec = float(sustained_window["start_time_sec"]) - float(previous["end_time_sec"])
+    if gap_sec < 0 or gap_sec > _policy_number(policy, "coalesce_max_gap_sec", SPRINT_COALESCE_MAX_GAP_SEC):
+        return False
+    bridge = _trusted_bridge(
+        rows,
+        start_frame=int(previous["end_frame"]),
+        end_frame=int(sustained_window["start_frame"]),
+        fps=fps,
+    )
+    return (
+        bridge is not None
+        and float(bridge["net_speed_kmh"]) >= float(policy["continue_threshold_kmh"])
+        and float(bridge["net_speed_mps"])
+        <= _policy_number(policy, "coalesce_max_bridge_speed_mps", SPRINT_COALESCE_MAX_BRIDGE_SPEED_MPS)
+    )
+
+
+def _preceding_baseline_speed_kmh(
+    start_frame: int,
+    *,
+    rows: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    fps: float,
+    context_sec: float,
+) -> float | None:
+    """Return a net trusted pre-event speed, or None without enough evidence."""
+    rows_by_frame = {int(row.get("frame") or 0): row for row in rows}
+    ending = rows_by_frame.get(start_frame)
+    if ending is None:
+        return None
+    segment_by_end = {int(segment["end_frame"]): segment for segment in segments}
+    earliest = ending
+    current_frame = start_frame
+    while True:
+        segment = segment_by_end.get(current_frame)
+        if segment is None or int(segment["frame_gap"]) != 1:
+            break
+        candidate = rows_by_frame.get(int(segment["start_frame"]))
+        if candidate is None:
+            break
+        earliest = candidate
+        current_frame = int(segment["start_frame"])
+        if _time(ending, fps) - _time(earliest, fps) >= context_sec:
+            break
+    duration = _time(ending, fps) - _time(earliest, fps)
+    if duration < context_sec or not _valid_pitch(earliest.get("pitch_m")):
+        return None
+    dx = float(ending["pitch_m"][0]) - float(earliest["pitch_m"][0])
+    dy = float(ending["pitch_m"][1]) - float(earliest["pitch_m"][1])
+    return ((dx * dx + dy * dy) ** 0.5 / duration) * 3.6
+
+
+def _coalesce_adjacent_events(
+    events: list[dict[str, Any]],
+    fragments: list[list[dict[str, Any]]],
+    *,
+    fps: float,
+    policy: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Merge only adjacent event fragments with a continuous trusted bridge."""
+    ordered = sorted(events, key=lambda event: (float(event["start_time_sec"]), int(event["start_frame"])))
+    coalesced: list[dict[str, Any]] = []
+    for event in ordered:
+        previous = coalesced[-1] if coalesced else None
+        if previous is not None and _can_coalesce(previous, event, fragments, fps=fps, policy=policy):
+            _merge_event(previous, event)
+        else:
+            coalesced.append(event)
+    return coalesced
+
+
+def _can_coalesce(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    fragments: list[list[dict[str, Any]]],
+    *,
+    fps: float,
+    policy: dict[str, Any],
+) -> bool:
+    if str(previous.get("tracklet_id") or "") != str(current.get("tracklet_id") or ""):
+        return False
+    previous_fragment_index = int(previous.get("_fragment_index", -1))
+    current_fragment_index = int(current.get("_fragment_index", -2))
+    if previous_fragment_index != current_fragment_index:
+        return False
+    previous_owner = str(previous.get("_canonical_player_id") or "")
+    current_owner = str(current.get("_canonical_player_id") or "")
+    if previous_owner and current_owner and previous_owner != current_owner:
+        return False
+    gap_sec = float(current["start_time_sec"]) - float(previous["end_time_sec"])
+    if gap_sec < 0 or gap_sec > _policy_number(policy, "coalesce_max_gap_sec", SPRINT_COALESCE_MAX_GAP_SEC):
+        return False
+    fragment_index = previous_fragment_index
+    if fragment_index < 0 or fragment_index >= len(fragments):
+        return False
+    bridge = _trusted_bridge(
+        fragments[fragment_index],
+        start_frame=int(previous["end_frame"]),
+        end_frame=int(current["start_frame"]),
+        fps=fps,
+    )
+    if bridge is None:
+        return False
+    return (
+        float(bridge["net_speed_kmh"]) >= float(policy["continue_threshold_kmh"])
+        and float(bridge["net_speed_mps"])
+        <= _policy_number(
+            policy,
+            "coalesce_max_bridge_speed_mps",
+            SPRINT_COALESCE_MAX_BRIDGE_SPEED_MPS,
+        )
+    )
+
+
+def _trusted_bridge(
+    rows: list[dict[str, Any]],
+    *,
+    start_frame: int,
+    end_frame: int,
+    fps: float,
+) -> dict[str, float] | None:
+    """Verify every gap segment before using it as physical continuity evidence."""
+    if end_frame <= start_frame:
+        return None
+    by_frame = {int(row.get("frame") or 0): row for row in rows}
+    start = by_frame.get(start_frame)
+    end = by_frame.get(end_frame)
+    if start is None or end is None:
+        return None
+    if not _trusted_bridge_row(start, str(start.get("tracklet_id") or "")):
+        return None
+    tracklet_id = str(start.get("tracklet_id") or "")
+    for frame in range(start_frame + 1, end_frame + 1):
+        current = by_frame.get(frame)
+        if current is None or not _trusted_bridge_row(current, tracklet_id):
+            return None
+    duration = _time(end, fps) - _time(start, fps)
+    if duration <= 0 or not _valid_pitch(start.get("pitch_m")) or not _valid_pitch(end.get("pitch_m")):
+        return None
+    dx = float(end["pitch_m"][0]) - float(start["pitch_m"][0])
+    dy = float(end["pitch_m"][1]) - float(start["pitch_m"][1])
+    net_speed_mps = (dx * dx + dy * dy) ** 0.5 / duration
+    return {"net_speed_kmh": net_speed_mps * 3.6, "net_speed_mps": net_speed_mps}
+
+
+def _trusted_bridge_row(row: dict[str, Any], tracklet_id: str) -> bool:
+    identity_status = str(row.get("identity_status") or "")
+    return (
+        bool(tracklet_id)
+        and str(row.get("tracklet_id") or "") == tracklet_id
+        and row.get("visual_trusted") is not False
+        and identity_status in {"", "confirmed"}
+        and row.get("play_area_status", "inside_play") == "inside_play"
+        and _valid_pitch(row.get("pitch_m"))
+    )
+
+
+def _merge_event(previous: dict[str, Any], current: dict[str, Any]) -> None:
+    """Keep only contributing segments; bridge movement is evidence, not distance."""
+    previous["end_frame"] = current["end_frame"]
+    previous["end_time_sec"] = current["end_time_sec"]
+    previous["qualifying_time_sec"] += current["qualifying_time_sec"]
+    previous["qualifying_distance_m"] += current["qualifying_distance_m"]
+    previous["max_speed_mps"] = max(float(previous["max_speed_mps"]), float(current["max_speed_mps"]))
+    previous["raw_segment_peak_mps"] = max(
+        float(previous["raw_segment_peak_mps"]),
+        float(current["raw_segment_peak_mps"]),
+    )
+    previous["qualifying_segment_count"] += int(current["qualifying_segment_count"])
+    previous["merged_fragment_count"] = int(previous.get("merged_fragment_count") or 1) + int(
+        current.get("merged_fragment_count") or 1
+    )
+
+
+def _public_event(event: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in event.items() if not key.startswith("_")}
 
 
 def _policy_number(policy: dict[str, Any], key: str, default: float) -> float:

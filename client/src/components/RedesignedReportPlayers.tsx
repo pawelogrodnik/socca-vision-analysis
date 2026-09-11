@@ -12,7 +12,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'total_distance_m', label: 'Dystans' },
   { key: 'distance_per_5min_m', label: 'Dystans / 5 min' },
   { key: 'high_intensity_distance_per_5min_m', label: 'HI / 5 min' },
-  { key: 'sprints_per_5min', label: 'Sprinty / 5 min' },
+  { key: 'sprints_per_5min', label: 'Speed bursts / 5 min' },
   { key: 'peak_speed_kmh', label: 'Max speed' },
 ];
 

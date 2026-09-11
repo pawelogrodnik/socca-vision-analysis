@@ -717,9 +717,43 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertEqual(player["intensity"]["sprint_count"], 0)
             self.assertNotIn("sprint_threshold_kmh", player["intensity"])
             self.assertNotIn("min_sprint_duration_sec", player["intensity"])
-            self.assertEqual(player["intensity"]["sprint_detection"]["policy"], "player_relative_v2")
+            self.assertEqual(player["intensity"]["sprint_detection"]["policy"], "player_relative_v3_burst_calibration")
+            for document in documents.values():
+                self.assertEqual(
+                    document["sprint_policy_version"],
+                    "player_relative_v3_burst_calibration",
+                )
             self.assertEqual(player["intensity"]["sprint_detection"]["minimum_duration_sec"], 0.4)
             self.assertEqual(player["readiness"]["speed"], "experimental")
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_stats_can_be_built_in_memory_without_mutating_reviewed_artifacts(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 100,
+            "duration_sec": 4.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [_tracklet("runner", list(range(25)))]}),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(
+                root,
+                _confirmed_snapshot("runner"),
+                {},
+                persist=False,
+            )
+
+            self.assertIn("reviewed_player_stats.json", documents)
+            self.assertFalse((root / "reviewed_player_stats.json").exists())
+            self.assertFalse((root / "reviewed_player_workload_evidence.json").exists())
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_player_and_workload_share_the_validated_sprint_event_totals(

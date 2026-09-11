@@ -31,6 +31,7 @@ from app.services.review_workflow_state import (
     build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
+from app.services.reviewed_sprint_policy import SPRINT_POLICY
 from app.services.review_workflow_store import (
     current_approval_fingerprint,
     save_video_qa_approval,
@@ -73,7 +74,11 @@ class CanonicalStalePreflightRegressionTests(unittest.TestCase):
         _write(root / "reviewed_identity_progress.json", progress)
 
         # Current S1 downstream outputs: stats, completed render, QA approval.
-        _write(root / "reviewed_player_stats.json", {"source_snapshot_digest": digest})
+        stats_doc = {
+            "source_snapshot_digest": digest,
+            "sprint_policy_version": SPRINT_POLICY,
+        }
+        _write(root / "reviewed_player_stats.json", stats_doc)
         video = root / "reviewed_video.mp4"
         video.write_bytes(b"not-a-real-video-but-hashable")
         video_digest = hashlib.sha256(video.read_bytes()).hexdigest()
@@ -90,7 +95,7 @@ class CanonicalStalePreflightRegressionTests(unittest.TestCase):
         context = {
             "match": match,
             "digest": digest,
-            "stats_doc": {"source_snapshot_digest": digest},
+            "stats_doc": stats_doc,
             "job": {
                 "status": "completed",
                 "job_key": "job-s1",

@@ -91,7 +91,7 @@ function comparisonRows(left: PublicReportTeam, right: PublicReportTeam): Compar
     { label: 'Skuteczność podań', leftValue: left.completion_rate, rightValue: right.completion_rate, leftText: formatReportPercent(left.completion_rate), rightText: formatReportPercent(right.completion_rate), scale: 'percent' },
     { label: 'Dystans', leftValue: left.total_distance_m, rightValue: right.total_distance_m, leftText: formatReportKilometers(left.total_distance_m), rightText: formatReportKilometers(right.total_distance_m), scale: 'pair', startsGroup: true },
     { label: 'Dystans wysokiej intensywności', leftValue: left.high_intensity_distance_m, rightValue: right.high_intensity_distance_m, leftText: formatReportKilometers(left.high_intensity_distance_m), rightText: formatReportKilometers(right.high_intensity_distance_m), scale: 'pair' },
-    { label: 'Sprinty', leftValue: left.sprint_count, rightValue: right.sprint_count, leftText: left.sprint_count == null ? '—' : String(left.sprint_count), rightText: right.sprint_count == null ? '—' : String(right.sprint_count), scale: 'pair' },
+    { label: 'Speed bursts', leftValue: left.sprint_count, rightValue: right.sprint_count, leftText: left.sprint_count == null ? '—' : String(left.sprint_count), rightText: right.sprint_count == null ? '—' : String(right.sprint_count), scale: 'pair' },
     { label: 'Max speed', leftValue: left.peak_speed_kmh, rightValue: right.peak_speed_kmh, leftText: formatReportSpeed(left.peak_speed_kmh), rightText: formatReportSpeed(right.peak_speed_kmh), scale: 'pair' },
   ];
 }

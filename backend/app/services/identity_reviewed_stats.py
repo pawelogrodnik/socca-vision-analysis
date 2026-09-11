@@ -25,6 +25,7 @@ from app.services.identity_reviewed_workload import (
     build_reviewed_player_workload_evidence,
 )
 from app.services.reviewed_sprint_policy import (
+    SPRINT_POLICY,
     classify_reviewed_sprints,
     reviewed_sprint_policy,
 )
@@ -39,7 +40,14 @@ from app.services.identity_review_scope import (
 from app.services.video import read_match_video_metadata
 
 
-def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: dict[str, Any], pitch_config: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+def build_reviewed_stats(
+    match_path: Path,
+    snapshot: dict[str, Any],
+    match_doc: dict[str, Any],
+    pitch_config: dict[str, Any] | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, dict[str, Any]]:
     tracklets = {str(row.get("tracklet_id")): row for row in _load(match_path / "tracklets.json").get("tracklets") or []}
     video_metadata = read_match_video_metadata(match_path, match_doc)
     fps = float(video_metadata["fps"])
@@ -223,9 +231,11 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         if not coverage_readiness or coverage_readiness.get("allows_finalize") is True
         else "incomplete_identity_coverage"
     )
-    shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "source_review_scope_digest": identity_review_scope_digest(match_doc), "identity_review_scope": identity_review_scope_read_model(match_doc), "video_timing": {"fps": fps, "frame_count": video_metadata["frame_count"], "duration_sec": video_metadata["duration_sec"], "source": video_metadata["source"], "filename": video_metadata["filename"]}, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
+    shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "source_review_scope_digest": identity_review_scope_digest(match_doc), "identity_review_scope": identity_review_scope_read_model(match_doc), "sprint_policy_version": SPRINT_POLICY, "video_timing": {"fps": fps, "frame_count": video_metadata["frame_count"], "duration_sec": video_metadata["duration_sec"], "source": video_metadata["source"], "filename": video_metadata["filename"]}, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
     documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "teams": teams, "global_coverage": coverage, "identity_coverage": identity_coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_player_workload_evidence.json": {**shared, "players": workload_evidence}, "reviewed_stats_readiness.json": {**shared, "schema_version": "2.0.0" if coverage_readiness else shared["schema_version"], "status": stats_status, "global_coverage": coverage, "identity_coverage": identity_coverage, "coverage_readiness": coverage_readiness, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
-    for name, document in documents.items(): write_identity_json_atomic(match_path / name, document)
+    if persist:
+        for name, document in documents.items():
+            write_identity_json_atomic(match_path / name, document)
     return documents
 
 
