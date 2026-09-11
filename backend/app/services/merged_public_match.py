@@ -1616,79 +1616,93 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
     video is never auto-rebound.
     """
 
+    from app.services.match_group_video import reserve_match_group_video_idle
+    with reserve_match_group_video_idle(group_id, operation="refresh"):
+        return _refresh_merged_match_to_latest_locked(group_id)
+
+
+def _refresh_merged_match_to_latest_locked(group_id: str) -> dict[str, Any]:
+    """Refresh source pins and projection while the caller owns maintenance."""
+
+    # A previous curated projection is an explicit record of operator-owned
+    # Key Moments.  Do this check before source pins or the logical projection
+    # can be promoted, so lost editorial authority cannot downgrade to a
+    # freshly generated candidate list.
+    existing_merged_id = merged_published_id_for_group(group_id)
+    if existing_merged_id:
+        existing_report = _read_json_or_none(PUBLISHED_MATCHES_DIR / existing_merged_id / "public_report.json")
+        if existing_report is not None:
+            from app.services.key_moment_editor import (
+                KeyMomentEditorError,
+                assert_editorial_projection_recoverable,
+            )
+
+            try:
+                assert_editorial_projection_recoverable(existing_merged_id, existing_report)
+            except KeyMomentEditorError as error:
+                raise MatchGroupError(error.code, error.detail) from error
+
     from app.services.match_group_refresh import (
         _build_refresh_candidate,
         _commit_pair,
         _pins_changed,
     )
-    from app.services.match_group_video import reserve_match_group_video_idle
-    with reserve_match_group_video_idle(group_id, operation="refresh"):
-        group = get_match_group(group_id)
-        original_digest = str(group.get("aggregate_semantic_digest") or "")
-        candidate = _build_refresh_candidate(group)
-        validation = validate_match_group_manifest(candidate)
-        if validation.get("status") != "compatible":
-            reasons = validation.get("blocking_reasons") or []
-            detail = str((reasons[0] if reasons else {}).get("detail") or "Latest source publications are incompatible.")
-            raise MatchGroupError("refresh_blocked", detail)
-        if not _pins_changed(group, candidate):
-            coherence = _ensure_projection_coherent_locked(group_id)
-            return _refresh_response(get_match_group(group_id), refreshed=False, coherence=coherence)
+    group = get_match_group(group_id)
+    original_digest = str(group.get("aggregate_semantic_digest") or "")
+    candidate = _build_refresh_candidate(group)
+    validation = validate_match_group_manifest(candidate)
+    if validation.get("status") != "compatible":
+        reasons = validation.get("blocking_reasons") or []
+        detail = str((reasons[0] if reasons else {}).get("detail") or "Latest source publications are incompatible.")
+        raise MatchGroupError("refresh_blocked", detail)
+    if not _pins_changed(group, candidate):
+        coherence = _ensure_projection_coherent_locked(group_id)
+        return _refresh_response(get_match_group(group_id), refreshed=False, coherence=coherence)
 
-        aggregate_report = build_match_group_report_candidate(candidate)
-        # The canonical candidate is fully staged BEFORE the group pair
-        # commits, so a build failure cannot split pins from projection.
-        # The merged ID is reserved before staging for the same reason as
-        # in ensure: promotion must never precede the authoritative relation.
-        merged_id = get_or_reserve_merged_published_id(group_id)
-        candidate_sources = load_pinned_merge_sources(candidate)
-        candidate_report = build_canonical_merged_report(candidate, candidate_sources, merged_published_id=merged_id)
-        staged = _stage_projection_candidate(group_id, merged_id, candidate, candidate_sources, candidate_report)
-        try:
-            _validate_projection_candidate(staged, merged_id)
-            # Final authoritative re-read BEFORE any durable commit.  The
-            # manifest-digest check alone only proves the group definition
-            # did not change; a physical publication rebuilt in place (same
-            # published_id, new generation) leaves the manifest untouched
-            # while invalidating the G1 pins this candidate was built from.
-            # Rebuilding the candidate from current sources must reproduce
-            # the exact same pins, or the staged projection is discarded
-            # and NOTHING is committed (the operator retries refresh).
-            precommit_group = get_match_group(group_id)
-            if precommit_group.get("aggregate_semantic_digest") != original_digest:
-                raise MatchGroupError(
-                    "source_generation_changed_during_refresh",
-                    "Logical-match definition changed while the report was refreshing.",
-                )
-            precommit = _build_refresh_candidate(precommit_group)
-            if precommit.get("aggregate_semantic_digest") != candidate.get("aggregate_semantic_digest"):
-                raise MatchGroupError(
-                    "source_generation_changed_during_refresh",
-                    "A source publication changed generation while the report was refreshing.",
-                )
-            precommit_validation = validate_match_group_manifest(precommit)
-            if precommit_validation.get("status") != "compatible":
-                raise MatchGroupError(
-                    "source_generation_changed_during_refresh",
-                    "A source publication became incompatible while the report was refreshing.",
-                )
-            _commit_pair(
-                group_id,
-                candidate,
-                aggregate_report,
-                expected_manifest_digest=original_digest,
+    aggregate_report = build_match_group_report_candidate(candidate)
+    # The canonical candidate is fully staged BEFORE the group pair commits,
+    # so a build failure cannot split pins from projection.
+    merged_id = get_or_reserve_merged_published_id(group_id)
+    candidate_sources = load_pinned_merge_sources(candidate)
+    candidate_report = build_canonical_merged_report(candidate, candidate_sources, merged_published_id=merged_id)
+    staged = _stage_projection_candidate(group_id, merged_id, candidate, candidate_sources, candidate_report)
+    try:
+        _validate_projection_candidate(staged, merged_id)
+        precommit_group = get_match_group(group_id)
+        if precommit_group.get("aggregate_semantic_digest") != original_digest:
+            raise MatchGroupError(
+                "source_generation_changed_during_refresh",
+                "Logical-match definition changed while the report was refreshing.",
             )
-            _assert_projection_source_current(
-                group_id,
-                str(candidate.get("aggregate_semantic_digest") or ""),
+        precommit = _build_refresh_candidate(precommit_group)
+        if precommit.get("aggregate_semantic_digest") != candidate.get("aggregate_semantic_digest"):
+            raise MatchGroupError(
+                "source_generation_changed_during_refresh",
+                "A source publication changed generation while the report was refreshing.",
             )
-            _commit_projection_candidate(group_id, merged_id, staged)
-            from app.services.match_group_external_video import sync_match_group_external_video_public_projection
+        precommit_validation = validate_match_group_manifest(precommit)
+        if precommit_validation.get("status") != "compatible":
+            raise MatchGroupError(
+                "source_generation_changed_during_refresh",
+                "A source publication became incompatible while the report was refreshing.",
+            )
+        _commit_pair(
+            group_id,
+            candidate,
+            aggregate_report,
+            expected_manifest_digest=original_digest,
+        )
+        _assert_projection_source_current(
+            group_id,
+            str(candidate.get("aggregate_semantic_digest") or ""),
+        )
+        _commit_projection_candidate(group_id, merged_id, staged)
+        from app.services.match_group_external_video import sync_match_group_external_video_public_projection
 
-            sync_match_group_external_video_public_projection(group_id)
-        finally:
-            _remove_staging(staged)
-        return _refresh_response(get_match_group(group_id), refreshed=True, coherence={"status": "current"})
+        sync_match_group_external_video_public_projection(group_id)
+    finally:
+        _remove_staging(staged)
+    return _refresh_response(get_match_group(group_id), refreshed=True, coherence={"status": "current"})
 
 
 def _ensure_projection_coherent_locked(group_id: str) -> dict[str, Any]:

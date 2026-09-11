@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { comparisonBarWidth, RedesignedPublishedReportContent, redesignedPossessionDataKeys } from '../src/components/RedesignedPublishedReportContent.tsx';
 import { RedesignedReportVideoMoments } from '../src/components/RedesignedReportVideoMoments.tsx';
+import { MergedSourceDataRebuildPanel } from '../src/components/MergedSourceDataRebuildPanel.tsx';
 import { youtubePlayerEmbedUrl } from '../src/components/RedesignedReportVideoMoments.tsx';
 import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import { isGoalkeeperWorkloadRow, redesignedWorkloadHue } from '../src/components/PublicPlayerWorkloadSection.tsx';
@@ -73,6 +74,20 @@ test('redesigned report removes repeated summaries and uses canonical facts with
   assert.doesNotMatch(html, /Szybkie podsumowanie|Najważniejsze wnioski|Scalony mecz|fragmentów/);
   assert.doesNotMatch(html, /MVP|Wynik|pierwsza połowa|druga połowa|przerwa/i);
   assert.doesNotMatch(html, /Panel admin|Lista meczów|legacy/i);
+});
+
+test('dev-only source rebuild panel is placed before video moments in a merged redesigned report', () => {
+  const html = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: { ...reportWithPlayer, merged_provenance: { group_id: 'group-one' } },
+    externalVideo: null,
+    sourceDataRebuildPanel: createElement(MergedSourceDataRebuildPanel, {
+      mergedId: 'published-merged-test', devAllowed: true, onReportUpdated: () => undefined,
+    }),
+  }));
+  const rebuild = html.indexOf('Przebuduj mecze źródłowe');
+  const moments = html.indexOf('Najważniejsze momenty');
+  assert.ok(rebuild >= 0);
+  assert.ok(rebuild < moments);
 });
 
 test('match flow reads the real cumulative possession contract and uses diverging momentum bars', () => {

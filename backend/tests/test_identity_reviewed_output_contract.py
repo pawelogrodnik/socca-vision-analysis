@@ -20,6 +20,7 @@ from app.services.identity_reviewed_output_jobs import (
     _reusable_job,
     generate_reviewed_output,
     rebind_reviewed_output_snapshot_provenance,
+    reserve_reviewed_output_idle,
     reviewed_output_status,
 )
 from app.services.identity_reviewed_video import RENDERER_VERSION, _ProgressEmitter, _parse_ffmpeg_progress
@@ -27,6 +28,26 @@ from app.services.video import resolve_match_video_path
 
 
 class ReviewedOutputContractTests(unittest.TestCase):
+    @patch("app.services.identity_reviewed_output_jobs.threading.Thread")
+    @patch("app.services.identity_reviewed_output_jobs.identity_review_scope_digest", return_value="scope-digest")
+    @patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video-digest")
+    def test_stats_only_reservation_rejects_a_concurrent_render_start(self, _video, _scope, thread_class) -> None:
+        thread_class.return_value.start.return_value = None
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with reserve_reviewed_output_idle(root, operation="stats-only-source-rebuild"):
+                with self.assertRaises(ReviewedOutputBusyError):
+                    generate_reviewed_output(
+                        root,
+                        {"semantic_digest": "identity-digest"},
+                        {"id": "source-one"},
+                        {"include_minimap": True},
+                    )
+                with self.assertRaises(ReviewedOutputBusyError):
+                    with reserve_reviewed_output_idle(root, operation="second-writer"):
+                        pass
+        self.assertFalse((root / "reviewed_video_job.lock").exists())
+
     def test_completed_job_is_rekeyed_after_provenance_only_snapshot_migration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

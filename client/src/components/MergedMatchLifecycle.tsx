@@ -19,6 +19,7 @@ import type {
 } from '../types';
 import { KeyMoments } from './KeyMoments';
 import { MatchGroupExternalVideoSection } from './MatchGroupExternalVideoSection';
+import { MergedSourceDataRebuildPanel } from './MergedSourceDataRebuildPanel';
 
 type Props = {
   mergedId: string;
@@ -27,6 +28,7 @@ type Props = {
   keyMomentEditorAllowed?: boolean;
   onEditKeyMoments?: () => void;
   onLocalVideoTimeGetter?: (getter: () => number | null) => void;
+  devAllowed?: boolean;
 };
 
 function duration(seconds: number): string {
@@ -46,7 +48,7 @@ function isVideoGenerationInFlight(video: MatchGroupVideoStatus | null): boolean
   return video?.status === 'generating' || video?.last_attempt?.status === 'generating';
 }
 
-export function MergedMatchLifecycle({ mergedId, report, onReportUpdated, keyMomentEditorAllowed = false, onEditKeyMoments, onLocalVideoTimeGetter }: Props) {
+export function MergedMatchLifecycle({ mergedId, report, onReportUpdated, keyMomentEditorAllowed = false, onEditKeyMoments, onLocalVideoTimeGetter, devAllowed = false }: Props) {
   const [video, setVideo] = useState<MatchGroupVideoStatus | null>(null);
   const [externalVideo, setExternalVideo] = useState<MatchGroupExternalVideoStatus | null>(null);
   const [refreshPreview, setRefreshPreview] = useState<MatchGroupRefreshPreview | null>(null);
@@ -205,6 +207,12 @@ export function MergedMatchLifecycle({ mergedId, report, onReportUpdated, keyMom
       {refreshPreview?.status === 'blocked' && <p className='status'>Nie można odświeżyć: {refreshPreview.blocking_reasons[0]?.detail || 'źródła nie są zgodne.'}</p>}
       {status && <p className='report-action-status'>{status}</p>}
     </section>
+
+    <MergedSourceDataRebuildPanel
+      mergedId={mergedId}
+      devAllowed={devAllowed}
+      onReportUpdated={(updated) => onReportUpdated(updated, updated.public_report || null)}
+    />
 
     <MergedMatchVideo
       report={report}

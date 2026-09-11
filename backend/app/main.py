@@ -215,6 +215,12 @@ from app.services.match_group_aggregation import (
     get_coherent_match_group_report,
 )
 from app.services.match_group_refresh import preview_match_group_refresh, refresh_match_group_to_latest
+from app.services.merged_source_data_rebuild import (
+    SourceDataRebuildError,
+    get_merged_source_data_rebuild_status,
+    preview_merged_source_data_rebuild,
+    submit_merged_source_data_rebuild,
+)
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
     MatchGroupVideoError,
@@ -3234,9 +3240,6 @@ def get_match_reviewed_video(match_id: str, digest: str | None = Query(default=N
 def get_match_reviewed_stats(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     snapshot = get_reviewed_identity_status(path)
-    job = reviewed_output_status(path, snapshot)
-    if job.get("status") != "completed":
-        raise HTTPException(status_code=409, detail="Reviewed stats are not current and completed")
     stats_path = path / "reviewed_player_stats.json"
     readiness_path = path / "reviewed_stats_readiness.json"
     if not stats_path.exists() or not readiness_path.exists():
@@ -3254,9 +3257,6 @@ def get_match_reviewed_stats(match_id: str) -> dict[str, Any]:
 def get_match_reviewed_report(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     snapshot = get_reviewed_identity_status(path)
-    job = reviewed_output_status(path, snapshot)
-    if job.get("status") != "completed":
-        raise HTTPException(status_code=409, detail="Reviewed stats are not current and completed")
     try:
         report = build_reviewed_match_report(path)
     except FileNotFoundError as exc:
@@ -4264,6 +4264,33 @@ def api_refresh_merged_published_match_to_latest(published_match_id: str) -> dic
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Published match not found") from exc
     except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/rebuild-source-data/preview")
+def api_preview_merged_source_data_rebuild(published_match_id: str) -> dict[str, Any]:
+    try:
+        return preview_merged_source_data_rebuild(published_match_id)
+    except SourceDataRebuildError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/rebuild-source-data/status")
+def api_get_merged_source_data_rebuild_status(published_match_id: str) -> dict[str, Any]:
+    try:
+        return get_merged_source_data_rebuild_status(published_match_id)
+    except SourceDataRebuildError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/rebuild-source-data")
+def api_submit_merged_source_data_rebuild(published_match_id: str) -> dict[str, Any]:
+    try:
+        return submit_merged_source_data_rebuild(
+            published_match_id,
+            package_builder=build_match_package,
+        )
+    except SourceDataRebuildError as error:
         raise _match_group_error_response(error) from error
 
 

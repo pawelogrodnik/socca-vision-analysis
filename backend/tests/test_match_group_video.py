@@ -141,6 +141,24 @@ class MatchGroupVideoTests(unittest.TestCase):
             self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "stale")
             self.assertEqual(output.read_bytes(), before)
 
+    def test_historical_physical_review_video_makes_combined_video_non_current(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            descriptor_path = root / "published" / "published-b" / PUBLISHED_VIDEO_DESCRIPTOR_FILENAME
+            descriptor = self._load(descriptor_path)
+            descriptor["visual_generation_status"] = "historical"
+            descriptor["descriptor_semantic_digest"] = canonical_json_sha256({
+                key: value for key, value in descriptor.items() if key != "descriptor_semantic_digest"
+            })
+            self._write(descriptor_path, descriptor)
+
+            status = get_match_group_video_status(group["group_id"])
+
+        self.assertEqual(status["status"], "unavailable_source_video")
+        self.assertEqual(status["reason"], "source_review_video_historical")
+
     def test_member_order_change_stales_video_but_metadata_change_does_not(self) -> None:
         with self._store() as root:
             self._source(root, "published-a", "a", duration=10, payload=b"A")
