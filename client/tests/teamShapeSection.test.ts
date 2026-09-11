@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { TeamShapeSection } from '../src/components/TeamShapeSection.tsx';
+import { densityVisualLevel, TeamShapeSection } from '../src/components/TeamShapeSection.tsx';
 import type { PublicReportTeam, TeamShapeDocument } from '../src/types.ts';
 
 
@@ -71,11 +71,23 @@ test('available Team Shape renders unchanged coach-facing metrics and semantical
   assert.match(html, /Intensywność jest normalizowana osobno dla każdej drużyny/);
   assert.match(html, /Kierunek ataku ↑/);
   assert.match(html, /team-shape-density-map/);
+  assert.match(html, /density-level-5/);
   assert.doesNotMatch(html, /Średnie ustawienie|Gęstość Corgi/);
   assert.match(html, /Zmiany ustawienia w czasie/);
   assert.match(html, /Wybierz metrykę dla wykresu poniżej/);
   assert.match(html, /Metryka wykresu zmian ustawienia/);
   assert.doesNotMatch(html, /Próbki|Block height|diagnostics|readiness|sample_count/);
+});
+
+test('density visual levels keep near-zero zones quiet and reserve the strongest tone for peaks', () => {
+  assert.equal(densityVisualLevel(0, 1), 0);
+  assert.equal(densityVisualLevel(0.05, 1), 0);
+  assert.equal(densityVisualLevel(0.06, 1), 1);
+  assert.equal(densityVisualLevel(0.22, 1), 2);
+  assert.equal(densityVisualLevel(0.45, 1), 3);
+  assert.equal(densityVisualLevel(0.7, 1), 4);
+  assert.equal(densityVisualLevel(0.88, 1), 5);
+  assert.equal(densityVisualLevel(1, 1), 5);
 });
 
 test('missing or unavailable Team Shape renders no section', () => {

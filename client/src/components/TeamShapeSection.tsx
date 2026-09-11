@@ -29,6 +29,16 @@ function teamColor(teamLabel: string | undefined, reportTeams: PublicReportTeam[
   return reportTeams.find((team) => team.team_label === teamLabel)?.display_color || fallback;
 }
 
+export function densityVisualLevel(value: number, maximum: number): number {
+  const normalized = Math.max(0, value) / Math.max(maximum, 0.001);
+  if (normalized < 0.06) return 0;
+  if (normalized < 0.22) return 1;
+  if (normalized < 0.45) return 2;
+  if (normalized < 0.7) return 3;
+  if (normalized < 0.88) return 4;
+  return 5;
+}
+
 function DensityPitch({
   team,
   color,
@@ -41,7 +51,7 @@ function DensityPitch({
   const maximum = Math.max(...shape.cells.map((cell) => cell.value), 0.001);
   const teamName = team.team_name || `Team ${team.team_label || ''}`;
   return (
-    <div className='team-shape-pitch-panel'>
+    <div className='team-shape-pitch-panel' style={{ '--team-accent': color } as CSSProperties}>
       <div className='team-shape-pitch-heading'>
         <strong>{teamName}</strong>
         <span>Kierunek ataku ↑</span>
@@ -57,17 +67,15 @@ function DensityPitch({
           style={{
             '--shape-columns': shape.grid.columns,
             '--shape-rows': shape.grid.rows,
-            '--shape-color': color,
           } as CSSProperties}
         >
           {shape.cells.map((cell) => (
             <span
-              className='team-shape-density-cell'
+              className={`team-shape-density-cell density-level-${densityVisualLevel(cell.value, maximum)}`}
               key={`${cell.column}-${cell.row}`}
               style={{
                 gridColumn: cell.column + 1,
                 gridRow: shape.grid.rows - cell.row,
-                opacity: 0.12 + 0.88 * (cell.value / maximum),
               }}
             />
           ))}
@@ -76,11 +84,6 @@ function DensityPitch({
         <span className='team-shape-center-circle' />
         <span className='team-shape-penalty-area team-shape-penalty-area-top' />
         <span className='team-shape-penalty-area team-shape-penalty-area-bottom' />
-      </div>
-      <div className='team-shape-density-legend' aria-hidden='true'>
-        <span>Rzadziej</span>
-        <i style={{ '--shape-color': color } as CSSProperties} />
-        <span>Częściej</span>
       </div>
     </div>
   );
@@ -128,6 +131,11 @@ export function TeamShapeSection({ teamShape, reportTeams }: TeamShapeSectionPro
         {teamShape.teams.map((team, index) => (
           <DensityPitch color={colors[index]} key={team.team_label || team.team_id || team.team_name} team={team} />
         ))}
+      </div>
+      <div className='team-shape-density-legend' aria-hidden='true'>
+        <span>Rzadziej</span>
+        <i />
+        <span>Częściej</span>
       </div>
       <div className='team-shape-chart-heading'>
         <div>

@@ -3296,6 +3296,11 @@ summary:focus-visible {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  border-left: 3px solid var(--team-accent, #cbd5e1);
+  padding-left: 8px;
+}
+.team-shape-pitch-heading strong {
+  color: var(--team-accent, #f8fafc);
 }
 .team-shape-pitch {
   position: relative;
@@ -3317,15 +3322,21 @@ summary:focus-visible {
   display: grid;
   grid-template-columns: repeat(var(--shape-columns), minmax(0, 1fr));
   grid-template-rows: repeat(var(--shape-rows), minmax(0, 1fr));
-  inset: -5px;
-  overflow: hidden;
-  filter: blur(8px) saturate(1.25);
-  opacity: .92;
-  transform: scale(1.04);
+  inset: 0;
+  gap: 1px;
+  background: rgba(2, 6, 23, .08);
 }
 .team-shape-density-cell {
-  background: radial-gradient(circle, color-mix(in srgb, var(--shape-color) 94%, white 6%), var(--shape-color) 68%, transparent 100%);
-  mix-blend-mode: screen;
+  background: transparent;
+}
+.team-shape-density-cell.density-level-1 { background: rgba(21, 94, 117, .42); }
+.team-shape-density-cell.density-level-2 { background: #0f766e; }
+.team-shape-density-cell.density-level-3 { background: #14b8a6; }
+.team-shape-density-cell.density-level-4 { background: #a3e635; }
+.team-shape-density-cell.density-level-5 { background: #fde047; }
+.team-shape-density-cell.density-level-4,
+.team-shape-density-cell.density-level-5 {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .26);
 }
 .team-shape-halfway-line,
 .team-shape-center-circle,
@@ -3366,11 +3377,11 @@ summary:focus-visible {
   font-size: .75rem;
 }
 .team-shape-density-legend i {
-  width: 70px;
+  width: 128px;
   height: 9px;
   border: 1px solid rgba(225, 245, 255, .28);
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, .08), var(--shape-color));
+  background: linear-gradient(90deg, rgba(21, 94, 117, .42), #0f766e 24%, #14b8a6 50%, #a3e635 75%, #fde047);
 }
 .team-shape-chart-heading {
   display: flex;
