@@ -3,6 +3,7 @@ from __future__ import annotations
 """Evaluation-only matching for frozen manual shot goldsets."""
 
 from collections import Counter
+from dataclasses import dataclass
 from statistics import median
 from typing import Any, Mapping
 
@@ -25,26 +26,17 @@ def benchmark_shot_candidates(
         raise ValueError("tolerance_sec must be positive")
     gold = sorted((dict(row) for row in goldset_doc.get("shots") or [] if isinstance(row, Mapping)), key=lambda row: (_time(row), str(row.get("id") or "")))
     candidates = sorted((dict(row) for row in candidates_doc.get("candidates") or [] if isinstance(row, Mapping)), key=lambda row: (_candidate_time(row), str(row.get("candidate_key") or "")))
-    available = set(range(len(candidates)))
+    assignments = _maximum_cardinality_minimum_error_matching(gold, candidates, tolerance_sec)
     matches: list[dict[str, Any]] = []
     missed: list[dict[str, Any]] = []
     duplicate_counts: dict[str, int] = {}
-    for shot in gold:
-        compatible = [index for index in available if abs(_candidate_time(candidates[index]) - _time(shot)) <= tolerance_sec]
+    for gold_index, shot in enumerate(gold):
         all_compatible = [index for index, candidate in enumerate(candidates) if abs(_candidate_time(candidate) - _time(shot)) <= tolerance_sec]
         duplicate_counts[str(shot.get("id") or "")] = len(all_compatible)
-        if not compatible:
+        chosen_index = assignments.get(gold_index)
+        if chosen_index is None:
             missed.append(_gold_summary(shot))
             continue
-        chosen_index = min(
-            compatible,
-            key=lambda index: (
-                abs(_candidate_time(candidates[index]) - _time(shot)),
-                -_number(candidates[index].get("confidence"), 0.0),
-                str(candidates[index].get("candidate_key") or ""),
-            ),
-        )
-        available.remove(chosen_index)
         candidate = candidates[chosen_index]
         matches.append({
             "gold_shot_id": shot.get("id"),
@@ -113,6 +105,116 @@ def benchmark_shot_candidates(
             "Curated hard negatives are regression examples, not a representative sample for global precision.",
             "Manual timestamps are approximate anchors and are matched with the explicit tolerance above.",
         ],
+    }
+
+
+@dataclass
+class _FlowEdge:
+    target: int
+    reverse_index: int
+    capacity: int
+    cost: int
+
+
+def _maximum_cardinality_minimum_error_matching(
+    gold: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    tolerance_sec: float,
+) -> dict[int, int]:
+    """Find a deterministic maximum-cardinality, minimum-error bipartite match.
+
+    Successive shortest augmenting paths run over a small unit-capacity
+    min-cost-flow graph. Continuing until no source-to-sink path remains makes
+    cardinality primary; timing cost is secondary. Stable sorted gold and
+    candidate keys form the final tie cost and traversal order.
+    """
+
+    gold_count, candidate_count = len(gold), len(candidates)
+    source, gold_start = 0, 1
+    candidate_start = gold_start + gold_count
+    sink = candidate_start + candidate_count
+    graph: list[list[_FlowEdge]] = [[] for _ in range(sink + 1)]
+
+    def add_edge(start: int, target: int, capacity: int, cost: int) -> _FlowEdge:
+        forward = _FlowEdge(target, len(graph[target]), capacity, cost)
+        reverse = _FlowEdge(start, len(graph[start]), 0, -cost)
+        graph[start].append(forward)
+        graph[target].append(reverse)
+        return forward
+
+    for index in range(gold_count):
+        add_edge(source, gold_start + index, 1, 0)
+    for index in range(candidate_count):
+        add_edge(candidate_start + index, sink, 1, 0)
+
+    # The multiplier is larger than the aggregate deterministic tie cost of
+    # any complete matching, so it cannot alter the minimum timing-error goal.
+    # Positional weights make the tie breaker lexicographic by stable gold and
+    # candidate keys instead of merely minimizing an ambiguous sum of indexes.
+    maximum_matches = min(gold_count, candidate_count)
+    stable_base = candidate_count + 2
+    tie_cost_bound = stable_base ** (gold_count + 1)
+    gold_stable_rank = {
+        index: rank
+        for rank, index in enumerate(sorted(range(gold_count), key=lambda index: (str(gold[index].get("id") or ""), index)))
+    }
+    candidate_stable_rank = {
+        index: rank
+        for rank, index in enumerate(sorted(range(candidate_count), key=lambda index: (str(candidates[index].get("candidate_key") or ""), index)))
+    }
+    match_edges: dict[tuple[int, int], _FlowEdge] = {}
+    for gold_index, shot in enumerate(gold):
+        for candidate_index, candidate in enumerate(candidates):
+            timing_error = abs(_candidate_time(candidate) - _time(shot))
+            if timing_error > tolerance_sec:
+                continue
+            timing_cost = int(round(timing_error * 1_000_000))
+            stable_tie_cost = (candidate_stable_rank[candidate_index] + 1) * (stable_base ** (gold_count - gold_stable_rank[gold_index]))
+            match_edges[(gold_index, candidate_index)] = add_edge(
+                gold_start + gold_index,
+                candidate_start + candidate_index,
+                1,
+                timing_cost * tie_cost_bound + stable_tie_cost,
+            )
+
+    while True:
+        distance: list[int | None] = [None] * len(graph)
+        previous: list[tuple[int, int] | None] = [None] * len(graph)
+        distance[source] = 0
+        for _ in range(len(graph) - 1):
+            changed = False
+            for node, edges in enumerate(graph):
+                if distance[node] is None:
+                    continue
+                for edge_index, edge in enumerate(edges):
+                    if edge.capacity <= 0:
+                        continue
+                    candidate_cost = int(distance[node]) + edge.cost
+                    prior = distance[edge.target]
+                    tie = (node, edge_index)
+                    if prior is None or candidate_cost < prior or (candidate_cost == prior and (previous[edge.target] is None or tie < previous[edge.target])):
+                        distance[edge.target] = candidate_cost
+                        previous[edge.target] = tie
+                        changed = True
+            if not changed:
+                break
+        if distance[sink] is None:
+            break
+        node = sink
+        while node != source:
+            previous_edge = previous[node]
+            if previous_edge is None:
+                raise RuntimeError("Incomplete min-cost-flow path")
+            start, edge_index = previous_edge
+            edge = graph[start][edge_index]
+            edge.capacity -= 1
+            graph[node][edge.reverse_index].capacity += 1
+            node = start
+
+    return {
+        gold_index: candidate_index
+        for (gold_index, candidate_index), edge in match_edges.items()
+        if edge.capacity == 0
     }
 
 

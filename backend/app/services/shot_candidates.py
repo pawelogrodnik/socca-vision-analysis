@@ -25,6 +25,7 @@ SCHEMA_VERSION = "shot-candidates:v1"
 SOURCE = "canonical_ball_contact_trajectory_shadow_v1"
 ALLOWED_CONTACT_STATUSES = {"accepted", "uncertain", "needs_review"}
 TRUSTED_BALL_SOURCES = {"detected", "interpolated"}
+SUPPORTED_ATTACK_DIRECTIONS = {"towards_y_min", "towards_y_max"}
 MIN_BALL_CONFIDENCE = 0.35
 MAX_LAUNCH_POSITION_DELTA_SEC = 0.5
 MAX_TRAJECTORY_SECONDS = 2.75
@@ -51,7 +52,7 @@ def build_shot_candidates_document(
     """Build physical-source shot suggestions without persisting or publishing them."""
 
     contacts = _contact_events(event_candidates_doc)
-    ball_positions = _trusted_ball_positions(ball_tracks_doc)
+    ball_timeline = _ball_timeline(ball_tracks_doc)
     candidates: list[dict[str, Any]] = []
     skipped = Counter()
     for index, event in enumerate(contacts):
@@ -59,7 +60,7 @@ def build_shot_candidates_document(
         candidate, reason = _candidate_from_contact(
             event,
             next_event,
-            ball_positions,
+            ball_timeline,
             match_phase_config_doc,
             source_match_id=source_match_id,
             pitch_width_m=pitch_width_m,
@@ -177,7 +178,7 @@ def build_logical_shot_candidates_document(sources: Iterable[Mapping[str, Any]],
 def _candidate_from_contact(
     event: Mapping[str, Any],
     next_event: Mapping[str, Any] | None,
-    ball_positions: list[dict[str, Any]],
+    ball_timeline: list[dict[str, Any]],
     phase_config: Mapping[str, Any] | None,
     *,
     source_match_id: str | None,
@@ -186,10 +187,10 @@ def _candidate_from_contact(
     logical_offset_sec: float,
 ) -> tuple[dict[str, Any] | None, str | None]:
     launch_time = _number(event.get("end_time_sec"), _number(event.get("start_time_sec"), 0.0))
-    launch = _nearest_position(ball_positions, launch_time, MAX_LAUNCH_POSITION_DELTA_SEC)
+    launch = _nearest_trusted_position(ball_timeline, launch_time, MAX_LAUNCH_POSITION_DELTA_SEC)
     if launch is None:
         return None, "missing_launch_ball_position"
-    trajectory = _trajectory_from_launch(ball_positions, launch, launch_time)
+    trajectory = _trajectory_from_launch(ball_timeline, launch, launch_time)
     if trajectory is None:
         return None, "missing_continuous_ball_trajectory"
     trajectory_summary = _trajectory_summary(trajectory)
@@ -204,6 +205,8 @@ def _candidate_from_contact(
         "direction_source": "missing_team_attribution",
     }
     direction = str(phase.get("attack_direction") or "unknown")
+    if direction != "unknown" and direction not in SUPPORTED_ATTACK_DIRECTIONS:
+        return None, "unsupported_attack_axis"
     goalward_progress = _goalward_progress(trajectory_summary["start_position_m"], trajectory_summary["end_position_m"], direction)
     endpoint_goal_distance = _goal_distance(trajectory_summary["end_position_m"], direction, pitch_length_m)
     corridor_distance = _goal_corridor_distance(trajectory_summary["end_position_m"], pitch_width_m)
@@ -339,34 +342,55 @@ def _contact_events(document: Mapping[str, Any]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: (_number(row.get("end_time_sec"), 0.0), _number(row.get("end_frame"), 0.0), _text(row.get("event_id")) or ""))
 
 
-def _trusted_ball_positions(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _ball_timeline(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Keep explicit unknown/untrusted rows so they remain hard trajectory boundaries."""
+
     positions = []
     for row in document.get("positions") or []:
         if not isinstance(row, Mapping):
-            continue
-        if str(row.get("source") or "") not in TRUSTED_BALL_SOURCES:
-            continue
-        if _number(row.get("confidence"), 0.0) < MIN_BALL_CONFIDENCE or not _valid_position(row.get("position_m")):
             continue
         positions.append(dict(row))
     return sorted(positions, key=lambda row: (_number(row.get("time_sec"), 0.0), _number(row.get("frame"), 0.0)))
 
 
-def _nearest_position(rows: list[dict[str, Any]], time_sec: float, tolerance: float) -> dict[str, Any] | None:
-    choices = [row for row in rows if abs(_number(row.get("time_sec"), -99999.0) - time_sec) <= tolerance]
+def _is_trusted_ball_position(row: Mapping[str, Any]) -> bool:
+    return (
+        str(row.get("source") or "") in TRUSTED_BALL_SOURCES
+        and _number(row.get("confidence"), 0.0) >= MIN_BALL_CONFIDENCE
+        and _valid_position(row.get("position_m"))
+    )
+
+
+def _nearest_trusted_position(rows: list[dict[str, Any]], time_sec: float, tolerance: float) -> dict[str, Any] | None:
+    choices = [
+        row
+        for row in rows
+        if _is_trusted_ball_position(row)
+        and abs(_number(row.get("time_sec"), -99999.0) - time_sec) <= tolerance
+    ]
     return min(choices, key=lambda row: (abs(_number(row.get("time_sec"), 0.0) - time_sec), _number(row.get("frame"), 0.0))) if choices else None
 
 
 def _trajectory_from_launch(rows: list[dict[str, Any]], launch: Mapping[str, Any], launch_time: float) -> list[dict[str, Any]] | None:
     horizon = launch_time + MAX_TRAJECTORY_SECONDS
-    following = [row for row in rows if launch_time - 0.001 <= _number(row.get("time_sec"), -1.0) <= horizon]
-    if not following:
-        return None
-    trajectory = [dict(launch)]
-    previous = _number(launch.get("time_sec"), launch_time)
-    for row in following:
+    trajectory: list[dict[str, Any]] = []
+    previous: float | None = None
+    started = False
+    for row in rows:
         time_sec = _number(row.get("time_sec"), -1.0)
-        if time_sec <= previous + 0.001:
+        if not started:
+            if row is launch:
+                started = True
+                trajectory.append(row)
+                previous = time_sec
+            continue
+        if time_sec > horizon:
+            break
+        if not _is_trusted_ball_position(row):
+            # An explicit unknown, predicted or otherwise invalid canonical row
+            # is evidence of a discontinuity even when its timestamp is close.
+            break
+        if previous is None or time_sec <= previous + 0.001:
             continue
         if time_sec - previous > MAX_TRAJECTORY_GAP_SEC:
             break

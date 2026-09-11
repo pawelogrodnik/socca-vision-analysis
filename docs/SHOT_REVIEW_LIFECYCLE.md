@@ -31,9 +31,17 @@ offsets; no offset is hardcoded.
 The timestamp is the end of the source contact interval — the best available
 estimate of the strike/release moment — not a save or goal-crossing time. The
 generator only follows continuous trusted ball samples and never fills an
-unknown gap. Nearby hypotheses from the same physical source are deduplicated
-only inside a 0.75-second window, so distinct contacts roughly two seconds
-apart remain separate review cards.
+unknown gap: an explicit `unknown`, predicted or otherwise untrusted timeline
+row is a hard trajectory boundary, while canonical trusted `interpolated` rows
+remain continuous evidence. Nearby hypotheses from the same physical source
+are deduplicated only inside a 0.75-second window, so distinct contacts roughly
+two seconds apart remain separate review cards.
+
+The current canonical pitch has goals at its top and bottom, so the generator
+deliberately supports only `towards_y_min` and `towards_y_max`. Horizontal
+`towards_x_min` and `towards_x_max` configurations are explicitly skipped as
+`unsupported_attack_axis`; left/right-goal geometry is deferred until a future
+recording/calibration product iteration.
 
 An obvious same-team receiver before the trajectory reaches the goal area is
 suppressed as a pass-like pattern. A goal-approaching trajectory with that
@@ -55,9 +63,11 @@ PYTHONPATH=backend backend/.venv-mps/bin/python backend/scripts/benchmark_shot_c
 
 The first command cannot read the manual fixture. Only the second,
 evaluation-only command loads `shot_goldset_v1.json`, with deterministic
-one-to-one matching inside a ±1.5-second tolerance. Its JSON includes recall,
-misses, candidate volume, timing error, outcome/team breakdowns, hard-negative
-hits and chronological/confidence-sorted operator-review tables.
+maximum-cardinality one-to-one matching inside a ±1.5-second tolerance. Among
+the maximum-recall assignments it minimizes total absolute timing error, then
+uses stable keys for reproducibility. Its JSON includes recall, misses,
+candidate volume, timing error, outcome/team breakdowns, hard-negative hits
+and chronological/confidence-sorted operator-review tables.
 
 ## Candidate status is not football truth
 

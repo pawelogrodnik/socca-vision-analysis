@@ -62,6 +62,73 @@ class ShotCandidateBenchmarkTests(unittest.TestCase):
         self.assertEqual(report["missed_gold_shots"][0]["timestamp_display"], "00:10~")
         self.assertIn("not a representative sample for global precision", report["limitations"][0])
 
+    def test_matching_maximizes_one_to_one_recall_before_nearest_error(self) -> None:
+        gold = {
+            "schema_version": "shot-goldset:v1",
+            "shots": [
+                {"id": "A", "timestamp_sec": 10.0, "timestamp_display": "00:10~", "team": "Corgi", "outcome": "goal"},
+                {"id": "B", "timestamp_sec": 12.0, "timestamp_display": "00:12~", "team": "Corgi", "outcome": "goal"},
+            ],
+            "hard_negatives": [],
+        }
+        document = {
+            "timeline_span_sec": 600.0,
+            # X is nearer to A but is the only candidate eligible for B. Y is
+            # only eligible for A, so nearest-first greedy would lose B.
+            "candidates": [candidate("X", 11.0), candidate("Y", 8.6)],
+        }
+
+        report = benchmark_shot_candidates(document, gold, tolerance_sec=1.5)
+
+        self.assertEqual(report["summary"]["matched_gold_shots"], 2)
+        self.assertEqual(
+            [(row["gold_shot_id"], row["candidate_key"]) for row in report["matches"]],
+            [("A", "Y"), ("B", "X")],
+        )
+
+    def test_matching_is_deterministic_for_equal_timing_error(self) -> None:
+        gold = {"schema_version": "shot-goldset:v1", "shots": [{"id": "A", "timestamp_sec": 10.0, "timestamp_display": "00:10~", "team": "Corgi", "outcome": "goal"}], "hard_negatives": []}
+        document = {"timeline_span_sec": 600.0, "candidates": [candidate("z-key", 10.5), candidate("a-key", 9.5)]}
+
+        first = benchmark_shot_candidates(document, gold, tolerance_sec=1.5)
+        second = benchmark_shot_candidates(document, gold, tolerance_sec=1.5)
+
+        self.assertEqual(first["matches"], second["matches"])
+        self.assertEqual(first["matches"][0]["candidate_key"], "a-key")
+
+    def test_equal_cost_multi_match_uses_stable_gold_and_candidate_keys(self) -> None:
+        gold = {
+            "schema_version": "shot-goldset:v1",
+            "shots": [
+                {"id": "B", "timestamp_sec": 10.0, "timestamp_display": "00:10~", "team": "Corgi", "outcome": "goal"},
+                {"id": "A", "timestamp_sec": 10.0, "timestamp_display": "00:10~", "team": "Corgi", "outcome": "goal"},
+            ],
+            "hard_negatives": [],
+        }
+        document = {"timeline_span_sec": 600.0, "candidates": [candidate("z-key", 10.0), candidate("a-key", 10.0)]}
+
+        report = benchmark_shot_candidates(document, gold, tolerance_sec=1.5)
+
+        self.assertEqual(
+            {row["gold_shot_id"]: row["candidate_key"] for row in report["matches"]},
+            {"A": "a-key", "B": "z-key"},
+        )
+
+    def test_nearby_rapid_gold_shots_can_remain_distinct_matches(self) -> None:
+        gold = {
+            "schema_version": "shot-goldset:v1",
+            "shots": [
+                {"id": "early", "timestamp_sec": 1785.0, "timestamp_display": "29:45~", "team": "Corgi", "outcome": "goal"},
+                {"id": "late", "timestamp_sec": 1787.0, "timestamp_display": "29:47~", "team": "Corgi", "outcome": "blocked"},
+            ],
+            "hard_negatives": [],
+        }
+        document = {"timeline_span_sec": 2400.0, "candidates": [candidate("first", 1785.2), candidate("second", 1786.8)]}
+
+        report = benchmark_shot_candidates(document, gold, tolerance_sec=1.5)
+
+        self.assertEqual(report["summary"]["matched_gold_shots"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

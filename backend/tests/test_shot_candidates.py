@@ -55,10 +55,17 @@ def ball_rows(points: list[tuple[float, float, float]], *, unknown_at: float | N
     return {"positions": sorted(rows, key=lambda row: row["time_sec"])}
 
 
-def candidates(events: list[dict], points: list[tuple[float, float, float]], phase: dict | None = PHASE_Y_MIN, *, unknown_at: float | None = None) -> dict:
+def candidates(
+    events: list[dict],
+    points: list[tuple[float, float, float]],
+    phase: dict | None = PHASE_Y_MIN,
+    *,
+    unknown_at: float | None = None,
+    ball_document: dict | None = None,
+) -> dict:
     return build_shot_candidates_document(
         {"events": events},
-        ball_rows(points, unknown_at=unknown_at),
+        ball_document or ball_rows(points, unknown_at=unknown_at),
         phase,
         source_match_id="m1",
         pitch_width_m=30.0,
@@ -112,10 +119,68 @@ class ShotCandidatesTests(unittest.TestCase):
         self.assertEqual(document["candidates"], [])
         self.assertGreater(document["summary"]["skipped_evidence_reasons"]["not_goalward"], 0)
 
-    def test_unknown_ball_gap_does_not_fabricate_trajectory(self) -> None:
-        document = candidates([event("gap", start=0.0, end=1.0)], [(1.0, 15.0, 30.0), (1.2, 15.0, 24.0), (2.0, 15.0, 6.0)], unknown_at=1.5)
+    def test_towards_y_max_shot_is_a_candidate(self) -> None:
+        phase = {"periods": [{**PHASE_Y_MIN["periods"][0], "team_attack_directions": {"A": "towards_y_max", "B": "towards_y_min"}}]}
+        document = candidates(
+            [event("bottom-goal", start=0.0, end=1.0)],
+            [(1.0, 15.0, 18.0), (1.2, 15.0, 27.0), (1.4, 15.0, 38.0), (1.6, 15.0, 44.0)],
+            phase,
+        )
+
+        self.assertEqual(len(document["candidates"]), 1)
+        self.assertEqual(document["candidates"][0]["attack_direction"], "towards_y_max")
+
+    def test_y_attack_direction_switch_between_phases_is_respected(self) -> None:
+        phase = {
+            "periods": [
+                {"period_id": "first", "start_time_sec": 0.0, "end_time_sec": 5.0, "team_attack_directions": {"A": "towards_y_min"}, "direction_source": "test"},
+                {"period_id": "second", "start_time_sec": 5.0, "end_time_sec": 90.0, "team_attack_directions": {"A": "towards_y_max"}, "direction_source": "test"},
+            ]
+        }
+        document = candidates(
+            [event("first-half", start=1.0, end=1.0), event("second-half", start=6.0, end=6.0)],
+            [
+                (1.0, 15.0, 29.0), (1.2, 15.0, 21.0), (1.4, 15.0, 12.0), (1.6, 15.0, 4.0),
+                (6.0, 15.0, 18.0), (6.2, 15.0, 28.0), (6.4, 15.0, 38.0), (6.6, 15.0, 44.0),
+            ],
+            phase,
+        )
+
+        self.assertEqual([row["attack_direction"] for row in document["candidates"]], ["towards_y_min", "towards_y_max"])
+
+    def test_unsupported_x_attack_axis_does_not_fabricate_candidate(self) -> None:
+        phase = {"periods": [{**PHASE_Y_MIN["periods"][0], "team_attack_directions": {"A": "towards_x_min", "B": "towards_x_max"}}]}
+        document = candidates([event("horizontal-goal", start=0.0, end=1.0)], [(1.0, 15.0, 29.0), (1.2, 15.0, 22.0), (1.4, 15.0, 12.0), (1.6, 15.0, 4.0)], phase)
 
         self.assertEqual(document["candidates"], [])
+        self.assertGreater(document["summary"]["skipped_evidence_reasons"]["unsupported_attack_axis"], 0)
+
+    def test_short_explicit_unknown_ball_row_breaks_trajectory(self) -> None:
+        ball_document = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 24.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": None, "source": "unknown", "confidence": 0.0},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 12.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 4.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+        document = candidates([event("gap", start=0.0, end=1.0)], [], ball_document=ball_document)
+
+        self.assertEqual(document["candidates"], [])
+
+    def test_trusted_interpolated_ball_rows_remain_continuous_trajectory(self) -> None:
+        ball_document = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 24.0], "source": "interpolated", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 12.0], "source": "interpolated", "confidence": 0.9},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 4.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+        document = candidates([event("interpolated", start=0.0, end=1.0)], [], ball_document=ball_document)
+
+        self.assertEqual(len(document["candidates"]), 1)
 
     def test_missing_player_and_ambiguous_team_do_not_block_candidate_or_fabricate_attribution(self) -> None:
         known_team = candidates([event("no-player", start=0.0, end=1.0, player=None)], [(1.0, 15.0, 28.0), (1.2, 15.0, 20.0), (1.4, 15.0, 10.0), (1.6, 15.0, 4.0)])
