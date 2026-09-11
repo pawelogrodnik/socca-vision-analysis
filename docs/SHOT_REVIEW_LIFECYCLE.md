@@ -7,6 +7,68 @@ in [#66](https://github.com/pawelogrodnik/socca-vision-analysis/issues/66).
 It deliberately does not implement a detector, review UI, shot map, public
 statistics or xG.
 
+## Current shadow candidate generator
+
+The first engineering iteration is a deterministic shadow generator, not a
+shot-statistics feature. Its production artifact is `shot_candidates.json`
+with schema `shot-candidates:v1` and policy
+`shot-candidate-shadow:v1`. Every candidate is emitted with:
+
+```text
+review_status = needs_review
+final_stat_eligible = false
+suggested_outcome = null
+```
+
+It uses canonical physical-source evidence: reviewed ball-contact intervals,
+trusted detected/interpolated ball positions, pitch dimensions, match-phase
+attack direction, trajectory speed/progression/goal approach and the context
+of the next contact. It retains source match ID, source-local and logical
+timestamps, source event references, pitch positions and trajectory evidence.
+The logical projection rebases source timestamps using the canonical merged
+offsets; no offset is hardcoded.
+
+The timestamp is the end of the source contact interval — the best available
+estimate of the strike/release moment — not a save or goal-crossing time. The
+generator only follows continuous trusted ball samples and never fills an
+unknown gap: an explicit `unknown`, predicted or otherwise untrusted timeline
+row is a hard trajectory boundary, while canonical trusted `interpolated` rows
+remain continuous evidence. Nearby hypotheses from the same physical source
+are deduplicated only inside a 0.75-second window, so distinct contacts roughly
+two seconds apart remain separate review cards.
+
+The current canonical pitch has goals at its top and bottom, so the generator
+deliberately supports only `towards_y_min` and `towards_y_max`. Horizontal
+`towards_x_min` and `towards_x_max` configurations are explicitly skipped as
+`unsupported_attack_axis`; left/right-goal geometry is deferred until a future
+recording/calibration product iteration.
+
+An obvious same-team receiver before the trajectory reaches the goal area is
+suppressed as a pass-like pattern. A goal-approaching trajectory with that
+receiver context is retained only as a lower-confidence suggestion and carries
+the receiver evidence. Cross-like geometry is likewise explicitly exposed as
+lower-confidence evidence rather than silently treated as a confirmed shot.
+
+Run the shadow generator and evaluation separately:
+
+```bash
+PYTHONPATH=backend backend/.venv-mps/bin/python backend/scripts/generate_shot_candidates.py \
+  --group-id match-group-c3fbd48a-356d-44a0-a740-c630de69b527 \
+  --output backend/storage/benchmarks/shot-candidates-shadow-v1/corgi-verisk/shot_candidates.json
+
+PYTHONPATH=backend backend/.venv-mps/bin/python backend/scripts/benchmark_shot_candidates.py \
+  --candidates backend/storage/benchmarks/shot-candidates-shadow-v1/corgi-verisk/shot_candidates.json \
+  --output backend/storage/benchmarks/shot-candidates-shadow-v1/corgi-verisk/benchmark_report.json
+```
+
+The first command cannot read the manual fixture. Only the second,
+evaluation-only command loads `shot_goldset_v1.json`, with deterministic
+maximum-cardinality one-to-one matching inside a ±1.5-second tolerance. Among
+the maximum-recall assignments it minimizes total absolute timing error, then
+uses stable keys for reproducibility. Its JSON includes recall, misses,
+candidate volume, timing error, outcome/team breakdowns, hard-negative hits
+and chronological/confidence-sorted operator-review tables.
+
 ## Candidate status is not football truth
 
 A detector row is a suggestion, never an automatically confirmed shot. The
