@@ -179,6 +179,8 @@ class BallContinuityRootCauseAnalysisTests(unittest.TestCase):
         case = report["cases"][0]
         self.assertEqual(case["diagnosis"]["primary_category"], "MIXED")
         self.assertTrue(case["diagnosis"]["requires_human_validation"])
+        self.assertEqual(len(case["human_validation_packets"]), 1)
+        self.assertEqual(case["human_validation_packets"][0]["type"], "CONTACT_PATH_DISAGREEMENT")
         self.assertEqual(
             {path["diagnosis"]["primary_category"] for path in case["path_diagnoses"]},
             {"LOW_CONFIDENCE_CONTINUITY_BREAK", "SHOT_LAYER_AFTER_VALID_BALL_TRACK"},
@@ -205,12 +207,52 @@ class BallContinuityRootCauseAnalysisTests(unittest.TestCase):
             [],
             {},
             {"requires_human_validation": True},
-            source_center=138.0,
+            gold_source_center=138.0,
+            path_launch_source_center=138.0,
         )
 
         self.assertEqual(packet["frame"], 4140)
-        self.assertEqual(packet["logical_window_sec"], [1899.5, 1900.5])
-        self.assertEqual(packet["source_window_sec"], [137.5, 138.5])
+        self.assertEqual(packet["gold_logical_window_sec"], [1899.5, 1900.5])
+        self.assertEqual(packet["gold_source_window_sec"], [137.5, 138.5])
+        self.assertEqual(packet["path_launch_source_window_sec"], [137.5, 138.5])
+
+    def test_integration_packet_keeps_gold_and_path_launch_clocks_separate(self) -> None:
+        path = self._path("path", "Verisk", low_confidence=True)
+        path["ball_launch"] = {"time_sec": 136.8}
+        path["raw_ball_evidence"] = {
+            **raw(predictions=1, accepted=1, rejected=0),
+            "frames": [{
+                "frame": 4104,
+                "time_sec": 136.8,
+                "accepted_candidates": [{"candidate_id": "c00"}],
+                "accepted_candidate_ids": ["c00"],
+                "canonical_selected": {"candidate_id": "c00"},
+            }],
+        }
+        report = analyze_ball_continuity_root_causes(
+            {"gold_shot_traces": [{
+                "gold_shot_id": "gold-1",
+                "gold_team": "Verisk",
+                "logical_timestamp_sec": 1900.0,
+                "source_match_id": "m1",
+                "source_timestamp_sec": 138.0,
+                "benchmark_matched": False,
+                "classification": {"primary_category": "BALL_CONTINUITY_FAILURE", "contributing_categories": []},
+                "contact_paths": [path],
+            }]},
+            [{
+                "source_match_id": "m1",
+                "ball_candidates": {"frames": []},
+                "pre_player_refinement_tracks": {"positions": [{"frame": 4104, "time_sec": 136.8, "source": "detected", "candidate_id": "c00", "confidence": 0.9}]},
+                "ball_tracks": {"positions": [{"frame": 4104, "time_sec": 136.8, "source": "unknown", "candidate_id": None, "confidence": 0.0}]},
+            }],
+        )
+
+        packet = report["cases"][0]["human_validation_packets"][0]
+        self.assertEqual(packet["frame"], 4104)
+        self.assertEqual(packet["gold_logical_window_sec"], [1899.5, 1900.5])
+        self.assertEqual(packet["gold_source_window_sec"], [137.5, 138.5])
+        self.assertEqual(packet["path_launch_source_window_sec"], [136.3, 137.3])
 
     def _multi_path_report(self, contact_paths: list[dict]) -> dict:
         return analyze_ball_continuity_root_causes(
