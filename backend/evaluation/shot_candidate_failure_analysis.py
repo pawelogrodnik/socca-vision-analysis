@@ -106,6 +106,7 @@ def _trace_gold_shot(
     )
     return {
         "gold_shot_id": gold.get("id"),
+        "gold_team": gold.get("team"),
         "logical_timestamp_sec": _round(logical_time),
         "timestamp_display": gold.get("timestamp_display"),
         "source_match_id": source.get("source_match_id"),
@@ -492,7 +493,7 @@ def _nearest_by_time(rows: list[dict[str, Any]], time_sec: float) -> dict[str, A
 
 
 def _unmapped_trace(gold: Mapping[str, Any], logical_time: float, matched: bool) -> dict[str, Any]:
-    return {"gold_shot_id": gold.get("id"), "logical_timestamp_sec": _round(logical_time), "source_match_id": None, "source_timestamp_sec": None, "benchmark_matched": matched, "contact": _contact_trace(None, None), "ball_launch": {"exists": False, "valid_for_shot_generator": False}, "raw_ball_evidence": {}, "selected_ball_position_near_gold": None, "trajectory": {}, "phase": {}, "receiver_context": {}, "shot_policy": {"generated": False, "rejection_stage": "source_mapping", "rejection_reason": "logical_source_not_found", "confidence_if_scored": None}, "classification": {"primary_category": "MIXED", "first_failing_stage": "source_mapping", "contributing_categories": []}}
+    return {"gold_shot_id": gold.get("id"), "gold_team": gold.get("team"), "logical_timestamp_sec": _round(logical_time), "source_match_id": None, "source_timestamp_sec": None, "benchmark_matched": matched, "contact": _contact_trace(None, None), "ball_launch": {"exists": False, "valid_for_shot_generator": False}, "raw_ball_evidence": {}, "selected_ball_position_near_gold": None, "trajectory": {}, "phase": {}, "receiver_context": {}, "shot_policy": {"generated": False, "rejection_stage": "source_mapping", "rejection_reason": "logical_source_not_found", "confidence_if_scored": None}, "classification": {"primary_category": "MIXED", "first_failing_stage": "source_mapping", "contributing_categories": []}}
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

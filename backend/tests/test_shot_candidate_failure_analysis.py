@@ -168,6 +168,15 @@ class ShotCandidateFailureAnalysisTests(unittest.TestCase):
 
         self.assertEqual(len(report["gold_shot_traces"][0]["contact_paths"]), 2)
 
+    def test_trace_persists_frozen_gold_team_for_downstream_path_filtering(self) -> None:
+        report = analyze_shot_candidate_failures(
+            candidates_document(),
+            goldset(team="Corgi"),
+            [source([], [], [])],
+        )
+
+        self.assertEqual(report["gold_shot_traces"][0]["gold_team"], "Corgi")
+
 
 if __name__ == "__main__":
     unittest.main()
