@@ -64,6 +64,7 @@ def reprocess_match_from_artifacts(
     player_label_overrides: dict[str, str] | None = None,
     start_sec: float = 0.0,
     max_seconds: float | None = None,
+    ball_selection_policy: str | None = None,
     progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
     """Run all post-YOLO analysis from stored raw artifacts.
@@ -129,6 +130,7 @@ def reprocess_match_from_artifacts(
         include_ball=include_ball,
         pitch=pitch,
         camera_motion=camera_motion,
+        ball_selection_policy=ball_selection_policy,
     )
     if ball_tracking is not None:
         artifacts.update(ball_tracking["artifacts"])
@@ -295,6 +297,7 @@ def _load_or_rebuild_ball_tracking(
     include_ball: bool | None,
     pitch: PitchConfig | None = None,
     camera_motion: CameraMotionModel | None = None,
+    ball_selection_policy: str | None = None,
 ) -> dict[str, Any] | None:
     candidates_path = output_dir / "ball_candidates.json"
     tracks_path = output_dir / "ball_tracks.json"
@@ -319,6 +322,8 @@ def _load_or_rebuild_ball_tracking(
             )
             candidates_path.write_text(json.dumps(candidates_doc, indent=2), encoding="utf-8")
         parameters = _ball_parameters(candidates_doc, existing_report)
+        if ball_selection_policy:
+            parameters["ball_selection_policy"] = ball_selection_policy
         tracks_doc = build_ball_tracks_document(
             candidates_doc.get("frames") if isinstance(candidates_doc.get("frames"), list) else [],
             processed_frames=candidates_doc.get("processed_frames") if isinstance(candidates_doc.get("processed_frames"), list) else [],

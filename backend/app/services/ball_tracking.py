@@ -31,6 +31,14 @@ HIGH_CONF_RESTART_MIN_CONFIDENCE = 0.55
 LOW_CONF_TRACK_MAX_CONFIDENCE = 0.18
 HIGH_CONF_RESTART_MIN_DETECTIONS = 3
 HIGH_CONF_RESTART_SCAN_FRAMES = 8
+BALL_SELECTION_POLICY_V1 = "ball-selection:v1"
+BALL_SELECTION_POLICY_V2 = "ball-selection:v2"
+DEFAULT_BALL_SELECTION_POLICY = BALL_SELECTION_POLICY_V1
+ACTIVE_HISTORY_MIN_CONFIDENCE = 0.35
+ACTIVE_PREDICTION_MIN_TOLERANCE_M = 1.25
+ACTIVE_DIRECTION_PENALTY = 0.6
+ACTIVE_DIRECTION_MIN_SPEED_MPS = 1.2
+MAX_SELECTION_DIAGNOSTIC_EXAMPLES = 100
 
 
 def now_iso() -> str:
@@ -75,6 +83,7 @@ def detect_ball_yolo_coco(
         "min_start_conf": DEFAULT_MIN_START_CONF,
         "recovery_segment_min_detections": DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS,
         "recovery_segment_min_duration_sec": DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC,
+        "ball_selection_policy": DEFAULT_BALL_SELECTION_POLICY,
         "pitch_filter": "center_in_pitch_polygon",
         "size_filter": {
             "min_area_px": DEFAULT_MIN_BALL_AREA_PX,
@@ -432,6 +441,7 @@ def ball_tracking_parameters(
         "min_start_conf": DEFAULT_MIN_START_CONF,
         "recovery_segment_min_detections": DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS,
         "recovery_segment_min_duration_sec": DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC,
+        "ball_selection_policy": DEFAULT_BALL_SELECTION_POLICY,
         "pitch_filter": "center_in_pitch_polygon",
         "size_filter": {
             "min_area_px": DEFAULT_MIN_BALL_AREA_PX,
@@ -686,25 +696,28 @@ def build_ball_tracks_document(
     fps: float,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
-    selected = select_ball_detections(
+    final_parameters = dict(parameters)
+    selection_policy = _ball_selection_policy(final_parameters)
+    selected, selection_metrics = _select_ball_detections_with_diagnostics(
         frames,
         fps=fps,
-        max_link_speed_mps=float(parameters.get("max_link_speed_mps") or DEFAULT_MAX_LINK_SPEED_MPS),
-        min_start_conf=float(parameters.get("min_start_conf") or DEFAULT_MIN_START_CONF),
+        max_link_speed_mps=float(final_parameters.get("max_link_speed_mps") or DEFAULT_MAX_LINK_SPEED_MPS),
+        min_start_conf=float(final_parameters.get("min_start_conf") or DEFAULT_MIN_START_CONF),
+        policy_version=selection_policy,
     )
     selected = filter_recovery_ball_segments(
         selected,
         fps=fps,
-        min_detections=int(parameters.get("recovery_segment_min_detections") or DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS),
-        min_duration_sec=float(parameters.get("recovery_segment_min_duration_sec") or DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC),
+        min_detections=int(final_parameters.get("recovery_segment_min_detections") or DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS),
+        min_duration_sec=float(final_parameters.get("recovery_segment_min_duration_sec") or DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC),
     )
     segment_diagnostics = _ball_segment_diagnostics(selected, fps=fps)
     positions, interpolation_gaps = build_ball_positions(
         selected,
         processed_frames=processed_frames,
         fps=fps,
-        max_interpolation_gap_sec=float(parameters.get("max_interpolation_gap_sec") or DEFAULT_MAX_INTERPOLATION_GAP_SEC),
-        max_interpolation_speed_mps=float(parameters.get("max_interpolation_speed_mps") or DEFAULT_MAX_INTERPOLATION_SPEED_MPS),
+        max_interpolation_gap_sec=float(final_parameters.get("max_interpolation_gap_sec") or DEFAULT_MAX_INTERPOLATION_GAP_SEC),
+        max_interpolation_speed_mps=float(final_parameters.get("max_interpolation_speed_mps") or DEFAULT_MAX_INTERPOLATION_SPEED_MPS),
     )
     detected_frames = sum(1 for item in positions if item["source"] == "detected")
     interpolated_frames = sum(1 for item in positions if item["source"] == "interpolated")
@@ -714,7 +727,7 @@ def build_ball_tracks_document(
     return {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
-        "source": parameters.get("detector") or BALL_SOURCE,
+        "source": final_parameters.get("detector") or BALL_SOURCE,
         "track_id": "ball-main",
         "status_semantics": "detected_interpolated_unknown",
         "units": {
@@ -722,7 +735,7 @@ def build_ball_tracks_document(
             "position_m": "pitch_meters",
             "speed": "meters_per_second",
         },
-        "parameters": parameters,
+        "parameters": {**final_parameters, "ball_selection_policy": selection_policy},
         "summary": {
             "processed_frames": total_frames,
             "detected_frames": detected_frames,
@@ -738,13 +751,58 @@ def build_ball_tracks_document(
         "positions": positions,
         "interpolation_gaps": interpolation_gaps,
         "selection_diagnostics": {
-            "method": "coherent_high_confidence_restart_v1",
+            "method": "coherent_high_confidence_restart_v1" if selection_policy == BALL_SELECTION_POLICY_V1 else "temporal_active_ball_selection_v2",
+            "policy_version": selection_policy,
+            **selection_metrics,
             "segments": segment_diagnostics,
         },
     }
 
 
 def select_ball_detections(
+    frames: list[dict[str, Any]],
+    *,
+    fps: float,
+    max_link_speed_mps: float,
+    min_start_conf: float,
+    policy_version: str = DEFAULT_BALL_SELECTION_POLICY,
+) -> dict[int, dict[str, Any]]:
+    selected, _ = _select_ball_detections_with_diagnostics(
+        frames,
+        fps=fps,
+        max_link_speed_mps=max_link_speed_mps,
+        min_start_conf=min_start_conf,
+        policy_version=policy_version,
+    )
+    return selected
+
+
+def _select_ball_detections_with_diagnostics(
+    frames: list[dict[str, Any]],
+    *,
+    fps: float,
+    max_link_speed_mps: float,
+    min_start_conf: float,
+    policy_version: str,
+) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
+    if policy_version == BALL_SELECTION_POLICY_V1:
+        return _select_ball_detections_v1(
+            frames,
+            fps=fps,
+            max_link_speed_mps=max_link_speed_mps,
+            min_start_conf=min_start_conf,
+        ), _empty_selection_metrics()
+    if policy_version == BALL_SELECTION_POLICY_V2:
+        return _select_ball_detections_v2(
+            frames,
+            fps=fps,
+            max_link_speed_mps=max_link_speed_mps,
+            min_start_conf=min_start_conf,
+        )
+    raise ValueError(f"Unsupported ball selection policy: {policy_version}")
+
+
+def _select_ball_detections_v1(
     frames: list[dict[str, Any]],
     *,
     fps: float,
@@ -817,6 +875,256 @@ def select_ball_detections(
         elif dt > 1.0:
             last = None
     return selected
+
+
+def _select_ball_detections_v2(
+    frames: list[dict[str, Any]],
+    *,
+    fps: float,
+    max_link_speed_mps: float,
+    min_start_conf: float,
+) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
+    """Select observed candidates using bounded recent active-ball motion.
+
+    This deliberately ranks only persisted detections. When no candidate is
+    credible, selection stays absent and the existing bounded interpolation
+    layer decides whether a gap may be filled.
+    """
+
+    selected: dict[int, dict[str, Any]] = {}
+    history: list[dict[str, Any]] = []
+    last: dict[str, Any] | None = None
+    has_selected = False
+    metrics = _empty_selection_metrics()
+    sorted_frames = sorted(frames, key=lambda item: int(item.get("frame") or 0))
+    for frame_index, frame in enumerate(sorted_frames):
+        frame_idx = int(frame.get("frame") or 0)
+        candidates = sorted(
+            (candidate for candidate in frame.get("candidates") or [] if isinstance(candidate, dict)),
+            key=lambda item: (-float(item.get("confidence") or 0.0), str(item.get("candidate_id") or "")),
+        )
+        if not candidates:
+            continue
+        if last is None:
+            best = candidates[0]
+            if float(best.get("confidence") or 0.0) >= min_start_conf:
+                selected_best = _selected_candidate(best, reason="initial_or_after_gap")
+                if has_selected:
+                    selected_best["segment_start_reason"] = "after_gap"
+                selected[frame_idx] = selected_best
+                last = selected_best
+                has_selected = True
+                _append_trusted_history(history, selected_best)
+                _record_selection(metrics, frame_idx, candidates, selected_best, reason="initial_or_after_gap")
+            continue
+
+        high_conf_restart = _coherent_high_conf_ball_candidate(
+            sorted_frames,
+            frame_index,
+            fps=fps,
+            max_link_speed_mps=max_link_speed_mps,
+            min_confidence=max(min_start_conf, HIGH_CONF_RESTART_MIN_CONFIDENCE),
+        )
+        if high_conf_restart is not None and _should_restart_ball_segment(last, high_conf_restart):
+            best = _selected_candidate(high_conf_restart, reason="coherent_high_confidence_restart")
+            best["segment_start_reason"] = "after_low_confidence_hijack"
+            selected[frame_idx] = best
+            last = best
+            has_selected = True
+            history = []
+            _append_trusted_history(history, best)
+            metrics["high_confidence_restarts"] += 1
+            metrics["active_ball_switches"] += 1
+            _record_selection(metrics, frame_idx, candidates, best, reason="coherent_high_confidence_restart")
+            continue
+
+        previous_frame = int(last.get("frame") or 0)
+        dt = max((frame_idx - previous_frame) / max(fps, 0.001), 1.0 / max(fps, 0.001))
+        predicted_position, previous_velocity = _predict_active_ball_position(history, last, frame_idx, fps)
+        scored = _score_active_ball_candidates(
+            candidates,
+            last=last,
+            predicted_position=predicted_position,
+            previous_velocity=previous_velocity,
+            dt=dt,
+            max_link_speed_mps=max_link_speed_mps,
+        )
+        if scored:
+            scored.sort(key=lambda item: (item[0], str(item[1].get("candidate_id") or "")))
+            cost, best, details = scored[0]
+            selected_best = _selected_candidate(best, reason="temporal_active_continuation", details={**details, "cost": round(cost, 4)})
+            selected[frame_idx] = selected_best
+            last = selected_best
+            _append_trusted_history(history, selected_best)
+            _record_selection(metrics, frame_idx, candidates, selected_best, reason="temporal_active_continuation")
+            continue
+
+        if high_conf_restart is not None:
+            best = _selected_candidate(high_conf_restart, reason="coherent_high_confidence_restart")
+            best["segment_start_reason"] = "after_impossible_high_conf_run"
+            selected[frame_idx] = best
+            last = best
+            has_selected = True
+            history = []
+            _append_trusted_history(history, best)
+            metrics["high_confidence_restarts"] += 1
+            metrics["active_ball_switches"] += 1
+            _record_selection(metrics, frame_idx, candidates, best, reason="coherent_high_confidence_restart")
+        elif dt > 1.0 and float(candidates[0].get("confidence") or 0.0) >= min_start_conf:
+            best = _selected_candidate(candidates[0], reason="after_impossible_or_long_gap")
+            best["segment_start_reason"] = "after_impossible_or_long_gap"
+            selected[frame_idx] = best
+            last = best
+            has_selected = True
+            history = []
+            _append_trusted_history(history, best)
+            metrics["active_ball_switches"] += 1
+            _record_selection(metrics, frame_idx, candidates, best, reason="after_impossible_or_long_gap")
+        elif dt > 1.0:
+            last = None
+            history = []
+    return selected, metrics
+
+
+def _ball_selection_policy(parameters: dict[str, Any]) -> str:
+    return str(parameters.get("ball_selection_policy") or DEFAULT_BALL_SELECTION_POLICY)
+
+
+def _empty_selection_metrics() -> dict[str, Any]:
+    return {
+        "selected_low_confidence_rows": 0,
+        "multi_candidate_frame_decisions": 0,
+        "active_ball_switches": 0,
+        "high_confidence_restarts": 0,
+        "multi_candidate_examples": [],
+    }
+
+
+def _selected_candidate(candidate: dict[str, Any], *, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    selected = {**candidate, "selection_reason": reason}
+    if details:
+        selected["selection_details"] = details
+    return selected
+
+
+def _append_trusted_history(history: list[dict[str, Any]], candidate: dict[str, Any]) -> None:
+    if float(candidate.get("confidence") or 0.0) >= ACTIVE_HISTORY_MIN_CONFIDENCE:
+        history.append(candidate)
+        del history[:-3]
+
+
+def _predict_active_ball_position(
+    history: list[dict[str, Any]],
+    last: dict[str, Any],
+    frame_idx: int,
+    fps: float,
+) -> tuple[list[float] | None, tuple[float, float] | None]:
+    if len(history) < 2:
+        return None, None
+    previous, current = history[-2:]
+    previous_position = previous.get("position_m")
+    current_position = current.get("position_m")
+    if _distance_m(previous_position, current_position) is None:
+        return None, None
+    previous_frame = int(previous.get("frame") or 0)
+    current_frame = int(current.get("frame") or 0)
+    if current_frame <= previous_frame:
+        return None, None
+    history_dt = (current_frame - previous_frame) / max(fps, 0.001)
+    if history_dt <= 0:
+        return None, None
+    velocity = (
+        (float(current_position[0]) - float(previous_position[0])) / history_dt,
+        (float(current_position[1]) - float(previous_position[1])) / history_dt,
+    )
+    prediction_dt = (frame_idx - int(last.get("frame") or 0)) / max(fps, 0.001)
+    if prediction_dt <= 0:
+        return None, velocity
+    return [
+        float(last.get("position_m")[0]) + velocity[0] * prediction_dt,
+        float(last.get("position_m")[1]) + velocity[1] * prediction_dt,
+    ], velocity
+
+
+def _score_active_ball_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    last: dict[str, Any],
+    predicted_position: list[float] | None,
+    previous_velocity: tuple[float, float] | None,
+    dt: float,
+    max_link_speed_mps: float,
+) -> list[tuple[float, dict[str, Any], dict[str, Any]]]:
+    scored: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
+    prediction_tolerance = max(ACTIVE_PREDICTION_MIN_TOLERANCE_M, max_link_speed_mps * dt * 1.75)
+    for candidate in candidates:
+        distance = _distance_m(last.get("position_m"), candidate.get("position_m"))
+        if distance is None:
+            continue
+        speed = distance / dt
+        if speed > max_link_speed_mps:
+            continue
+        prediction_error = _distance_m(predicted_position, candidate.get("position_m")) if predicted_position is not None else None
+        if prediction_error is not None and prediction_error > prediction_tolerance:
+            continue
+        direction_penalty = _direction_change_penalty(last, candidate, previous_velocity, dt)
+        confidence = float(candidate.get("confidence") or 0.0)
+        continuity_cost = speed / max(max_link_speed_mps, 0.001)
+        prediction_cost = prediction_error / prediction_tolerance if prediction_error is not None else continuity_cost
+        cost = prediction_cost * 0.65 + continuity_cost * 0.25 + (1.0 - confidence) * 0.1 + direction_penalty
+        scored.append((cost, candidate, {"speed_mps": round(speed, 3), "prediction_error_m": round(prediction_error, 3) if prediction_error is not None else None, "prediction_tolerance_m": round(prediction_tolerance, 3), "direction_penalty": round(direction_penalty, 3)}))
+    return scored
+
+
+def _direction_change_penalty(
+    last: dict[str, Any],
+    candidate: dict[str, Any],
+    previous_velocity: tuple[float, float] | None,
+    dt: float,
+) -> float:
+    if previous_velocity is None:
+        return 0.0
+    candidate_position = candidate.get("position_m")
+    last_position = last.get("position_m")
+    if _distance_m(candidate_position, last_position) is None:
+        return 0.0
+    velocity = (
+        (float(candidate_position[0]) - float(last_position[0])) / dt,
+        (float(candidate_position[1]) - float(last_position[1])) / dt,
+    )
+    previous_speed = (previous_velocity[0] ** 2 + previous_velocity[1] ** 2) ** 0.5
+    candidate_speed = (velocity[0] ** 2 + velocity[1] ** 2) ** 0.5
+    if previous_speed < ACTIVE_DIRECTION_MIN_SPEED_MPS or candidate_speed < ACTIVE_DIRECTION_MIN_SPEED_MPS:
+        return 0.0
+    cosine = (previous_velocity[0] * velocity[0] + previous_velocity[1] * velocity[1]) / max(previous_speed * candidate_speed, 0.001)
+    return ACTIVE_DIRECTION_PENALTY if cosine < -0.25 else 0.0
+
+
+def _record_selection(
+    metrics: dict[str, Any],
+    frame_idx: int,
+    candidates: list[dict[str, Any]],
+    selected: dict[str, Any],
+    *,
+    reason: str,
+) -> None:
+    if float(selected.get("confidence") or 0.0) < ACTIVE_HISTORY_MIN_CONFIDENCE:
+        metrics["selected_low_confidence_rows"] += 1
+    if len(candidates) <= 1:
+        return
+    metrics["multi_candidate_frame_decisions"] += 1
+    examples = metrics["multi_candidate_examples"]
+    if len(examples) >= MAX_SELECTION_DIAGNOSTIC_EXAMPLES:
+        return
+    examples.append(
+        {
+            "frame": frame_idx,
+            "candidate_ids": [candidate.get("candidate_id") for candidate in candidates],
+            "selected_candidate_id": selected.get("candidate_id"),
+            "selection_reason": reason,
+            "selection_details": selected.get("selection_details"),
+        }
+    )
 
 
 def _should_restart_ball_segment(last: dict[str, Any], candidate: dict[str, Any]) -> bool:
@@ -1385,7 +1693,7 @@ def _ball_candidate_reject_reason(
 
 
 def _candidate_to_position(candidate: dict[str, Any], *, source: str) -> dict[str, Any]:
-    return {
+    position = {
         "frame": int(candidate.get("frame") or 0),
         "time_sec": candidate.get("time_sec"),
         "position_px": candidate.get("position_px"),
@@ -1397,6 +1705,11 @@ def _candidate_to_position(candidate: dict[str, Any], *, source: str) -> dict[st
         "candidate_id": candidate.get("candidate_id"),
         "segment_start_reason": candidate.get("segment_start_reason"),
     }
+    if "selection_reason" in candidate:
+        position["selection_reason"] = candidate.get("selection_reason")
+    if "selection_details" in candidate:
+        position["selection_details"] = candidate.get("selection_details")
+    return position
 
 
 def _player_boxes_by_frame(stable_doc: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
