@@ -1,0 +1,13 @@
+{
+  "schema_version": "ball-continuity-operator-validation:v1",
+  "evaluation_only": true,
+  "operator_labels_are_algorithm_inputs": false,
+  "contacts": [
+    {"gold_shot_id": "shot-009", "source_match_id": "9c7485e4", "frame": 19620, "kind": "contact_layer_control"},
+    {"gold_shot_id": "shot-012", "source_match_id": "9c7485e4", "frame": 29222, "kind": "selection_recovery"},
+    {"gold_shot_id": "shot-013", "source_match_id": "9c7485e4", "frame": 30636, "kind": "selection_boundary_inspect"},
+    {"gold_shot_id": "shot-016", "source_match_id": "9c7485e4", "frame": 33935, "kind": "selection_reacquisition"},
+    {"gold_shot_id": "shot-028", "source_match_id": "5e62625e", "frame": 5038, "kind": "active_play_identity"}
+  ],
+  "notes": ["Operator conclusions are evaluation truth only and must never be consumed by runtime modules."]
+}
