@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from app.services.reviewed_ball_diagnostic import _operator_timecode
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "render_contact_path_operator_review.py"
 SPEC = importlib.util.spec_from_file_location("contact_path_operator_review", SCRIPT)
@@ -38,3 +40,7 @@ def test_build_operator_review_cases_uses_only_contact_paths_and_human_labels() 
             ],
         }
     ]
+
+
+def test_operator_timecode_keeps_hundredths_of_a_second() -> None:
+    assert _operator_timecode(654.34) == "10:54.34"
