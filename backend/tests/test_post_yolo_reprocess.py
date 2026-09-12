@@ -289,10 +289,16 @@ class PostYoloReprocessTests(unittest.TestCase):
                 "app.services.post_yolo_reprocess.stabilize_match",
                 side_effect=fake_stabilize,
             ):
-                report = reprocess_match_from_artifacts(source_dir, video_path, output_dir=output_dir)
+                report = reprocess_match_from_artifacts(
+                    source_dir,
+                    video_path,
+                    output_dir=output_dir,
+                    ball_selection_policy="ball-selection:v2",
+                )
 
             self.assertEqual(report["parameters"]["ball_input"], "ball_candidates")
             self.assertEqual(captured_ball_docs[0]["positions"][0]["source"], "detected")
+            self.assertEqual(captured_ball_docs[0]["parameters"]["ball_selection_policy"], "ball-selection:v2")
             self.assertTrue((output_dir / "ball_tracks.json").exists())
             self.assertTrue((output_dir / "ball_quality_report.json").exists())
 
