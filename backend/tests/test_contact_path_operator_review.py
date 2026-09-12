@@ -44,3 +44,26 @@ def test_build_operator_review_cases_uses_only_contact_paths_and_human_labels() 
 
 def test_operator_timecode_keeps_hundredths_of_a_second() -> None:
     assert _operator_timecode(654.34) == "10:54.34"
+
+
+def test_cli_allows_a_non_default_timestamp_case() -> None:
+    parser = MODULE.build_argument_parser()
+    arguments = parser.parse_args(["--timestamp", "32:10", "--timestamp", "10:54"])
+    analysis = {
+        "cases": [
+            {
+                "timestamp_display": "10:54~",
+                "source_match_id": "source-a",
+                "path_diagnoses": [{"contact_path": {"timestamp_sec": 654.0}}],
+            },
+            {
+                "timestamp_display": "32:10~",
+                "source_match_id": "source-b",
+                "path_diagnoses": [{"contact_path": {"timestamp_sec": 1930.0}}],
+            },
+        ]
+    }
+
+    cases = MODULE.build_operator_review_cases(analysis, tuple(arguments.timestamps))
+
+    assert [case["timestamp_display"] for case in cases] == ["32:10", "10:54"]

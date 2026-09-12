@@ -102,13 +102,24 @@ def _write_index(output: Path, cases: list[dict[str, Any]]) -> None:
     (output / "index.html").write_text(document, encoding="utf-8")
 
 
-def main() -> None:
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--analysis", type=Path, default=DEFAULT_ANALYSIS)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--before-sec", type=float, default=4.0)
     parser.add_argument("--after-sec", type=float, default=4.0)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--timestamp",
+        action="append",
+        dest="timestamps",
+        metavar="MM:SS",
+        help="Moment do wyrenderowania; powtarzalne. Bez parametru używa domyślnej paczki diagnostycznej.",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_argument_parser().parse_args()
     output = args.output.resolve()
     benchmark_root = (STORAGE_DIR / "benchmarks").resolve()
     if benchmark_root not in output.parents:
@@ -117,7 +128,8 @@ def main() -> None:
         raise ValueError("operator_review_window_must_be_positive")
 
     analysis = json.loads(args.analysis.read_text(encoding="utf-8"))
-    cases = build_operator_review_cases(analysis)
+    timestamps = tuple(args.timestamps) if args.timestamps else DEFAULT_TIMESTAMPS
+    cases = build_operator_review_cases(analysis, timestamps)
     if not cases:
         raise RuntimeError("operator_review_cases_not_found")
     output.mkdir(parents=True, exist_ok=True)
