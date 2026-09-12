@@ -925,22 +925,9 @@ def _select_ball_detections_v2(
             max_link_speed_mps=max_link_speed_mps,
             min_confidence=max(min_start_conf, HIGH_CONF_RESTART_MIN_CONFIDENCE),
         )
-        if high_conf_restart is not None and _should_restart_ball_segment(last, high_conf_restart):
-            best = _selected_candidate(high_conf_restart, reason="coherent_high_confidence_restart")
-            best["segment_start_reason"] = "after_low_confidence_hijack"
-            selected[frame_idx] = best
-            last = best
-            has_selected = True
-            history = []
-            _append_trusted_history(history, best)
-            metrics["high_confidence_restarts"] += 1
-            metrics["active_ball_switches"] += 1
-            _record_selection(metrics, frame_idx, candidates, best, reason="coherent_high_confidence_restart")
-            continue
-
         previous_frame = int(last.get("frame") or 0)
         dt = max((frame_idx - previous_frame) / max(fps, 0.001), 1.0 / max(fps, 0.001))
-        predicted_position, previous_velocity = _predict_active_ball_position(history, last, frame_idx, fps)
+        predicted_position, previous_velocity = _predict_active_ball_position(history, frame_idx, fps)
         scored = _score_active_ball_candidates(
             candidates,
             last=last,
@@ -959,7 +946,18 @@ def _select_ball_detections_v2(
             _record_selection(metrics, frame_idx, candidates, selected_best, reason="temporal_active_continuation")
             continue
 
-        if high_conf_restart is not None:
+        if high_conf_restart is not None and _should_restart_ball_segment(last, high_conf_restart):
+            best = _selected_candidate(high_conf_restart, reason="coherent_high_confidence_restart")
+            best["segment_start_reason"] = "after_low_confidence_hijack"
+            selected[frame_idx] = best
+            last = best
+            has_selected = True
+            history = []
+            _append_trusted_history(history, best)
+            metrics["high_confidence_restarts"] += 1
+            metrics["active_ball_switches"] += 1
+            _record_selection(metrics, frame_idx, candidates, best, reason="coherent_high_confidence_restart")
+        elif high_conf_restart is not None:
             best = _selected_candidate(high_conf_restart, reason="coherent_high_confidence_restart")
             best["segment_start_reason"] = "after_impossible_high_conf_run"
             selected[frame_idx] = best
@@ -1015,7 +1013,6 @@ def _append_trusted_history(history: list[dict[str, Any]], candidate: dict[str, 
 
 def _predict_active_ball_position(
     history: list[dict[str, Any]],
-    last: dict[str, Any],
     frame_idx: int,
     fps: float,
 ) -> tuple[list[float] | None, tuple[float, float] | None]:
@@ -1037,12 +1034,13 @@ def _predict_active_ball_position(
         (float(current_position[0]) - float(previous_position[0])) / history_dt,
         (float(current_position[1]) - float(previous_position[1])) / history_dt,
     )
-    prediction_dt = (frame_idx - int(last.get("frame") or 0)) / max(fps, 0.001)
+    trusted_anchor = current
+    prediction_dt = (frame_idx - int(trusted_anchor.get("frame") or 0)) / max(fps, 0.001)
     if prediction_dt <= 0:
         return None, velocity
     return [
-        float(last.get("position_m")[0]) + velocity[0] * prediction_dt,
-        float(last.get("position_m")[1]) + velocity[1] * prediction_dt,
+        float(trusted_anchor.get("position_m")[0]) + velocity[0] * prediction_dt,
+        float(trusted_anchor.get("position_m")[1]) + velocity[1] * prediction_dt,
     ], velocity
 
 

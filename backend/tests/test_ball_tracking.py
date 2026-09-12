@@ -302,18 +302,60 @@ class BallTrackingTests(unittest.TestCase):
         self.assertNotIn(2, selected)
         self.assertEqual(selected[3]["position_m"], [1.2, 0.0])
 
-    def test_v2_prefers_moving_active_ball_over_stationary_high_confidence_alternative(self) -> None:
+    def test_v2_keeps_active_motion_before_coherent_high_confidence_restart(self) -> None:
+        frames = [
+            {"frame": 0, "candidates": [named_candidate("active-0", 0, 0.0, 0.0, 0.8)]},
+            {"frame": 1, "candidates": [named_candidate("active-1", 1, 0.4, 0.0, 0.8)]},
+            {"frame": 2, "candidates": [named_candidate("active-low", 2, 0.8, 0.0, 0.12)]},
+            {
+                "frame": 3,
+                "candidates": [
+                    named_candidate("other-stationary", 3, 0.4, 0.0, 0.9),
+                    named_candidate("active-3", 3, 1.2, 0.0, 0.35),
+                ],
+            },
+            {
+                "frame": 4,
+                "candidates": [
+                    named_candidate("other-stationary", 4, 0.4, 0.0, 0.9),
+                    named_candidate("active-4", 4, 1.6, 0.0, 0.35),
+                ],
+            },
+            {
+                "frame": 5,
+                "candidates": [
+                    named_candidate("other-stationary", 5, 0.4, 0.0, 0.9),
+                    named_candidate("active-5", 5, 2.0, 0.0, 0.35),
+                ],
+            },
+        ]
+
+        v1_selected = select_ball_detections(
+            frames,
+            fps=30,
+            max_link_speed_mps=22.0,
+            min_start_conf=0.08,
+            policy_version="ball-selection:v1",
+        )
+        v2_selected = select_ball_detections(
+            frames,
+            fps=30,
+            max_link_speed_mps=22.0,
+            min_start_conf=0.08,
+            policy_version="ball-selection:v2",
+        )
+
+        self.assertEqual(v1_selected[3]["candidate_id"], "other-stationary")
+        self.assertEqual(v2_selected[3]["candidate_id"], "active-3")
+        self.assertEqual(v2_selected[3]["selection_reason"], "temporal_active_continuation")
+
+    def test_v2_trusted_prediction_is_not_dragged_by_low_confidence_last_row(self) -> None:
         selected = select_ball_detections(
             [
-                {"frame": 0, "candidates": [named_candidate("moving-0", 0, 0.0, 0.0, 0.7)]},
-                {"frame": 1, "candidates": [named_candidate("moving-1", 1, 0.4, 0.0, 0.7)]},
-                {
-                    "frame": 2,
-                    "candidates": [
-                        named_candidate("stationary-other-ball", 2, 10.0, 0.0, 0.95),
-                        named_candidate("moving-2", 2, 0.8, 0.0, 0.4),
-                    ],
-                },
+                {"frame": 0, "candidates": [named_candidate("active-0", 0, 0.0, 0.0, 0.8)]},
+                {"frame": 1, "candidates": [named_candidate("active-1", 1, 0.4, 0.0, 0.8)]},
+                {"frame": 2, "candidates": [named_candidate("active-low-off", 2, 0.95, 0.0, 0.12)]},
+                {"frame": 3, "candidates": [named_candidate("active-3", 3, 1.2, 0.0, 0.6)]},
             ],
             fps=30,
             max_link_speed_mps=22.0,
@@ -321,7 +363,8 @@ class BallTrackingTests(unittest.TestCase):
             policy_version="ball-selection:v2",
         )
 
-        self.assertEqual(selected[2]["candidate_id"], "moving-2")
+        self.assertEqual(selected[3]["candidate_id"], "active-3")
+        self.assertEqual(selected[3]["selection_details"]["prediction_error_m"], 0.0)
 
     def test_v2_keeps_legitimately_stationary_active_ball_without_competitor(self) -> None:
         selected = select_ball_detections(
