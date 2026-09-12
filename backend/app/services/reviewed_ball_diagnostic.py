@@ -98,6 +98,7 @@ def render_reviewed_ball_diagnostic(
             _draw_operator_review_overlay(
                 frame,
                 operator_title=operator_title,
+                frame_index=frame_index,
                 frame_time_sec=frame_index / fps,
                 highlight_time_sec=highlight_time_sec,
             )
@@ -155,6 +156,7 @@ def _draw_operator_review_overlay(
     frame: Any,
     *,
     operator_title: str | None,
+    frame_index: int,
     frame_time_sec: float,
     highlight_time_sec: float | None,
 ) -> None:
@@ -177,6 +179,28 @@ def _draw_operator_review_overlay(
             2,
             cv2.LINE_AA,
         )
+    timecode = _operator_timecode(frame_time_sec)
+    frame_label = f"CZAS WIDEO {timecode}  |  KLATKA {frame_index}"
+    (frame_width, frame_height), frame_baseline = cv2.getTextSize(frame_label, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+    frame_left = 12
+    frame_top = height - frame_height - frame_baseline - 18
+    cv2.rectangle(
+        frame,
+        (frame_left - 8, frame_top - 8),
+        (frame_left + frame_width + 8, height - 8),
+        (8, 20, 34),
+        -1,
+    )
+    cv2.putText(
+        frame,
+        frame_label,
+        (frame_left, height - frame_baseline - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (240, 248, 255),
+        2,
+        cv2.LINE_AA,
+    )
     if highlight_time_sec is None or abs(frame_time_sec - highlight_time_sec) > 0.28:
         return
     label = "MOZLIWY KONTAKT"
@@ -194,6 +218,15 @@ def _draw_operator_review_overlay(
         3,
         cv2.LINE_AA,
     )
+
+
+def _operator_timecode(timestamp_sec: float) -> str:
+    """Format a source-video timestamp to centiseconds for human review."""
+
+    total_centiseconds = max(0, int(round(timestamp_sec * 100)))
+    minutes, remaining_centiseconds = divmod(total_centiseconds, 6_000)
+    seconds, centiseconds = divmod(remaining_centiseconds, 100)
+    return f"{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
 def concatenate_reviewed_ball_diagnostics(inputs: Iterable[Path], output_path: Path) -> dict[str, Any]:
