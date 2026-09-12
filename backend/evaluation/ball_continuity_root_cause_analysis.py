@@ -42,12 +42,15 @@ def analyze_ball_continuity_root_causes(
         if isinstance(trace, Mapping) and str(trace.get("gold_shot_id") or "") in focus_ids
     ]
     counts = Counter(str(row["diagnosis"]["primary_category"]) for row in rows)
-    validation_packets = [row["human_validation_packet"] for row in rows if row["diagnosis"]["requires_human_validation"]]
+    validation_packets = [
+        packet
+        for row in rows
+        for packet in row["human_validation_packets"]
+    ]
     refinement_changes = [
         row
         for row in rows
-        if _position_identity(_mapping(_mapping(row.get("selector")).get("pre_player_refinement_position")).get("position"))
-        != _position_identity(_mapping(_mapping(row.get("selector")).get("post_player_refinement_position")))
+        if any(path.get("player_refinement_changed") for path in row.get("path_diagnoses") or [])
     ]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -61,7 +64,8 @@ def analyze_ball_continuity_root_causes(
         "player_overlap_refinement_summary": {
             "changed_near_launch": len(refinement_changes),
             "suppressed_near_launch": sum(
-                _mapping(_mapping(row.get("selector")).get("suppression")) != {} for row in rows
+                any(_mapping(path.get("selector")).get("suppression") for path in row.get("path_diagnoses") or [])
+                for row in rows
             ),
         },
         "limitations": [
@@ -123,8 +127,8 @@ def analyze_selector_policy_regressions(
                 "competing_candidates": _candidates_at_frame(candidates, divergence.get("frame")),
                 "v1_trusted_history": _trusted_history(_mapping(baseline_source.get("ball_tracks")), divergence.get("time_sec")),
                 "v2_trusted_history": _trusted_history(_mapping(comparison_source.get("ball_tracks")), divergence.get("time_sec")),
-                "v1_shot_layer": _nearest_contact_path(baseline_trace).get("shot_policy") if _nearest_contact_path(baseline_trace) else {},
-                "v2_shot_layer": _nearest_contact_path(comparison_trace).get("shot_policy") if _nearest_contact_path(comparison_trace) else {},
+                "v1_shot_layer": _nearest_contact_path_for_policy_display(baseline_trace).get("shot_policy") if _nearest_contact_path_for_policy_display(baseline_trace) else {},
+                "v2_shot_layer": _nearest_contact_path_for_policy_display(comparison_trace).get("shot_policy") if _nearest_contact_path_for_policy_display(comparison_trace) else {},
                 "requires_human_validation": False,
                 "interpretation": "The rows show canonical-output divergence only; they do not assert which physical ball is correct.",
             }
@@ -146,7 +150,74 @@ def _trace_root_cause(trace: dict[str, Any], source: Mapping[str, Any] | None) -
     tracks = _mapping(source.get("ball_tracks") if source else {})
     pre_tracks = _mapping(source.get("pre_player_refinement_tracks") if source else {})
     candidates = _mapping(source.get("ball_candidates") if source else {})
-    path = _nearest_contact_path(trace)
+    paths = _team_consistent_contact_paths(trace)
+    path_diagnoses = [
+        _contact_path_root_cause(trace, path, candidates, pre_tracks, tracks, source)
+        for path in paths
+    ]
+    if not path_diagnoses:
+        path_diagnoses = [
+            _evidence_root_cause(
+                trace,
+                path=None,
+                candidates=candidates,
+                pre_tracks=pre_tracks,
+                tracks=tracks,
+                source=source,
+                source_time=source_time,
+            )
+        ]
+    diagnosis = _case_diagnosis(path_diagnoses, has_team_consistent_paths=bool(paths))
+    validation_packets = [
+        packet
+        for path in path_diagnoses
+        for packet in [path.get("human_validation_packet")]
+        if packet is not None
+    ]
+    return {
+        "gold_shot_id": trace.get("gold_shot_id"),
+        "gold_team": trace.get("gold_team"),
+        "logical_timestamp_sec": trace.get("logical_timestamp_sec"),
+        "timestamp_display": trace.get("timestamp_display"),
+        "source_match_id": trace.get("source_match_id"),
+        "source_timestamp_sec": trace.get("source_timestamp_sec"),
+        "contact_paths": [_compact_contact_path(item) for item in trace.get("contact_paths") or [] if isinstance(item, Mapping)],
+        "team_consistent_contact_path_count": len(paths),
+        "path_diagnoses": path_diagnoses,
+        "diagnosis": diagnosis,
+        "human_validation_packets": validation_packets,
+    }
+
+
+def _contact_path_root_cause(
+    trace: Mapping[str, Any],
+    path: Mapping[str, Any],
+    candidates: Mapping[str, Any],
+    pre_tracks: Mapping[str, Any],
+    tracks: Mapping[str, Any],
+    source: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return _evidence_root_cause(
+        trace,
+        path=path,
+        candidates=candidates,
+        pre_tracks=pre_tracks,
+        tracks=tracks,
+        source=source,
+        source_time=_number(trace.get("source_timestamp_sec"), 0.0),
+    )
+
+
+def _evidence_root_cause(
+    trace: Mapping[str, Any],
+    *,
+    path: Mapping[str, Any] | None,
+    candidates: Mapping[str, Any],
+    pre_tracks: Mapping[str, Any],
+    tracks: Mapping[str, Any],
+    source: Mapping[str, Any] | None,
+    source_time: float,
+) -> dict[str, Any]:
     raw = _mapping(path.get("raw_ball_evidence")) if path else _mapping(trace.get("raw_ball_evidence"))
     launch = _mapping(path.get("ball_launch")) if path else _mapping(trace.get("ball_launch"))
     trajectory = _mapping(path.get("trajectory")) if path else _mapping(trace.get("trajectory"))
@@ -171,12 +242,7 @@ def _trace_root_cause(trace: dict[str, Any], source: Mapping[str, Any] | None) -
     if _has_simultaneous_accepted_candidates(raw) and len(hypotheses) >= 2:
         diagnosis["requires_human_validation"] = True
     return {
-        "gold_shot_id": trace.get("gold_shot_id"),
-        "logical_timestamp_sec": trace.get("logical_timestamp_sec"),
-        "timestamp_display": trace.get("timestamp_display"),
-        "source_match_id": trace.get("source_match_id"),
-        "source_timestamp_sec": trace.get("source_timestamp_sec"),
-        "contact_paths": [_compact_contact_path(item) for item in trace.get("contact_paths") or [] if isinstance(item, Mapping)],
+        "contact_path": _compact_contact_path(path) if path else None,
         "relevant_frames": list(raw.get("frames") or []),
         "selector": {
             "policy": _mapping(tracks.get("parameters")).get("ball_selection_policy"),
@@ -197,15 +263,52 @@ def _trace_root_cause(trace: dict[str, Any], source: Mapping[str, Any] | None) -
         "candidate_tracklets": hypotheses,
         "divergence": divergence,
         "diagnosis": diagnosis,
-        "human_validation_packet": _validation_packet(trace, raw, hypotheses, divergence, diagnosis),
+        "player_refinement_changed": _position_identity(pre_position) != _position_identity(post_position),
+        "human_validation_packet": _validation_packet(
+            trace,
+            raw,
+            hypotheses,
+            divergence,
+            diagnosis,
+            source_center=target_time,
+        ),
     }
 
 
-def _nearest_contact_path(trace: Mapping[str, Any]) -> dict[str, Any] | None:
+def _team_consistent_contact_paths(trace: Mapping[str, Any]) -> list[dict[str, Any]]:
+    gold_team = str(trace.get("gold_team") or "").strip()
     paths = [dict(path) for path in trace.get("contact_paths") or [] if isinstance(path, Mapping)]
-    if not paths:
-        return None
-    return min(paths, key=lambda path: abs(_number(_mapping(path.get("contact")).get("timing_delta_sec"), 9999.0)))
+    return [
+        path
+        for path in paths
+        if gold_team and str(_mapping(path.get("contact")).get("team") or "").strip() == gold_team
+    ]
+
+
+def _nearest_contact_path_for_policy_display(trace: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Only used by the separate v1/v2 regression display, never by root cause."""
+
+    paths = [dict(path) for path in trace.get("contact_paths") or [] if isinstance(path, Mapping)]
+    return min(paths, key=lambda path: abs(_number(_mapping(path.get("contact")).get("timing_delta_sec"), 9999.0))) if paths else None
+
+
+def _case_diagnosis(path_diagnoses: list[dict[str, Any]], *, has_team_consistent_paths: bool) -> dict[str, Any]:
+    if not has_team_consistent_paths:
+        return dict(path_diagnoses[0]["diagnosis"])
+    diagnoses = [dict(path["diagnosis"]) for path in path_diagnoses]
+    categories = {str(diagnosis.get("primary_category") or "") for diagnosis in diagnoses}
+    if len(categories) == 1:
+        diagnosis = dict(diagnoses[0])
+        diagnosis["requires_human_validation"] = any(item.get("requires_human_validation") for item in diagnoses)
+        return diagnosis
+    return {
+        "primary_category": "MIXED",
+        "secondary_categories": sorted(categories),
+        "first_material_failure": "team_consistent_contact_path_disagreement",
+        "confidence": "ambiguous",
+        "requires_human_validation": True,
+        "explanation": "Team-consistent contact paths reach materially different precise diagnoses.",
+    }
 
 
 def _nearest_position(tracks: Mapping[str, Any], target_time: float) -> dict[str, Any] | None:
@@ -556,12 +659,14 @@ def _validation_packet(
     hypotheses: list[dict[str, Any]],
     divergence: Mapping[str, Any],
     diagnosis: Mapping[str, Any],
+    *,
+    source_center: float,
 ) -> dict[str, Any] | None:
     if not diagnosis.get("requires_human_validation"):
         return None
-    timestamp = _number(trace.get("logical_timestamp_sec"), 0.0)
+    logical_center = _number(trace.get("logical_timestamp_sec"), 0.0)
     frames = [frame for frame in raw.get("frames") or [] if isinstance(frame, Mapping)]
-    closest_frame = min(frames, key=lambda frame: abs(_number(frame.get("time_sec"), timestamp) - timestamp)) if frames else {}
+    closest_frame = min(frames, key=lambda frame: abs(_number(frame.get("time_sec"), source_center) - source_center)) if frames else {}
     selected = _mapping(closest_frame.get("canonical_selected"))
     candidates = [
         str(candidate.get("candidate_id"))
@@ -571,14 +676,15 @@ def _validation_packet(
     selected_id = selected.get("candidate_id") or divergence.get("selected_candidate_id")
     return {
         "gold_shot_id": trace.get("gold_shot_id"),
-        "logical_window_sec": [_round(max(0.0, timestamp - 0.5)), _round(timestamp + 0.5)],
+        "logical_window_sec": [_round(max(0.0, logical_center - 0.5)), _round(logical_center + 0.5)],
+        "source_window_sec": [_round(max(0.0, source_center - 0.5)), _round(source_center + 0.5)],
         "candidate_tracklets": hypotheses,
         "frame": closest_frame.get("frame"),
         "source_time_sec": closest_frame.get("time_sec"),
         "accepted_candidate_ids": candidates,
         "question": (
-            f"At logical {timestamp - 0.5:.3f}-{timestamp + 0.5:.3f}s "
-            f"(source {(_number(closest_frame.get('time_sec'), timestamp) - 0.5):.3f}-{(_number(closest_frame.get('time_sec'), timestamp) + 0.5):.3f}s), is selected candidate "
+            f"At logical {logical_center - 0.5:.3f}-{logical_center + 0.5:.3f}s "
+            f"(source {source_center - 0.5:.3f}-{source_center + 0.5:.3f}s), is selected candidate "
             f"{selected_id or 'none'} the active match ball, rather than one of {candidates or ['no accepted candidate']}?"
         ),
         "selected_candidate_id": selected_id,

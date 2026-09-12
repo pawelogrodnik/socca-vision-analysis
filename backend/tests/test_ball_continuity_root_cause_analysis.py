@@ -6,6 +6,7 @@ from pathlib import Path
 from evaluation.ball_continuity_root_cause_analysis import (
     _candidate_tracklets,
     _diagnose,
+    _validation_packet,
     analyze_ball_continuity_root_causes,
 )
 
@@ -157,7 +158,88 @@ class BallContinuityRootCauseAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(report["cases"][0]["diagnosis"]["primary_category"], "WRONG_ACTIVE_TRACK_ALREADY_ESTABLISHED")
-        self.assertEqual(report["cases"][0]["divergence"]["divergence_frame"], 500)
+        self.assertEqual(report["cases"][0]["path_diagnoses"][0]["divergence"]["divergence_frame"], 500)
+
+    def test_case_uses_team_consistent_path_not_nearest_wrong_team_path(self) -> None:
+        report = self._multi_path_report([
+            self._path("wrong-nearest", "Corgi", low_confidence=False),
+            self._path("correct-team", "Verisk", low_confidence=True),
+        ])
+
+        case = report["cases"][0]
+        self.assertEqual(case["diagnosis"]["primary_category"], "LOW_CONFIDENCE_CONTINUITY_BREAK")
+        self.assertEqual([path["contact_path"]["event_id"] for path in case["path_diagnoses"]], ["correct-team"])
+
+    def test_different_team_consistent_path_diagnoses_are_mixed_and_preserved(self) -> None:
+        report = self._multi_path_report([
+            self._path("low", "Verisk", low_confidence=True),
+            self._path("shot-layer", "Verisk", low_confidence=False),
+        ])
+
+        case = report["cases"][0]
+        self.assertEqual(case["diagnosis"]["primary_category"], "MIXED")
+        self.assertTrue(case["diagnosis"]["requires_human_validation"])
+        self.assertEqual(
+            {path["diagnosis"]["primary_category"] for path in case["path_diagnoses"]},
+            {"LOW_CONFIDENCE_CONTINUITY_BREAK", "SHOT_LAYER_AFTER_VALID_BALL_TRACK"},
+        )
+
+    def test_same_team_consistent_path_subtype_remains_case_subtype(self) -> None:
+        report = self._multi_path_report([
+            self._path("first", "Verisk", low_confidence=True),
+            self._path("second", "Verisk", low_confidence=True),
+        ])
+
+        case = report["cases"][0]
+        self.assertEqual(case["diagnosis"]["primary_category"], "LOW_CONFIDENCE_CONTINUITY_BREAK")
+        self.assertEqual(len(case["path_diagnoses"]), 2)
+
+    def test_validation_packet_uses_distinct_logical_and_source_clocks(self) -> None:
+        packet = _validation_packet(
+            {"gold_shot_id": "gold-1", "logical_timestamp_sec": 1900.0, "source_timestamp_sec": 138.0},
+            {"frames": [
+                {"frame": 4134, "time_sec": 137.8, "accepted_candidates": [], "canonical_selected": {}},
+                {"frame": 4140, "time_sec": 138.0, "accepted_candidates": [{"candidate_id": "c00"}], "canonical_selected": {"candidate_id": "c00"}},
+                {"frame": 4146, "time_sec": 138.2, "accepted_candidates": [], "canonical_selected": {}},
+            ]},
+            [],
+            {},
+            {"requires_human_validation": True},
+            source_center=138.0,
+        )
+
+        self.assertEqual(packet["frame"], 4140)
+        self.assertEqual(packet["logical_window_sec"], [1899.5, 1900.5])
+        self.assertEqual(packet["source_window_sec"], [137.5, 138.5])
+
+    def _multi_path_report(self, contact_paths: list[dict]) -> dict:
+        return analyze_ball_continuity_root_causes(
+            {"gold_shot_traces": [{
+                "gold_shot_id": "gold-1",
+                "gold_team": "Verisk",
+                "logical_timestamp_sec": 20.0,
+                "source_match_id": "m1",
+                "source_timestamp_sec": 20.0,
+                "benchmark_matched": False,
+                "classification": {"primary_category": "BALL_CONTINUITY_FAILURE", "contributing_categories": []},
+                "contact_paths": contact_paths,
+            }]},
+            [{
+                "source_match_id": "m1",
+                "ball_candidates": {"frames": []},
+                "pre_player_refinement_tracks": {"positions": [{"frame": 600, "time_sec": 20.0, "source": "detected", "candidate_id": "c00", "confidence": 0.9}]},
+                "ball_tracks": {"positions": [{"frame": 600, "time_sec": 20.0, "source": "detected", "candidate_id": "c00", "confidence": 0.9}]},
+            }],
+        )
+
+    def _path(self, event_id: str, team: str, *, low_confidence: bool) -> dict:
+        return {
+            "contact": {"nearest_contact_event_id": event_id, "team": team, "timing_delta_sec": 0.1},
+            "ball_launch": {"time_sec": 20.0},
+            "raw_ball_evidence": raw(predictions=1, accepted=1, rejected=0),
+            "trajectory": {"boundary_reason": "untrusted_detected"} if low_confidence else {},
+            "shot_policy": {"generated": False, "rejection_reason": "missing_continuous_ball_trajectory" if low_confidence else "not_goalward"},
+        }
 
     def test_production_modules_do_not_depend_on_shot_goldset(self) -> None:
         app_root = Path(__file__).resolve().parents[1] / "app"

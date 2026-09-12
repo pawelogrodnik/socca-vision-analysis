@@ -75,7 +75,8 @@ def _markdown_summary(report: dict[str, Any]) -> str:
     if focus_cases:
         lines.extend(["", "## Focus cases (excluded from subtype counts)", ""])
         for row in focus_cases:
-            divergence = row.get("divergence") or {}
+            paths = row.get("path_diagnoses") or []
+            divergence = (paths[0].get("divergence") or {}) if paths else {}
             lines.append(
                 f"- `{row.get('gold_shot_id')}` ({row.get('timestamp_display')}): "
                 f"first post-refinement change at frame `{divergence.get('divergence_frame')}`, "
