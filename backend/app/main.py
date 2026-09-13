@@ -86,6 +86,15 @@ from app.services.key_moment_editor import (
     reject_suggested_candidate as reject_key_moment_suggestion,
     save_editorial_document as save_key_moment_editorial_document,
 )
+from app.services.shot_review_editor import (
+    ShotReviewError,
+    accept_suggestion as accept_shot_suggestion,
+    create_manual_shot,
+    delete_canonical_shot,
+    edit_canonical_shot,
+    editor_state as shot_review_editor_state,
+    reject_suggestion as reject_shot_suggestion,
+)
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
@@ -4162,6 +4171,70 @@ def api_get_published_match(published_match_id: str) -> dict[str, Any]:
 
 def _key_moment_editor_error_response(error: KeyMomentEditorError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail={"code": error.code, "detail": error.detail})
+
+
+def _shot_review_error_response(error: ShotReviewError) -> HTTPException:
+    return HTTPException(status_code=error.status_code, detail={"code": error.code, "detail": error.detail})
+
+
+@app.get("/api/published/matches/{published_match_id}/shot-review/editor")
+def api_get_shot_review_editor(published_match_id: str) -> dict[str, Any]:
+    try:
+        return shot_review_editor_state(published_match_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/shot-review/editor/suggestions/accept")
+def api_accept_shot_suggestion(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return accept_shot_suggestion(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/shot-review/editor/suggestions/reject")
+def api_reject_shot_suggestion(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return reject_shot_suggestion(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/shot-review/editor/shots")
+def api_create_shot_review_shot(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return create_manual_shot(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.put("/api/published/matches/{published_match_id}/shot-review/editor/shots/{shot_id}")
+def api_edit_shot_review_shot(published_match_id: str, shot_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return edit_canonical_shot(published_match_id, shot_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.delete("/api/published/matches/{published_match_id}/shot-review/editor/shots/{shot_id}")
+def api_delete_shot_review_shot(published_match_id: str, shot_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return delete_canonical_shot(published_match_id, shot_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
 
 
 @app.get("/api/published/matches/{published_match_id}/key-moments/editor")
