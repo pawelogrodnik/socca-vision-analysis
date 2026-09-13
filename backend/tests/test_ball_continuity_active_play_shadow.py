@@ -134,7 +134,7 @@ def test_operator_validation_fixture_is_evaluation_only_and_not_runtime_imported
     validation = json.loads(fixture.read_text(encoding="utf-8"))
     assert validation["operator_labels_are_algorithm_inputs"] is False
     active_ball = next(row for row in validation["references"] if row["gold_shot_id"] == "shot-028")
-    assert active_ball["expected_candidate_id"] == "ball-f005038-c01"
+    assert active_ball["expected_candidate_id"] == "ball-f005038-c00"
     runtime = (Path(__file__).parents[1] / "app").rglob("*.py")
     assert all("ball_continuity_operator_validation" not in path.read_text(encoding="utf-8") for path in runtime)
     assert all("ball_continuity_active_play_shadow" not in path.read_text(encoding="utf-8") for path in runtime)

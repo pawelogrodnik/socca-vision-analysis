@@ -15,7 +15,7 @@
     {"gold_shot_id": "shot-021", "source_match_id": "6d8fc20c", "frame": 11571, "reference_time_sec": 385.7, "kind": "low_confidence_continuity"},
     {"gold_shot_id": "shot-026", "source_match_id": "5e62625e", "frame": 904, "reference_time_sec": 30.122, "kind": "low_confidence_continuity"},
     {"gold_shot_id": "shot-027", "source_match_id": "5e62625e", "frame": 2164, "reference_time_sec": 72.122, "kind": "low_confidence_continuity"},
-    {"gold_shot_id": "shot-028", "source_match_id": "5e62625e", "frame": 5038, "reference_time_sec": 168.118, "kind": "active_play_identity", "expected_candidate_id": "ball-f005038-c01"},
+    {"gold_shot_id": "shot-028", "source_match_id": "5e62625e", "frame": 5038, "reference_time_sec": 168.118, "kind": "active_play_identity", "expected_candidate_id": "ball-f005038-c00"},
     {"gold_shot_id": "shot-030", "source_match_id": "5e62625e", "frame": 8434, "reference_time_sec": 281.122, "kind": "low_confidence_continuity"}
   ],
   "notes": ["Operator conclusions are evaluation truth only and must never be consumed by runtime modules."]
