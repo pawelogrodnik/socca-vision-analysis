@@ -137,7 +137,7 @@ class ShotReviewEditorTests(unittest.TestCase):
         ball_id = ball["saved_shot"]["shot_id"]
         outcome_only = editor.edit_canonical_shot("published-one", ball_id, {"expected_revision": ball["revision"], "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "off_target", "location_m": {"x": 4, "y": 5}}})
         self.assertEqual((outcome_only["saved_shot"]["location_m"], outcome_only["saved_shot"]["location_source"]), ({"x": 4.0, "y": 5.0}, "ball"))
-        changed_time = editor.edit_canonical_shot("published-one", ball_id, {"expected_revision": outcome_only["revision"], "shot": {"time_sec": 11, "team_id": "team-a", "outcome": "off_target"}})
+        changed_time = editor.edit_canonical_shot("published-one", ball_id, {"expected_revision": outcome_only["revision"], "shot": {"time_sec": 11, "team_id": "team-a", "outcome": "off_target", "location_m": {"x": 4, "y": 5}}})
         self.assertEqual((changed_time["saved_shot"]["location_m"], changed_time["saved_shot"]["location_source"]), ({"x": 9.0, "y": 10.0}, "ball"))
         manual = editor.create_manual_shot("published-one", {"expected_revision": changed_time["revision"], "shot": {"time_sec": 20, "team_id": "team-a", "outcome": "goal", "location_m": {"x": 8, "y": 9}}})
         manual_id = manual["saved_shot"]["shot_id"]
@@ -159,7 +159,7 @@ class ShotReviewEditorTests(unittest.TestCase):
         created = editor.create_manual_shot("published-one", {"expected_revision": self._initial()["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-1", "outcome": "goal"}})
         preserved = editor.edit_canonical_shot("published-one", created["saved_shot"]["shot_id"], {"expected_revision": created["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-1", "outcome": "blocked", "location_m": {"x": 6, "y": 7}}})
         self.assertEqual((preserved["saved_shot"]["location_m"], preserved["saved_shot"]["location_source"]), ({"x": 6.0, "y": 7.0}, "player"))
-        changed = editor.edit_canonical_shot("published-one", created["saved_shot"]["shot_id"], {"expected_revision": preserved["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-2", "outcome": "goal"}})
+        changed = editor.edit_canonical_shot("published-one", created["saved_shot"]["shot_id"], {"expected_revision": preserved["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-2", "outcome": "goal", "location_m": {"x": 6, "y": 7}}})
         self.assertEqual((changed["saved_shot"]["location_m"], changed["saved_shot"]["location_source"]), ({"x": 16.0, "y": 17.0}, "player"))
 
     def test_delete_manual_and_accepted_shots_keeps_review_state_consistent(self) -> None:

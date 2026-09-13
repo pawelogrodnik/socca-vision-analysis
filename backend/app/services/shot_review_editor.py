@@ -326,6 +326,11 @@ def _validate_shot(
             raise ShotReviewError("shot_review_location_invalid", "Istniejąca lokalizacja strzału jest nieprawidłowa.", 409)
     elif location_mode == "manual_override":
         location, location_source = _location_for_shot(published_id, report, time_sec, player_id, manual_location_override)
+    elif location_mode == "derive":
+        # Canonical location_m is a read-model field during edits.  A changed
+        # timestamp/player must resolve fresh evidence rather than treating an
+        # echoed prior value as a new manual point.
+        location, location_source = _location_for_shot(published_id, report, time_sec, player_id, None)
     else:
         location, location_source = _location_for_shot(published_id, report, time_sec, player_id, raw.get("location_m"))
     return {**copy.deepcopy(existing or {}), "shot_id": str((existing or {}).get("shot_id") or f"shot-review-{uuid.uuid4()}"), "time_sec": round(time_sec, 6), "team_id": team_id, "outcome": outcome, "player_id": player_id, "origin": origin, "location_m": location, "location_source": location_source}
@@ -423,7 +428,7 @@ def edit_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, A
     elif not time_changed and not player_changed:
         location_mode, override = "preserve", None
     else:
-        location_mode, override = "derive_or_manual", None
+        location_mode, override = "derive", None
     shot = _validate_shot(
         published_id,
         _record(match.get("public_report")),
