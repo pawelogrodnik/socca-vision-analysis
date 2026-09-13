@@ -77,7 +77,7 @@ def select_active_play_shadow(
         policy_version="ball-selection:v1",
     )
     selected: dict[int, dict[str, Any]] = {}
-    last: dict[str, Any] | None = None
+    last_trusted: dict[str, Any] | None = None
     diagnostics: Counter[str] = Counter()
     examples: list[dict[str, Any]] = []
     context = player_context_by_frame or {}
@@ -87,7 +87,14 @@ def select_active_play_shadow(
         if not candidates:
             diagnostics["no_candidates"] += 1
             continue
-        choices = _rank_choices(ordered, index, candidates, last=last, fps=fps, players=context.get(frame_number) or [])
+        choices = _rank_choices(
+            ordered,
+            index,
+            candidates,
+            last_trusted=last_trusted,
+            fps=fps,
+            players=context.get(frame_number) or [],
+        )
         if not choices:
             diagnostics["no_bounded_choice"] += 1
             continue
@@ -105,7 +112,7 @@ def select_active_play_shadow(
                     "supported_low_confidence": False,
                     "active_play_score": baseline_active_score,
                     "forward_support_frames": _forward_support(ordered, index, baseline, fps),
-                    "speed_mps": _speed(last, baseline, fps),
+                    "speed_mps": _speed(last_trusted, baseline, fps),
                     "score": 0.0,
                 }
                 diagnostics["baseline_preserved"] += 1
@@ -130,7 +137,8 @@ def select_active_play_shadow(
             diagnostics["multi_candidate_decisions"] += 1
             if len(examples) < 100:
                 examples.append({"frame": frame_number, "selected_candidate_id": candidate.get("candidate_id"), "reason": choice["reason"]})
-        last = selected_row
+        if float(selected_row.get("confidence") or 0.0) >= TRUSTED_CONFIDENCE:
+            last_trusted = selected_row
     return selected, {
         "policy_version": POLICY_VERSION,
         "supported_low_confidence_rows": diagnostics["supported_low_confidence"],
@@ -150,6 +158,9 @@ def build_active_play_shadow_tracks_document(
     player_context_by_frame: Mapping[int, list[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     selected, diagnostics = select_active_play_shadow(frames, fps=fps, player_context_by_frame=player_context_by_frame)
+    supported_low_confidence_frames = {
+        frame for frame, row in selected.items() if bool(row.get("supported_low_confidence"))
+    }
     filtered = filter_recovery_ball_segments(
         selected,
         fps=fps,
@@ -163,6 +174,9 @@ def build_active_play_shadow_tracks_document(
         max_interpolation_gap_sec=float(parameters.get("max_interpolation_gap_sec") or DEFAULT_MAX_INTERPOLATION_GAP_SEC),
         max_interpolation_speed_mps=float(parameters.get("max_interpolation_speed_mps") or DEFAULT_MAX_INTERPOLATION_SPEED_MPS),
     )
+    for position in positions:
+        if int(position.get("frame") or -1) in supported_low_confidence_frames:
+            position["supported_low_confidence"] = True
     sources = Counter(str(row.get("source") or "unknown") for row in positions)
     detected_confidence = [float(row.get("confidence") or 0.0) for row in positions if row.get("source") == "detected"]
     return {
@@ -191,11 +205,21 @@ def build_active_play_shadow_tracks_document(
     }
 
 
-def _rank_choices(ordered: list[dict[str, Any]], index: int, candidates: list[dict[str, Any]], *, last: Mapping[str, Any] | None, fps: float, players: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _rank_choices(
+    ordered: list[dict[str, Any]],
+    index: int,
+    candidates: list[dict[str, Any]],
+    *,
+    last_trusted: Mapping[str, Any] | None,
+    fps: float,
+    players: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
     raw: list[dict[str, Any]] = []
     for candidate in candidates:
         confidence = float(candidate.get("confidence") or 0.0)
-        speed = _speed(last, candidate, fps)
+        # A supported low-confidence selection is useful evidence, but cannot
+        # become the sole geometric anchor for subsequent continuity checks.
+        speed = _speed(last_trusted, candidate, fps)
         support = _forward_support(ordered, index, candidate, fps)
         plausible = speed is None or speed <= MAX_CONTINUITY_SPEED_MPS
         reacquire = speed is not None and speed <= MAX_REACQUIRE_SPEED_MPS and confidence >= STRONG_CONFIDENCE and support >= 2
