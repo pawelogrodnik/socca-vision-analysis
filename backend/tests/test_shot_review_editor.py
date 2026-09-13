@@ -14,7 +14,7 @@ def _report(duration: float = 100.0) -> dict:
     return {
         "match": {"duration_sec": duration},
         "teams": [{"team_id": "team-a"}, {"team_id": "team-b"}],
-        "players": [{"player_id": "a1", "team_id": "team-a"}, {"player_id": "b1", "team_id": "team-b"}],
+        "players": [{"player_id": "p-a-1", "team_id": "team-a"}, {"player_id": "p-a-2", "team_id": "team-a"}, {"player_id": "p-b-1", "team_id": "team-b"}],
     }
 
 
@@ -96,7 +96,7 @@ class ShotReviewEditorTests(unittest.TestCase):
 
     def test_team_and_player_validation(self) -> None:
         state = self._initial()
-        for shot, code in (({"time_sec": 10, "team_id": "missing", "outcome": "goal"}, "shot_review_team_invalid"), ({"time_sec": 10, "team_id": "team-a", "player_id": "missing", "outcome": "goal"}, "shot_review_player_invalid"), ({"time_sec": 10, "team_id": "team-a", "player_id": "b1", "outcome": "goal"}, "shot_review_player_invalid")):
+        for shot, code in (({"time_sec": 10, "team_id": "missing", "outcome": "goal"}, "shot_review_team_invalid"), ({"time_sec": 10, "team_id": "team-a", "player_id": "missing", "outcome": "goal"}, "shot_review_player_invalid"), ({"time_sec": 10, "team_id": "team-a", "player_id": "p-b-1", "outcome": "goal"}, "shot_review_player_invalid")):
             with self.assertRaises(editor.ShotReviewError) as failure:
                 editor.create_manual_shot("published-one", {"expected_revision": state["revision"], "shot": shot})
             self.assertEqual(failure.exception.code, code)
@@ -114,9 +114,14 @@ class ShotReviewEditorTests(unittest.TestCase):
         ball = editor.create_manual_shot("published-one", {"expected_revision": self._initial()["revision"], "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"}})
         self.assertEqual((ball["saved_shot"]["location_m"], ball["saved_shot"]["location_source"]), ({"x": 4.0, "y": 5.0}, "ball"))
         _write(self.matches / "source-one" / "ball_tracks.json", {"positions": []})
-        _write(self.matches / "source-one" / "stable_players.json", {"players": [{"stable_player_id": "a1", "trajectory_m": [{"time_sec": 12, "source": "detected", "pitch_m": [6, 7]}]}]})
-        player = editor.create_manual_shot("published-one", {"expected_revision": ball["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "a1", "outcome": "on_target"}})
-        self.assertEqual(player["saved_shot"]["location_source"], "player")
+        _write(self.matches / "source-one" / "match.json", {"video": {"fps": 30}})
+        _write(self.matches / "source-one" / "global_identity.json", {
+            "pitch_dimensions_m": {"width_m": 30, "length_m": 47.4},
+            "slots": [{"stable_subject_id": "slot-a01", "stable_player_id": "A01", "overlay_positions": [{"frame": 360, "time_sec": 12, "source": "detected", "status": "detected", "pitch_m": [6, 7]}]}],
+        })
+        _write(self.matches / "source-one" / "player_identity_assignments.json", {"assignments": [{"stable_subject_id": "slot-a01", "stable_player_id": "A01", "start_frame": 360, "end_frame": 360, "status": "assigned", "player_id": "p-a-1", "team_id": "team-a"}]})
+        player = editor.create_manual_shot("published-one", {"expected_revision": ball["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-1", "outcome": "on_target"}})
+        self.assertEqual((player["saved_shot"]["location_m"], player["saved_shot"]["location_source"]), ({"x": 6.0, "y": 7.0}, "player"))
         manual = editor.create_manual_shot("published-one", {"expected_revision": player["revision"], "shot": {"time_sec": 20, "team_id": "team-a", "outcome": "blocked", "location_m": {"x": 8, "y": 9}}})
         self.assertEqual(manual["saved_shot"]["location_source"], "manual")
         unavailable = editor.create_manual_shot("published-one", {"expected_revision": manual["revision"], "shot": {"time_sec": 30, "team_id": "team-b", "outcome": "off_target"}})
@@ -124,6 +129,50 @@ class ShotReviewEditorTests(unittest.TestCase):
         _write(self.matches / "source-one" / "ball_tracks.json", {"positions": [{"time_sec": 39.8, "source": "detected", "confidence": .9, "position_m": [2, 2]}, {"time_sec": 39.9, "source": "unknown", "confidence": 0, "position_m": None}]})
         blocked = editor.create_manual_shot("published-one", {"expected_revision": unavailable["revision"], "shot": {"time_sec": 40, "team_id": "team-b", "outcome": "off_target"}})
         self.assertEqual(blocked["saved_shot"]["location_source"], "unavailable")
+
+    def test_edit_preserves_location_unless_override_time_or_player_changes(self) -> None:
+        _write(self.matches / "source-one" / "ball_tracks.json", {"positions": [{"time_sec": 10, "source": "detected", "confidence": .9, "position_m": [4, 5]}, {"time_sec": 11, "source": "detected", "confidence": .9, "position_m": [9, 10]}]})
+        initial = self._initial()
+        ball = editor.create_manual_shot("published-one", {"expected_revision": initial["revision"], "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "blocked"}})
+        ball_id = ball["saved_shot"]["shot_id"]
+        outcome_only = editor.edit_canonical_shot("published-one", ball_id, {"expected_revision": ball["revision"], "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "off_target", "location_m": {"x": 4, "y": 5}}})
+        self.assertEqual((outcome_only["saved_shot"]["location_m"], outcome_only["saved_shot"]["location_source"]), ({"x": 4.0, "y": 5.0}, "ball"))
+        changed_time = editor.edit_canonical_shot("published-one", ball_id, {"expected_revision": outcome_only["revision"], "shot": {"time_sec": 11, "team_id": "team-a", "outcome": "off_target"}})
+        self.assertEqual((changed_time["saved_shot"]["location_m"], changed_time["saved_shot"]["location_source"]), ({"x": 9.0, "y": 10.0}, "ball"))
+        manual = editor.create_manual_shot("published-one", {"expected_revision": changed_time["revision"], "shot": {"time_sec": 20, "team_id": "team-a", "outcome": "goal", "location_m": {"x": 8, "y": 9}}})
+        manual_id = manual["saved_shot"]["shot_id"]
+        preserved = editor.edit_canonical_shot("published-one", manual_id, {"expected_revision": manual["revision"], "shot": {"time_sec": 20, "team_id": "team-a", "outcome": "on_target", "location_m": {"x": 8, "y": 9}}})
+        self.assertEqual((preserved["saved_shot"]["location_m"], preserved["saved_shot"]["location_source"]), ({"x": 8.0, "y": 9.0}, "manual"))
+        corrected = editor.edit_canonical_shot("published-one", manual_id, {"expected_revision": preserved["revision"], "shot": {"time_sec": 20, "team_id": "team-a", "outcome": "on_target", "manual_location_override": {"x": 11, "y": 12}}})
+        self.assertEqual((corrected["saved_shot"]["location_m"], corrected["saved_shot"]["location_source"]), ({"x": 11.0, "y": 12.0}, "manual"))
+
+    def test_player_change_rederives_through_resolved_identity_timeline(self) -> None:
+        _write(self.matches / "source-one" / "match.json", {"video": {"fps": 30}})
+        _write(self.matches / "source-one" / "global_identity.json", {"pitch_dimensions_m": {"width_m": 30, "length_m": 47.4}, "slots": [
+            {"stable_subject_id": "slot-a01", "stable_player_id": "A01", "overlay_positions": [{"frame": 360, "time_sec": 12, "source": "detected", "pitch_m": [6, 7]}]},
+            {"stable_subject_id": "slot-a02", "stable_player_id": "A02", "overlay_positions": [{"frame": 360, "time_sec": 12, "source": "detected", "pitch_m": [16, 17]}]},
+        ]})
+        _write(self.matches / "source-one" / "player_identity_assignments.json", {"assignments": [
+            {"stable_subject_id": "slot-a01", "stable_player_id": "A01", "start_frame": 360, "end_frame": 360, "status": "assigned", "player_id": "p-a-1", "team_id": "team-a"},
+            {"stable_subject_id": "slot-a02", "stable_player_id": "A02", "start_frame": 360, "end_frame": 360, "status": "assigned", "player_id": "p-a-2", "team_id": "team-a"},
+        ]})
+        created = editor.create_manual_shot("published-one", {"expected_revision": self._initial()["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-1", "outcome": "goal"}})
+        preserved = editor.edit_canonical_shot("published-one", created["saved_shot"]["shot_id"], {"expected_revision": created["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-1", "outcome": "blocked", "location_m": {"x": 6, "y": 7}}})
+        self.assertEqual((preserved["saved_shot"]["location_m"], preserved["saved_shot"]["location_source"]), ({"x": 6.0, "y": 7.0}, "player"))
+        changed = editor.edit_canonical_shot("published-one", created["saved_shot"]["shot_id"], {"expected_revision": preserved["revision"], "shot": {"time_sec": 12, "team_id": "team-a", "player_id": "p-a-2", "outcome": "goal"}})
+        self.assertEqual((changed["saved_shot"]["location_m"], changed["saved_shot"]["location_source"]), ({"x": 16.0, "y": 17.0}, "player"))
+
+    def test_delete_manual_and_accepted_shots_keeps_review_state_consistent(self) -> None:
+        accepted = self._accept()
+        accepted_id = accepted["accepted_shot"]["shot_id"]
+        manual = editor.create_manual_shot("published-one", {"expected_revision": accepted["revision"], "shot": {"time_sec": 30, "team_id": "team-a", "outcome": "goal"}})
+        manual_deleted = editor.delete_canonical_shot("published-one", manual["saved_shot"]["shot_id"], {"expected_revision": manual["revision"]})
+        self.assertEqual((len(manual_deleted["canonical_shots"]), manual_deleted["accepted_count"]), (1, 1))
+        accepted_deleted = editor.delete_canonical_shot("published-one", accepted_id, {"expected_revision": manual_deleted["revision"]})
+        self.assertEqual((accepted_deleted["accepted_count"], accepted_deleted["rejected_count"], accepted_deleted["unreviewed_count"], accepted_deleted["canonical_shots"]), (0, 1, 0, []))
+        document = editor.load_shot_review_document("published-one")
+        self.assertFalse(any(row.get("review_status") == "accepted" and row.get("canonical_shot_id") not in {shot.get("shot_id") for shot in document["canonical_shots"]} for row in document["suggested_candidate_reviews"]))
+        self.assertEqual(editor.editor_state("published-one"), accepted_deleted)
 
     def test_manual_location_bounds_and_physical_timeline_are_validated(self) -> None:
         with self.assertRaises(editor.ShotReviewError) as location:

@@ -20,6 +20,7 @@ from app.services.artifact_lineage import canonical_json_sha256
 from app.services.json_publish_store import MERGED_SOURCE_KIND, get_published_match
 from app.services.match_groups import get_match_group
 from app.services.merged_public_match import group_id_for_merged_published_id
+from app.services.resolved_player_timeline import build_resolved_player_timeline_from_files
 from app.services.shot_candidates import MIN_BALL_CONFIDENCE, build_logical_shot_candidates_document
 
 
@@ -250,12 +251,19 @@ def _trusted_ball_location(source_id: str, source_time: float) -> dict[str, floa
 def _trusted_player_location(source_id: str, player_id: str | None, source_time: float) -> dict[str, float] | None:
     if not player_id:
         return None
-    players = _read_object(config.MATCHES_DIR / source_id / "stable_players.json").get("players") or []
-    player = next((row for row in players if isinstance(row, dict) and str(row.get("stable_player_id") or "") == player_id), None)
-    if not isinstance(player, dict):
+    # This timeline is the canonical Reviewed Identity resolution.  In
+    # particular it starts with the public roster player_id and only then
+    # follows its assigned stable subject/slot over the exact stint interval.
+    # Comparing roster IDs to stable_player_id would invent a namespace alias.
+    try:
+        timeline = build_resolved_player_timeline_from_files(config.MATCHES_DIR / source_id)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    player = _record(_record(timeline.get("players")).get(player_id))
+    if not player:
         return None
     choices = []
-    for row in player.get("trajectory_m") or []:
+    for row in player.get("rows") or []:
         if not isinstance(row, dict) or str(row.get("source") or row.get("status") or "") not in {"detected", "interpolated"}:
             continue
         time, position = _number(row.get("time_sec")), row.get("pitch_m")
@@ -286,7 +294,17 @@ def _location_for_shot(published_id: str, report: Mapping[str, Any], time_sec: f
     return None, "unavailable"
 
 
-def _validate_shot(published_id: str, report: Mapping[str, Any], raw: Mapping[str, Any], *, origin: str, fallback_time: float | None = None, existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _validate_shot(
+    published_id: str,
+    report: Mapping[str, Any],
+    raw: Mapping[str, Any],
+    *,
+    origin: str,
+    fallback_time: float | None = None,
+    existing: Mapping[str, Any] | None = None,
+    location_mode: str = "derive_or_manual",
+    manual_location_override: Any = None,
+) -> dict[str, Any]:
     duration = _number(_record(report.get("match")).get("duration_sec"))
     time_sec = _number(raw.get("time_sec")) if raw.get("time_sec") is not None else fallback_time
     if time_sec is None or time_sec < 0 or duration is None or time_sec > duration:
@@ -302,7 +320,14 @@ def _validate_shot(published_id: str, report: Mapping[str, Any], raw: Mapping[st
         raise ShotReviewError("shot_review_player_invalid", "Wybrany zawodnik nie występuje w raporcie.")
     if player_id is not None and players[player_id] != team_id:
         raise ShotReviewError("shot_review_player_invalid", "Zawodnik nie należy do wybranej drużyny.")
-    location, location_source = _location_for_shot(published_id, report, time_sec, player_id, raw.get("location_m"))
+    if location_mode == "preserve" and existing is not None:
+        location, location_source = copy.deepcopy(existing.get("location_m")), str(existing.get("location_source") or "unavailable")
+        if location_source not in LOCATION_SOURCES:
+            raise ShotReviewError("shot_review_location_invalid", "Istniejąca lokalizacja strzału jest nieprawidłowa.", 409)
+    elif location_mode == "manual_override":
+        location, location_source = _location_for_shot(published_id, report, time_sec, player_id, manual_location_override)
+    else:
+        location, location_source = _location_for_shot(published_id, report, time_sec, player_id, raw.get("location_m"))
     return {**copy.deepcopy(existing or {}), "shot_id": str((existing or {}).get("shot_id") or f"shot-review-{uuid.uuid4()}"), "time_sec": round(time_sec, 6), "team_id": team_id, "outcome": outcome, "player_id": player_id, "origin": origin, "location_m": location, "location_source": location_source}
 
 
@@ -384,7 +409,30 @@ def edit_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, A
     existing = next((row for row in current["canonical_shots"] if isinstance(row, dict) and str(row.get("shot_id") or "") == shot_id), None)
     if not isinstance(existing, dict):
         raise ShotReviewError("shot_review_shot_not_found", "Nie znaleziono zapisanego strzału.", 404)
-    shot = _validate_shot(published_id, _record(match.get("public_report")), _record(payload.get("shot")), origin=str(existing.get("origin") or "manual"), existing=existing)
+    raw = _record(payload.get("shot"))
+    # location_m is a canonical read model field.  It is intentionally ignored
+    # for ordinary edits; #145 must send manual_location_override to express a
+    # new operator point.  This makes a full-form round trip provenance-safe.
+    next_time = raw.get("time_sec", existing.get("time_sec"))
+    next_player = raw.get("player_id") if "player_id" in raw else existing.get("player_id")
+    normalized = {**raw, "time_sec": next_time, "player_id": next_player}
+    time_changed = _number(next_time) != _number(existing.get("time_sec"))
+    player_changed = (str(next_player or "") or None) != (str(existing.get("player_id") or "") or None)
+    if "manual_location_override" in raw:
+        location_mode, override = "manual_override", raw.get("manual_location_override")
+    elif not time_changed and not player_changed:
+        location_mode, override = "preserve", None
+    else:
+        location_mode, override = "derive_or_manual", None
+    shot = _validate_shot(
+        published_id,
+        _record(match.get("public_report")),
+        normalized,
+        origin=str(existing.get("origin") or "manual"),
+        existing=existing,
+        location_mode=location_mode,
+        manual_location_override=override,
+    )
     shots = [shot if str(row.get("shot_id") or "") == shot_id else row for row in current["canonical_shots"]]
     _persist(published_id, _next_document(current, published_id, shots=shots))
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
@@ -393,8 +441,19 @@ def edit_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, A
 def delete_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     current = load_shot_review_document(published_id)
     _ensure_revision(current, payload)
+    existing = next((row for row in current["canonical_shots"] if isinstance(row, dict) and str(row.get("shot_id") or "") == shot_id), None)
     shots = [row for row in current["canonical_shots"] if isinstance(row, dict) and str(row.get("shot_id") or "") != shot_id]
     if len(shots) == len(current["canonical_shots"]):
         raise ShotReviewError("shot_review_shot_not_found", "Nie znaleziono zapisanego strzału.", 404)
-    _persist(published_id, _next_document(current, published_id, shots=shots))
+    reviews = current.get("suggested_candidate_reviews") or []
+    if isinstance(existing, dict) and existing.get("origin") == "accepted_suggestion":
+        linked = next((row for row in reviews if isinstance(row, dict) and row.get("review_status") == "accepted" and row.get("canonical_shot_id") == shot_id), None)
+        if isinstance(linked, dict):
+            reviews = _replace_review(reviews, {
+                "candidate_id": linked.get("candidate_id"),
+                "candidate_generation_digest": linked.get("candidate_generation_digest"),
+                "review_status": "rejected",
+                "reviewed_at": _now(),
+            })
+    _persist(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
     return editor_state(published_id)
