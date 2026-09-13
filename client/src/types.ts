@@ -3553,6 +3553,66 @@ export type KeyMomentEditorState = {
   public_report?: PublicMatchReport;
 };
 
+export type ShotOutcome = 'goal' | 'on_target' | 'off_target' | 'blocked';
+export type ShotOrigin = 'accepted_suggestion' | 'manual';
+export type ShotLocationSource = 'ball' | 'player' | 'manual' | 'unavailable';
+
+export type ShotPitchLocation = {
+  x: number;
+  y: number;
+};
+
+export type CanonicalShot = {
+  shot_id: string;
+  time_sec: number;
+  team_id: string;
+  outcome: ShotOutcome;
+  player_id: string | null;
+  origin: ShotOrigin;
+  location_m: ShotPitchLocation | null;
+  location_source: ShotLocationSource;
+};
+
+export type ShotReviewSuggestion = {
+  candidate_id: string;
+  time_sec?: number;
+  logical_timestamp_sec?: number;
+  candidate_timestamp_sec?: number;
+  suggested_team_label?: string | null;
+  suggested_team_name?: string | null;
+  suggested_player_id?: string | null;
+  confidence?: number | null;
+  reasons?: string[];
+};
+
+export type ShotReviewShotInput = {
+  time_sec: number;
+  team_id: string;
+  outcome: ShotOutcome;
+  player_id?: string | null;
+  /** Creation-only manual point input. */
+  location_m?: ShotPitchLocation;
+  /** Explicit edit-only manual point input. */
+  manual_location_override?: ShotPitchLocation;
+};
+
+export type ShotReviewEditorState = {
+  published_id: string;
+  revision: string;
+  has_editorial_sidecar: boolean;
+  canonical_shots: CanonicalShot[];
+  candidate_generation_digest: string | null;
+  candidate_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  unreviewed_count: number;
+  unreviewed_suggestions: ShotReviewSuggestion[];
+  suggestions?: {
+    status?: 'ready' | 'not_available' | string;
+    reason?: string | null;
+  };
+};
+
 export type PhysicalPublicMatchReport = PublicMatchReport & {
   report_type: 'public_match_report';
 };

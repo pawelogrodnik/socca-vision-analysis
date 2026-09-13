@@ -71,6 +71,8 @@ import type {
   ReviewWorkflow,
   KeyMomentEditorState,
   KeyMomentEditorialMoment,
+  ShotReviewEditorState,
+  ShotReviewShotInput,
 } from './types';
 import type {
   BoundedH2Session,
@@ -936,6 +938,57 @@ export async function rejectKeyMomentSuggestion(
 ): Promise<KeyMomentEditorState> {
   return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor/suggestions/reject`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function getShotReviewEditor(publishedMatchId: string): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor`);
+}
+
+export async function acceptShotReviewSuggestion(
+  publishedMatchId: string,
+  payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; shot: ShotReviewShotInput },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/suggestions/accept`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function rejectShotReviewSuggestion(
+  publishedMatchId: string,
+  payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/suggestions/reject`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function createShotReviewShot(
+  publishedMatchId: string,
+  payload: { expected_revision: string; shot: ShotReviewShotInput },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/shots`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function editShotReviewShot(
+  publishedMatchId: string,
+  shotId: string,
+  payload: { expected_revision: string; shot: ShotReviewShotInput },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/shots/${encodeURIComponent(shotId)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteShotReviewShot(
+  publishedMatchId: string,
+  shotId: string,
+  payload: { expected_revision: string },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/shots/${encodeURIComponent(shotId)}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
 }
 
