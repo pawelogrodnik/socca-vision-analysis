@@ -2,15 +2,22 @@ import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import {
   acceptKeyMomentSuggestion,
+  acceptShotReviewSuggestion,
+  createShotReviewShot,
+  deleteShotReviewShot,
+  editShotReviewShot,
   getKeyMomentEditor,
+  getShotReviewEditor,
   getMergedMatchExternalVideo,
   getPublishedMatch,
   getStaticPublicMatchReport,
   saveKeyMomentEditor,
   rejectKeyMomentSuggestion,
+  rejectShotReviewSuggestion,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, PublishedMatchDetail } from '../types';
+import { ApiRequestError } from '../lib/apiErrors';
+import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, PublishedMatchDetail, ShotReviewEditorState } from '../types';
 import { MergedSourceDataRebuildPanel } from './MergedSourceDataRebuildPanel';
 import { RedesignedPublishedReportContent } from './RedesignedPublishedReportContent';
 
@@ -22,6 +29,7 @@ export function RedesignedPublishedMatchReportPage() {
   const [externalVideo, setExternalVideo] = useState<MatchGroupExternalVideoStatus | null>(null);
   const [externalVideoLoading, setExternalVideoLoading] = useState(true);
   const [editor, setEditor] = useState<KeyMomentEditorState | null>(null);
+  const [shotReviewEditor, setShotReviewEditor] = useState<ShotReviewEditorState | null>(null);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -57,6 +65,22 @@ export function RedesignedPublishedMatchReportPage() {
     return () => { cancelled = true; };
   }, [devPresentation, matchId, report?.id]);
 
+  useEffect(() => {
+    if (!devPresentation || !matchId) { setShotReviewEditor(null); return; }
+    let cancelled = false;
+    void getShotReviewEditor(matchId)
+      .then((value) => { if (!cancelled) setShotReviewEditor(value); })
+      .catch(() => { if (!cancelled) setShotReviewEditor(null); });
+    return () => { cancelled = true; };
+  }, [devPresentation, matchId, report?.id]);
+
+  async function reloadShotReviewAfterConflict(error: unknown): Promise<never> {
+    if (!(error instanceof ApiRequestError) || error.code !== 'shot_review_revision_conflict' || !matchId) throw error;
+    const latest = await getShotReviewEditor(matchId);
+    setShotReviewEditor(latest);
+    throw new Error('Stan Shot Review zmienił się. Odświeżono najnowszą wersję.');
+  }
+
   return <main className='redesigned-report-shell'>
     {status ? <p className='status'>{status}</p> : null}
     {!report && !status ? <p className='loading-line'><span className='spinner' />Ładuję raport...</p> : null}
@@ -79,6 +103,42 @@ export function RedesignedPublishedMatchReportPage() {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         const saved = await rejectKeyMomentSuggestion(matchId, payload);
         setEditor(saved); return saved;
+      }}
+      shotReviewState={devPresentation ? shotReviewEditor : null}
+      onCreateShot={async (payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
+        try {
+          const saved = await createShotReviewShot(matchId, payload);
+          setShotReviewEditor(saved); return saved;
+        } catch (error) { return reloadShotReviewAfterConflict(error); }
+      }}
+      onEditShot={async (shotId, payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
+        try {
+          const saved = await editShotReviewShot(matchId, shotId, payload);
+          setShotReviewEditor(saved); return saved;
+        } catch (error) { return reloadShotReviewAfterConflict(error); }
+      }}
+      onDeleteShot={async (shotId, payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
+        try {
+          const saved = await deleteShotReviewShot(matchId, shotId, payload);
+          setShotReviewEditor(saved); return saved;
+        } catch (error) { return reloadShotReviewAfterConflict(error); }
+      }}
+      onAcceptShotSuggestion={async (payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
+        try {
+          const saved = await acceptShotReviewSuggestion(matchId, payload);
+          setShotReviewEditor(saved); return saved;
+        } catch (error) { return reloadShotReviewAfterConflict(error); }
+      }}
+      onRejectShotSuggestion={async (payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
+        try {
+          const saved = await rejectShotReviewSuggestion(matchId, payload);
+          setShotReviewEditor(saved); return saved;
+        } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
       sourceDataRebuildPanel={
         devPresentation && report.merged_provenance && matchId

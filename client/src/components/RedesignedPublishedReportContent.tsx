@@ -13,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { KeyMomentEditorialMoment, KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, PublicReportTeam } from '../types';
+import type { KeyMomentEditorialMoment, KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, PublicReportTeam, ShotReviewEditorState, ShotReviewShotInput } from '../types';
 import { publicReportPlayersForTeam, publicReportTeamKey } from '../lib/publicReportPresentation';
 import {
   balancedPossessionPercentages,
@@ -38,6 +38,12 @@ type Props = {
   onSaveEditor?: (draft: { expected_revision: string; moments: KeyMomentEditorialMoment[] }) => Promise<KeyMomentEditorState>;
   onAcceptSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; moment: KeyMomentEditorialMoment }) => Promise<KeyMomentEditorState>;
   onRejectSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string }) => Promise<KeyMomentEditorState>;
+  shotReviewState?: ShotReviewEditorState | null;
+  onCreateShot?: (draft: { expected_revision: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
+  onEditShot?: (shotId: string, draft: { expected_revision: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
+  onDeleteShot?: (shotId: string, draft: { expected_revision: string }) => Promise<ShotReviewEditorState>;
+  onAcceptShotSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
+  onRejectShotSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string }) => Promise<ShotReviewEditorState>;
   sourceDataRebuildPanel?: ReactNode;
 };
 
@@ -214,7 +220,7 @@ function TeamComparison({ report }: { report: PublicMatchReport }) {
   );
 }
 
-export function RedesignedPublishedReportContent({ report, externalVideo, externalVideoLoading = false, editorState, onSaveEditor, onAcceptSuggestion, onRejectSuggestion, sourceDataRebuildPanel }: Props) {
+export function RedesignedPublishedReportContent({ report, externalVideo, externalVideoLoading = false, editorState, onSaveEditor, onAcceptSuggestion, onRejectSuggestion, shotReviewState, onCreateShot, onEditShot, onDeleteShot, onAcceptShotSuggestion, onRejectShotSuggestion, sourceDataRebuildPanel }: Props) {
   const teamOptions = report.teams.map((team, index) => ({ key: publicReportTeamKey(team, index), team }));
   const [selectedTeamKey, setSelectedTeamKey] = useState<string | null>(teamOptions[0]?.key || null);
   const selectedTeam = teamOptions.find((item) => item.key === selectedTeamKey)?.team || teamOptions[0]?.team;
@@ -226,7 +232,7 @@ export function RedesignedPublishedReportContent({ report, externalVideo, extern
       <Hero report={report} />
       <div className='redesigned-report-content'>
         {sourceDataRebuildPanel}
-        <RedesignedReportVideoMoments report={report} externalVideo={externalVideo} externalVideoLoading={externalVideoLoading} editorState={editorState} onSaveEditor={onSaveEditor} onAcceptSuggestion={onAcceptSuggestion} onRejectSuggestion={onRejectSuggestion} />
+        <RedesignedReportVideoMoments report={report} externalVideo={externalVideo} externalVideoLoading={externalVideoLoading} editorState={editorState} onSaveEditor={onSaveEditor} onAcceptSuggestion={onAcceptSuggestion} onRejectSuggestion={onRejectSuggestion} shotReviewState={shotReviewState} onCreateShot={onCreateShot} onEditShot={onEditShot} onDeleteShot={onDeleteShot} onAcceptShotSuggestion={onAcceptShotSuggestion} onRejectShotSuggestion={onRejectShotSuggestion} />
         <MatchFlow report={report} />
         <TeamComparison report={report} />
         <RedesignedReportPlayers players={report.players} teams={report.teams} selectedTeam={selectedTeam} selectedTeamKey={selectedTeamKey} onSelectTeam={setSelectedTeamKey} />
