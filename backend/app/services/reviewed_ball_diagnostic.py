@@ -20,12 +20,18 @@ def render_reviewed_ball_diagnostic(
     output_path: Path,
     *,
     target_duration_sec: float | None = None,
+    start_sec: float | None = None,
+    end_sec: float | None = None,
+    operator_title: str | None = None,
+    highlight_time_sec: float | None = None,
 ) -> dict[str, Any]:
     """Overlay persisted selected ball evidence without changing the source video.
 
     The input is the already-rendered reviewed video, preserving its canonical
     reviewed player boxes and labels. This function never invokes YOLO or a
-    tracker and writes only the requested diagnostic output path.
+    tracker and writes only the requested diagnostic output path.  ``start_sec``
+    and ``end_sec`` allow a small operator-review clip to be rendered without
+    decoding a separate full-match diagnostic artifact.
     """
 
     import cv2
@@ -45,10 +51,21 @@ def render_reviewed_ball_diagnostic(
     if fps <= 0 or width <= 0 or height <= 0:
         capture.release()
         raise RuntimeError("reviewed_video_metadata_unavailable")
+    source_duration_sec = float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0) / fps
+    clip_start_sec, clip_end_sec = _clip_bounds(start_sec, end_sec, source_duration_sec)
+    first_frame = max(0, int(round(clip_start_sec * fps)))
+    last_frame_exclusive = min(
+        int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0),
+        int(round(clip_end_sec * fps)),
+    )
+    if last_frame_exclusive <= first_frame:
+        capture.release()
+        raise ValueError("diagnostic_clip_has_no_frames")
+    capture.set(cv2.CAP_PROP_POS_FRAMES, first_frame)
 
     source_fps = fps
     encoded_fps = fps
-    source_frame_count = float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
+    source_frame_count = float(last_frame_exclusive - first_frame)
     if target_duration_sec is not None:
         if target_duration_sec <= 0 or source_frame_count <= 0:
             capture.release()
@@ -72,14 +89,23 @@ def render_reviewed_ball_diagnostic(
     counts = {"detected_bbox": 0, "detected_marker": 0, "interpolated_marker": 0, "unknown": 0}
     frame_count = 0
     try:
-        while True:
+        frame_index = first_frame
+        while frame_index < last_frame_exclusive:
             ok, frame = capture.read()
             if not ok:
                 break
-            state = draw_ball_evidence_on_main_frame(frame, balls.get(frame_count))
+            state = draw_ball_evidence_on_main_frame(frame, balls.get(frame_index))
+            _draw_operator_review_overlay(
+                frame,
+                operator_title=operator_title,
+                frame_index=frame_index,
+                frame_time_sec=frame_index / fps,
+                highlight_time_sec=highlight_time_sec,
+            )
             counts[state] += 1
             process.stdin.write(frame.tobytes())
             frame_count += 1
+            frame_index += 1
         process.stdin.close()
         stderr = process.stderr.read().decode("utf-8", errors="replace")
         if process.wait() != 0:
@@ -99,6 +125,8 @@ def render_reviewed_ball_diagnostic(
     return {
         "renderer_version": DIAGNOSTIC_RENDERER_VERSION,
         "source_reviewed_video": str(reviewed_video_path),
+        "source_window_sec": [round(clip_start_sec, 3), round(clip_end_sec, 3)],
+        "highlight_time_sec": round(highlight_time_sec, 3) if highlight_time_sec is not None else None,
         "frames": frame_count,
         "source_fps": source_fps,
         "fps": encoded_fps,
@@ -108,6 +136,97 @@ def render_reviewed_ball_diagnostic(
         "file_size_bytes": output_path.stat().st_size,
         "ball_evidence_frames": counts,
     }
+
+
+def _clip_bounds(
+    start_sec: float | None,
+    end_sec: float | None,
+    source_duration_sec: float,
+) -> tuple[float, float]:
+    if source_duration_sec <= 0:
+        raise ValueError("diagnostic_source_duration_invalid")
+    start = 0.0 if start_sec is None else max(0.0, float(start_sec))
+    end = source_duration_sec if end_sec is None else min(source_duration_sec, float(end_sec))
+    if end <= start:
+        raise ValueError("diagnostic_clip_bounds_invalid")
+    return start, end
+
+
+def _draw_operator_review_overlay(
+    frame: Any,
+    *,
+    operator_title: str | None,
+    frame_index: int,
+    frame_time_sec: float,
+    highlight_time_sec: float | None,
+) -> None:
+    """Add only human-readable operator context to a short review clip."""
+
+    if not operator_title and highlight_time_sec is None:
+        return
+    import cv2
+
+    height, width = frame.shape[:2]
+    cv2.rectangle(frame, (0, 0), (width, 52), (8, 20, 34), -1)
+    if operator_title:
+        cv2.putText(
+            frame,
+            operator_title,
+            (18, 33),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.78,
+            (240, 248, 255),
+            2,
+            cv2.LINE_AA,
+        )
+    timecode = _operator_timecode(frame_time_sec)
+    frame_label = f"CZAS WIDEO {timecode}  |  KLATKA {frame_index}"
+    (frame_width, frame_height), frame_baseline = cv2.getTextSize(frame_label, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 2)
+    frame_left = 12
+    frame_top = height - frame_height - frame_baseline - 18
+    cv2.rectangle(
+        frame,
+        (frame_left - 8, frame_top - 8),
+        (frame_left + frame_width + 8, height - 8),
+        (8, 20, 34),
+        -1,
+    )
+    cv2.putText(
+        frame,
+        frame_label,
+        (frame_left, height - frame_baseline - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (240, 248, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    if highlight_time_sec is None or abs(frame_time_sec - highlight_time_sec) > 0.28:
+        return
+    label = "MOZLIWY KONTAKT"
+    (label_width, label_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.95, 3)
+    left = max(16, (width - label_width) // 2 - 16)
+    top = max(62, height - label_height - baseline - 44)
+    cv2.rectangle(frame, (left, top), (left + label_width + 32, top + label_height + baseline + 22), (0, 110, 245), -1)
+    cv2.putText(
+        frame,
+        label,
+        (left + 16, top + label_height + 4),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.95,
+        (255, 255, 255),
+        3,
+        cv2.LINE_AA,
+    )
+
+
+def _operator_timecode(timestamp_sec: float) -> str:
+    """Format a source-video timestamp to centiseconds for human review."""
+
+    total_centiseconds = max(0, int(round(timestamp_sec * 100)))
+    minutes, remaining_centiseconds = divmod(total_centiseconds, 6_000)
+    seconds, centiseconds = divmod(remaining_centiseconds, 100)
+    return f"{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
 def concatenate_reviewed_ball_diagnostics(inputs: Iterable[Path], output_path: Path) -> dict[str, Any]:
