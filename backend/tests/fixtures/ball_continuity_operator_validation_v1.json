@@ -1,0 +1,22 @@
+{
+  "schema_version": "ball-continuity-operator-validation:v1",
+  "evaluation_only": true,
+  "operator_labels_are_algorithm_inputs": false,
+  "references": [
+    {"gold_shot_id": "shot-006", "source_match_id": "9c7485e4", "frame": 13800, "reference_time_sec": 460.0, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-009", "source_match_id": "9c7485e4", "frame": 19620, "reference_time_sec": 654.655, "kind": "contact_layer_control"},
+    {"gold_shot_id": "shot-011", "source_match_id": "9c7485e4", "frame": 26644, "reference_time_sec": 889.022, "kind": "low_confidence_hijack_regression"},
+    {"gold_shot_id": "shot-012", "source_match_id": "9c7485e4", "frame": 29222, "reference_time_sec": 975.042, "kind": "selection_recovery"},
+    {"gold_shot_id": "shot-013", "source_match_id": "9c7485e4", "frame": 30636, "reference_time_sec": 1022.222, "kind": "selection_boundary_inspect"},
+    {"gold_shot_id": "shot-014", "source_match_id": "9c7485e4", "frame": 31560, "reference_time_sec": 1052.0, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-016", "source_match_id": "9c7485e4", "frame": 33935, "reference_time_sec": 1132.299, "kind": "selection_reacquisition"},
+    {"gold_shot_id": "shot-019", "source_match_id": "6d8fc20c", "frame": 7341, "reference_time_sec": 244.7, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-020", "source_match_id": "6d8fc20c", "frame": 8961, "reference_time_sec": 298.7, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-021", "source_match_id": "6d8fc20c", "frame": 11571, "reference_time_sec": 385.7, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-026", "source_match_id": "5e62625e", "frame": 904, "reference_time_sec": 30.122, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-027", "source_match_id": "5e62625e", "frame": 2164, "reference_time_sec": 72.122, "kind": "low_confidence_continuity"},
+    {"gold_shot_id": "shot-028", "source_match_id": "5e62625e", "frame": 5038, "reference_time_sec": 168.118, "kind": "active_play_identity", "expected_candidate_id": "ball-f005038-c00"},
+    {"gold_shot_id": "shot-030", "source_match_id": "5e62625e", "frame": 8434, "reference_time_sec": 281.122, "kind": "low_confidence_continuity"}
+  ],
+  "notes": ["Operator conclusions are evaluation truth only and must never be consumed by runtime modules."]
+}
