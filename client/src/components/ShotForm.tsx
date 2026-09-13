@@ -28,7 +28,10 @@ export function ShotForm({ mode, report, initial, onCancel, onSave }: Props) {
   const [saving, setSaving] = useState(false);
   const [manualPoint, setManualPoint] = useState<ShotPitchLocation | null>(null);
   const [showPitchPicker, setShowPitchPicker] = useState(initial.location_source === 'unavailable');
-  const [teamConfirmed, setTeamConfirmed] = useState(mode !== 'accept');
+  const hasResolvedSuggestedTeam = mode === 'accept'
+    && Boolean(initial.team_id)
+    && report.teams.some((team) => team.team_id === initial.team_id);
+  const [teamConfirmed, setTeamConfirmed] = useState(mode !== 'accept' || hasResolvedSuggestedTeam);
   const [outcomeConfirmed, setOutcomeConfirmed] = useState(mode !== 'accept');
   const dimensions = report.team_shape?.pitch_dimensions_m || { width_m: 30, length_m: 47.4 };
 
@@ -63,7 +66,7 @@ export function ShotForm({ mode, report, initial, onCancel, onSave }: Props) {
   const title = mode === 'create' ? 'Nowy strzał' : mode === 'accept' ? 'Akceptuj sugerowany strzał' : 'Edytuj strzał';
   return <section className='key-moment-focus-form shot-focus-form' aria-labelledby='shot-focus-title'>
     <h3 id='shot-focus-title'>{title}</h3>
-    {mode === 'accept' ? <p className='muted'>Potwierdź drużynę i wynik przed zapisem.</p> : null}
+    {mode === 'accept' ? <p className='muted'>Sprawdź drużynę i wybierz wynik przed zapisem.</p> : null}
     <label>Czas *<input aria-label='Czas strzału' value={timeText} onChange={(event) => setTimeText(event.target.value)} /></label>
     <label>Drużyna *<select aria-label='Drużyna strzału' value={shot.team_id} onChange={(event) => { setShot((value) => ({ ...value, team_id: event.target.value, player_id: null })); setTeamConfirmed(true); }}><option value=''>—</option>{report.teams.map((team) => <option key={team.team_id} value={team.team_id || ''}>{team.team_name || team.team_label}</option>)}</select></label>
     <label>Wynik *<select aria-label='Wynik strzału' value={shot.outcome || ''} onChange={(event) => { setShot((value) => ({ ...value, outcome: event.target.value as ShotOutcome })); setOutcomeConfirmed(true); }}><option value=''>—</option>{outcomes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

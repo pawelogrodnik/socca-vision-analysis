@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import React from 'react';
 
 import { RedesignedReportVideoMoments } from '../src/components/RedesignedReportVideoMoments.tsx';
+import { ShotForm } from '../src/components/ShotForm.tsx';
 import type { KeyMomentEditorState, PublicMatchReport, ShotReviewEditorState } from '../src/types.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/matches/published-test/report?dev=1' });
@@ -45,12 +46,12 @@ function keyMomentState(): KeyMomentEditorState {
   return { key_moment_editor_allowed: true, revision: 'km-r1', moments: [{ moment_id: 'km-1', time_sec: 40, category: 'other', headline: 'Moment', origin: 'manual' }], suggestions: { status: 'ready', unreviewed_count: 0, candidates: [] } };
 }
 
-function shotState(): ShotReviewEditorState {
+function shotState(suggestion: Partial<ShotReviewEditorState['unreviewed_suggestions'][number]> = {}): ShotReviewEditorState {
   return {
     published_id: 'published-test', revision: 'shot-r1', has_editorial_sidecar: true,
     canonical_shots: [{ shot_id: 'shot-1', time_sec: 50, team_id: 'corgi', outcome: 'blocked', player_id: 'p-corgi-1', origin: 'manual', location_m: { x: 4, y: 5 }, location_source: 'ball' }],
     candidate_generation_digest: 'candidate-r1', candidate_count: 1, accepted_count: 0, rejected_count: 0, unreviewed_count: 1,
-    unreviewed_suggestions: [{ candidate_id: 'candidate-1', logical_timestamp_sec: 100, suggested_team_name: 'Verisk', confidence: .74 }], suggestions: { status: 'ready' },
+    unreviewed_suggestions: [{ candidate_id: 'candidate-1', logical_timestamp_sec: 100, suggested_team_name: 'Verisk', confidence: .74, ...suggestion }], suggestions: { status: 'ready' },
   };
 }
 
@@ -63,9 +64,8 @@ function installPlayer(): MockYouTubePlayer[] {
   return players;
 }
 
-function renderReview(callbacks: Partial<React.ComponentProps<typeof RedesignedReportVideoMoments>> = {}) {
+function renderReview(callbacks: Partial<React.ComponentProps<typeof RedesignedReportVideoMoments>> = {}, shots = shotState()) {
   const keyState = keyMomentState();
-  const shots = shotState();
   return render(React.createElement(RedesignedReportVideoMoments, {
     report, externalVideo, editorState: keyState, shotReviewState: shots,
     onSaveEditor: async () => keyState, onAcceptSuggestion: async () => keyState, onRejectSuggestion: async () => keyState,
@@ -99,7 +99,7 @@ test('domain switch preserves the one persistent YouTube player and shot rows se
   assert.equal(players.length, 1);
 });
 
-test('suggestion supports seek, accept form, explicit team/outcome confirmation, and reject', async () => {
+test('prefilled suggested team accepts after the operator chooses only an outcome, then supports reject', async () => {
   const players = installPlayer();
   let accepted: unknown;
   let rejected: unknown;
@@ -117,9 +117,6 @@ test('suggestion supports seek, accept form, explicit team/outcome confirmation,
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));
   assert.ok(view.getByRole('heading', { name: 'Akceptuj sugerowany strzał' }));
   assert.equal((view.getByLabelText('Drużyna strzału') as HTMLSelectElement).value, 'verisk');
-  fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
-  assert.match(view.getByText(/Potwierdź drużynę/).textContent || '', /Potwierdź/);
-  fireEvent.change(view.getByLabelText('Drużyna strzału'), { target: { value: 'verisk' } });
   fireEvent.change(view.getByLabelText('Wynik strzału'), { target: { value: 'on_target' } });
   fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
   await waitFor(() => assert.ok(accepted));
@@ -129,6 +126,38 @@ test('suggestion supports seek, accept form, explicit team/outcome confirmation,
   fireEvent.click(view.getByRole('button', { name: 'Odrzuć' }));
   await waitFor(() => assert.ok(rejected));
   assert.deepEqual(rejected, { expected_revision: 'shot-r1', candidate_id: 'candidate-1', candidate_generation_digest: 'candidate-r1' });
+});
+
+test('unresolved suggested team still requires a team selection before acceptance', async () => {
+  let accepted: unknown;
+  const shots = shotState({ suggested_team_name: null, suggested_team_label: null });
+  const view = renderReview({ onAcceptShotSuggestion: async (payload) => { accepted = payload; return shots; } }, shots);
+  fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
+  fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
+  fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));
+  assert.equal((view.getByLabelText('Drużyna strzału') as HTMLSelectElement).value, '');
+  fireEvent.change(view.getByLabelText('Wynik strzału'), { target: { value: 'blocked' } });
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
+  assert.match(view.getByText('Wybierz drużynę.').textContent || '', /Wybierz drużynę/);
+  assert.equal(accepted, undefined);
+  fireEvent.change(view.getByLabelText('Drużyna strzału'), { target: { value: 'corgi' } });
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
+  await waitFor(() => assert.ok(accepted));
+});
+
+test('changing a prefilled suggested team clears an incompatible player', async () => {
+  let saved: unknown;
+  const view = render(React.createElement(ShotForm, {
+    mode: 'accept', report,
+    initial: { time_sec: 100, team_id: 'verisk', outcome: '', player_id: 'p-verisk-1', location_m: null, location_source: 'unavailable' },
+    onCancel: () => {}, onSave: async (payload) => { saved = payload; },
+  }));
+  assert.equal((view.getByLabelText('Zawodnik strzału') as HTMLSelectElement).value, 'p-verisk-1');
+  fireEvent.change(view.getByLabelText('Drużyna strzału'), { target: { value: 'corgi' } });
+  assert.equal((view.getByLabelText('Zawodnik strzału') as HTMLSelectElement).value, '');
+  fireEvent.change(view.getByLabelText('Wynik strzału'), { target: { value: 'goal' } });
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
+  await waitFor(() => assert.deepEqual(saved, { time_sec: 100, team_id: 'corgi', outcome: 'goal', player_id: null }));
 });
 
 test('manual add uses current player time; editing omits read-only location_m and explicit pitch click sends override', async () => {
