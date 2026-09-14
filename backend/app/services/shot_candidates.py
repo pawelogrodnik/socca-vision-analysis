@@ -25,6 +25,7 @@ PREVIOUS_POLICY_VERSION = "shot-candidate-shadow:v1"
 V3_POLICY_VERSION = "shot-candidate-shadow:v3"
 V4_CONTINUITY_BRIDGE_POLICY_VERSION = "shot-candidate-shadow:v4-continuity-bridge"
 V5_WEAK_BOUNDARY_POLICY_VERSION = "shot-candidate-shadow:v5-weak-boundary"
+V6_COMPOSED_SUPPRESSION_POLICY_VERSION = "shot-candidate-shadow:v6-v5-structural-suppression"
 SCHEMA_VERSION = "shot-candidates:v1"
 SOURCE = "canonical_ball_contact_trajectory_shadow_v1"
 ALLOWED_CONTACT_STATUSES = {"accepted", "uncertain", "needs_review"}
@@ -105,10 +106,13 @@ def build_shot_candidates_document(
 
     deduplicated = _deduplicate(
         candidates,
-        preserve_primary_candidate_identity=policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION,
+        preserve_primary_candidate_identity=policy_version in {
+            V5_WEAK_BOUNDARY_POLICY_VERSION,
+            V6_COMPOSED_SUPPRESSION_POLICY_VERSION,
+        },
     )
     suppressed: list[dict[str, Any]] = []
-    if policy_version == V3_POLICY_VERSION:
+    if policy_version in {V3_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION}:
         deduplicated, suppressed = _apply_v3_structural_suppression(deduplicated)
     summary = _summary(deduplicated, skipped, suppressed)
     return {
@@ -135,7 +139,7 @@ def build_shot_candidates_document(
                 "pass_like_min_trajectory_distance_m": V3_PASS_LIKE_MIN_TRAJECTORY_DISTANCE_M,
                 "later_shot_horizon_sec": V3_LATER_SHOT_HORIZON_SEC,
                 "later_shot_min_confidence_delta": V3_LATER_SHOT_MIN_CONFIDENCE_DELTA,
-            } if policy_version == V3_POLICY_VERSION else {}),
+            } if policy_version in {V3_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} else {}),
             **({
                 "continuity_bridge_mode": "contact_bounded_trusted_endpoint_interpolation",
                 "max_continuity_bridge_gap_sec": V4_MAX_CONTINUITY_BRIDGE_GAP_SEC,
@@ -143,19 +147,23 @@ def build_shot_candidates_document(
                 "single_pre_endpoint_max_gap_sec": V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC,
                 "min_post_endpoint_support": V4_MIN_POST_ENDPOINT_SUPPORT,
                 "min_heading_cosine": V4_MIN_HEADING_COSINE,
-            } if policy_version in {V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION} else {}),
+            } if policy_version in {
+                V4_CONTINUITY_BRIDGE_POLICY_VERSION,
+                V5_WEAK_BOUNDARY_POLICY_VERSION,
+                V6_COMPOSED_SUPPRESSION_POLICY_VERSION,
+            } else {}),
             **({
                 "weak_detected_boundary_mode": "single_local_detected_row_with_trusted_endpoint_geometry",
                 "weak_detected_boundary_max_spatial_residual_m": V5_WEAK_BOUNDARY_MAX_SPATIAL_RESIDUAL_M,
-            } if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION else {}),
+            } if policy_version in {V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} else {}),
         },
         "source_match_id": source_match_id,
         "logical_offset_sec": _round(logical_offset_sec),
         "pitch_dimensions_m": {"width": _round(pitch_width_m), "length": _round(pitch_length_m)},
         "summary": summary,
         "candidates": sorted(deduplicated, key=lambda row: (row["logical_timestamp_sec"], row["candidate_key"])),
-        **({"suppressed_candidate_diagnostics": suppressed} if policy_version == V3_POLICY_VERSION else {}),
-        **({"weak_boundary_diagnostics": sorted(weak_boundary_diagnostics, key=lambda row: (str(row.get("contact_event_id") or ""), str(row.get("weak_boundary_state") or "")))} if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION else {}),
+        **({"suppressed_candidate_diagnostics": suppressed} if policy_version in {V3_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} else {}),
+        **({"weak_boundary_diagnostics": sorted(weak_boundary_diagnostics, key=lambda row: (str(row.get("contact_event_id") or ""), str(row.get("weak_boundary_state") or "")))} if policy_version in {V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} else {}),
         "notes": [
             "Every row is a suggested shot candidate requiring future operator confirmation.",
             "final_stat_eligible is always false in the shadow candidate layer.",
@@ -197,6 +205,7 @@ def build_logical_shot_candidates_document(
     _validate_policy_version(policy_version)
     candidates: list[dict[str, Any]] = []
     weak_boundary_diagnostics: list[dict[str, Any]] = []
+    suppressed_candidate_diagnostics: list[dict[str, Any]] = []
     for source in sources:
         source_id = str(source.get("source_match_id") or "")
         offset = _number(source.get("logical_offset_sec"), 0.0)
@@ -223,7 +232,7 @@ def build_logical_shot_candidates_document(
                 "logical_context_end_sec": _round(offset + _number(physical.get("source_context_end_sec"), source_time)),
                 "physical_candidate_key": physical.get("candidate_key"),
             })
-        if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION:
+        if policy_version in {V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION}:
             for diagnostic in document.get("weak_boundary_diagnostics") or []:
                 if not isinstance(diagnostic, Mapping):
                     continue
@@ -232,6 +241,26 @@ def build_logical_shot_candidates_document(
                     **dict(diagnostic),
                     "source_match_id": source_id,
                     "logical_contact_timestamp_sec": _round(offset + source_time),
+                })
+        if policy_version == V6_COMPOSED_SUPPRESSION_POLICY_VERSION:
+            for diagnostic in document.get("suppressed_candidate_diagnostics") or []:
+                if not isinstance(diagnostic, Mapping):
+                    continue
+                source_time = _number(diagnostic.get("source_timestamp_sec"), 0.0)
+                physical_candidate_key = diagnostic.get("candidate_key")
+                logical_candidate_key = _key("shot-logical", {
+                    "source_candidate_key": physical_candidate_key,
+                    "source_match_id": source_id,
+                    "logical_offset_sec": _round(offset),
+                })
+                suppressed_candidate_diagnostics.append({
+                    **dict(diagnostic),
+                    "candidate_id": f"shot-{logical_candidate_key.rsplit(':', 1)[-1][:12]}",
+                    "candidate_key": logical_candidate_key,
+                    "physical_candidate_id": diagnostic.get("candidate_id"),
+                    "physical_candidate_key": physical_candidate_key,
+                    "source_match_id": source_id,
+                    "logical_timestamp_sec": _round(offset + source_time),
                 })
     candidates.sort(key=lambda row: (row["logical_timestamp_sec"], row["candidate_key"]))
     return {
@@ -245,9 +274,17 @@ def build_logical_shot_candidates_document(
             "candidates_total": len(candidates),
             "source_match_count": len({str(row.get("source_match_id") or "") for row in candidates}),
             "candidates_per_10_minutes": _round(len(candidates) / (timeline_span_sec / 600.0)) if timeline_span_sec > 0 else None,
+            **({
+                "suppressed_candidates_total": len(suppressed_candidate_diagnostics),
+                "suppressed_evidence_reasons": dict(sorted(Counter(
+                    str(row.get("suppression_reason") or "unknown")
+                    for row in suppressed_candidate_diagnostics
+                ).items())),
+            } if policy_version == V6_COMPOSED_SUPPRESSION_POLICY_VERSION else {}),
         },
         "candidates": candidates,
-        **({"weak_boundary_diagnostics": sorted(weak_boundary_diagnostics, key=lambda row: (str(row.get("source_match_id") or ""), _number(row.get("contact_timestamp_sec"), 0.0), str(row.get("contact_event_id") or "")))} if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION else {}),
+        **({"weak_boundary_diagnostics": sorted(weak_boundary_diagnostics, key=lambda row: (str(row.get("source_match_id") or ""), _number(row.get("contact_timestamp_sec"), 0.0), str(row.get("contact_event_id") or "")))} if policy_version in {V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} else {}),
+        **({"suppressed_candidate_diagnostics": sorted(suppressed_candidate_diagnostics, key=lambda row: (str(row.get("source_match_id") or ""), _number(row.get("source_timestamp_sec"), 0.0), str(row.get("candidate_key") or "")))} if policy_version == V6_COMPOSED_SUPPRESSION_POLICY_VERSION else {}),
         "notes": [
             "Logical timestamps are source-local timestamps rebased with the canonical logical offset.",
             "Candidates remain suggestions and are excluded from all canonical analytics.",
@@ -279,7 +316,7 @@ def _candidate_from_contact(
         policy_version=policy_version,
         next_contact_time=_number(next_event.get("start_time_sec"), _number(next_event.get("end_time_sec"), -1.0)) if next_event else None,
     )
-    if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION and bridge_diagnostics.get("weak_boundary_considered"):
+    if policy_version in {V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} and bridge_diagnostics.get("weak_boundary_considered"):
         if weak_boundary_diagnostics is not None:
             weak_boundary_diagnostics.append({
                 "contact_event_id": event.get("event_id"),
@@ -306,7 +343,7 @@ def _candidate_from_contact(
         trajectory_summary["distance_m"] >= MIN_TRAJECTORY_DISTANCE_M
         and trajectory_summary["mean_speed_mps"] >= MIN_TRAJECTORY_SPEED_MPS
     )
-    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION} and _is_strong_short_prefix(
+    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} and _is_strong_short_prefix(
         trajectory_summary,
         ball_timeline,
         trajectory,
@@ -531,7 +568,7 @@ def _trajectory_for_policy(
     """
 
     ordinary = _trajectory_from_launch(rows, launch, launch_time)
-    if policy_version not in {V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION} or ordinary is not None:
+    if policy_version not in {V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} or ordinary is not None:
         return ordinary, {"considered": False, "applied": False}
     bridged, diagnostics = _contact_bounded_continuity_bridge(rows, launch, launch_time, next_contact_time=next_contact_time)
     if diagnostics.get("applied") or policy_version == V4_CONTINUITY_BRIDGE_POLICY_VERSION:
@@ -1168,7 +1205,7 @@ def _summary(candidates: list[dict[str, Any]], skipped: Counter[str], suppressed
 
 
 def _validate_policy_version(policy_version: str) -> None:
-    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION}:
+    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION}:
         raise ValueError(f"Unsupported shot candidate policy version: {policy_version}")
 
 
