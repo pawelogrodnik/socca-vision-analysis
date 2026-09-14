@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.main import app
 from app.services import shot_review_editor as editor
+from app.services.shot_candidates import POLICY_VERSION, V2_POLICY_VERSION
 
 
 def _report(duration: float = 100.0) -> dict:
@@ -32,7 +33,7 @@ class ShotReviewEditorTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.matches = self.root / "matches"
-        _write(self.matches / "source-one" / "shot_candidates.json", {"policy_version": "shot-candidate-shadow:v2", "candidates": [{"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0}]})
+        _write(self.matches / "source-one" / "shot_candidates.json", {"policy_version": POLICY_VERSION, "candidates": [{"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0}]})
         self.patches = [
             patch("app.services.shot_review_editor.EDITORIAL_DIRECTORY", self.root / "editorial"),
             patch.object(editor.config, "MATCHES_DIR", self.matches),
@@ -59,7 +60,7 @@ class ShotReviewEditorTests(unittest.TestCase):
         })
 
     def _write_candidates(self, rows: list[dict]) -> None:
-        _write(self.matches / "source-one" / "shot_candidates.json", {"policy_version": "shot-candidate-shadow:v2", "candidates": rows})
+        _write(self.matches / "source-one" / "shot_candidates.json", {"policy_version": POLICY_VERSION, "candidates": rows})
 
     def test_accept_creates_canonical_shot_hides_suggestion_and_changes_revision(self) -> None:
         initial = self._initial()
@@ -77,6 +78,37 @@ class ShotReviewEditorTests(unittest.TestCase):
         self.assertEqual(rejected["suggestions"]["unreviewed_count"], 0)
         self.assertEqual(reopened["suggestions"]["rejected_count"], 1)
         self.assertEqual(reopened["suggestions"]["unreviewed_count"], 0)
+
+    def test_rejection_and_canonical_shots_survive_promoted_policy_rebuild(self) -> None:
+        initial = self._initial()
+        accepted = self._accept(initial)
+        manual = editor.create_manual_shot("published-one", {
+            "expected_revision": accepted["revision"],
+            "shot": {"time_sec": 25, "team_id": "team-b", "outcome": "blocked"},
+        })
+        self._write_candidates([
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0},
+            {"candidate_id": "candidate-rejected", "candidate_timestamp_sec": 30.0},
+        ])
+        before_rebuild = self._initial()
+        rejected = editor.reject_suggestion("published-one", {
+            "expected_revision": before_rebuild["revision"],
+            "candidate_id": "candidate-rejected",
+            "candidate_generation_digest": before_rebuild["suggestions"]["candidate_generation_digest"],
+        })
+        _write(self.matches / "source-one" / "shot_candidates.json", {
+            "policy_version": V2_POLICY_VERSION,
+            "candidates": [
+                {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0},
+                {"candidate_id": "candidate-rejected", "candidate_timestamp_sec": 30.0},
+            ],
+        })
+        rebuilt = self._initial()
+
+        self.assertNotEqual(rejected["suggestions"]["candidate_generation_digest"], rebuilt["suggestions"]["candidate_generation_digest"])
+        self.assertEqual((rebuilt["suggestions"]["accepted_count"], rebuilt["suggestions"]["rejected_count"], rebuilt["suggestions"]["unreviewed_count"]), (1, 1, 0))
+        self.assertEqual({row["origin"] for row in rebuilt["canonical_shots"]}, {"accepted_suggestion", "manual"})
+        self.assertEqual(manual["saved_shot"]["shot_id"], next(row["shot_id"] for row in rebuilt["canonical_shots"] if row["origin"] == "manual"))
 
     def test_manual_shot_needs_only_required_fields_and_survives_generation_change(self) -> None:
         initial = self._initial()
@@ -192,6 +224,25 @@ class ShotReviewEditorTests(unittest.TestCase):
             state = editor.editor_state("published-merged-one")
             saved = editor.create_manual_shot("published-merged-one", {"expected_revision": state["revision"], "shot": {"time_sec": 80, "team_id": "team-a", "outcome": "goal"}})
         self.assertEqual(saved["saved_shot"]["location_source"], "ball")
+
+    def test_merged_review_reads_a_uniform_historic_policy_until_full_regeneration(self) -> None:
+        _write(self.matches / "source-two" / "shot_candidates.json", {
+            "policy_version": V2_POLICY_VERSION,
+            "candidates": [{"candidate_id": "candidate-2", "candidate_timestamp_sec": 20.0}],
+        })
+        _write(self.matches / "source-one" / "shot_candidates.json", {
+            "policy_version": V2_POLICY_VERSION,
+            "candidates": [{"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0}],
+        })
+        merged = {"source_kind": "merged", "public_report": _report()}
+        members = [
+            {"source_match_id": "source-one", "logical_start_sec": 0, "logical_end_sec": 50},
+            {"source_match_id": "source-two", "logical_start_sec": 50, "logical_end_sec": 100},
+        ]
+        with patch("app.services.shot_review_editor.get_published_match", return_value=merged), patch("app.services.shot_review_editor.group_id_for_merged_published_id", return_value="group-one"), patch("app.services.shot_review_editor.get_match_group", return_value={"members": members, "aggregate_semantic_digest": "group"}):
+            state = editor.editor_state("published-merged-one")
+        self.assertEqual(state["suggestions"]["status"], "ready")
+        self.assertEqual(state["suggestions"]["candidate_count"], 2)
 
     def test_missing_sidecar_after_operator_mutation_fails_closed(self) -> None:
         saved = editor.create_manual_shot("published-one", {"expected_revision": self._initial()["revision"], "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"}})

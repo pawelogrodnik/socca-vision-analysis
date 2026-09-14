@@ -153,7 +153,26 @@ def _suggestion_projection(published_id: str) -> dict[str, Any]:
             document = _read_object(config.MATCHES_DIR / source_id / "shot_candidates.json")
             if document:
                 sources.append({"source_match_id": source_id, "logical_offset_sec": _number(member.get("logical_start_sec")) or 0.0, "shot_candidates": document})
-        logical = build_logical_shot_candidates_document(sources, timeline_span_sec=_number(_record(report.get("match")).get("duration_sec")) or 0.0)
+        source_policy_versions = {
+            str(_record(source.get("shot_candidates")).get("policy_version") or "")
+            for source in sources
+        }
+        if len(source_policy_versions) != 1 or not next(iter(source_policy_versions), ""):
+            return {
+                "status": "not_available",
+                "reason": "shot_candidate_policy_mismatch",
+                "candidate_count": 0,
+                "candidates": [],
+            }
+        # Read the policy that produced the persisted source artifacts.  A
+        # group is intentionally not projected from a mixture of policies;
+        # regeneration applies the promoted default consistently to all
+        # members, while old artifacts remain reproducible and reviewable.
+        logical = build_logical_shot_candidates_document(
+            sources,
+            timeline_span_sec=_number(_record(report.get("match")).get("duration_sec")) or 0.0,
+            policy_version=next(iter(source_policy_versions)),
+        )
         normalized = [{**copy.deepcopy(row), "time_sec": _number(row.get("logical_timestamp_sec"))} for row in logical.get("candidates") or [] if isinstance(row, dict)]
         digest_input = {"manifest_digest": manifest.get("aggregate_semantic_digest"), "logical_candidates": logical}
     digest = canonical_json_sha256({"schema_version": SHOT_REVIEW_SCHEMA_VERSION, "published_id": published_id, "candidate_source": digest_input})
@@ -161,11 +180,40 @@ def _suggestion_projection(published_id: str) -> dict[str, Any]:
 
 
 def _reviews_for_generation(document: Mapping[str, Any], generation_digest: str) -> dict[str, dict[str, Any]]:
-    return {
+    current_generation = {
         str(row.get("candidate_id")): row
         for row in document.get("suggested_candidate_reviews") or []
         if isinstance(row, dict) and str(row.get("candidate_generation_digest") or "") == generation_digest and row.get("candidate_id")
     }
+    if current_generation:
+        return current_generation
+    return {}
+
+
+def _reviews_for_candidates(
+    document: Mapping[str, Any],
+    generation_digest: str,
+    candidates: list[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Apply durable decisions to stable candidate identities after rebuild.
+
+    A candidate ID is derived from the reviewed contact and source evidence,
+    not its policy version.  A regenerated document therefore must not make a
+    previously rejected same candidate reviewable again merely because its
+    aggregate generation digest changed.  Same-generation reviews always win;
+    historical rows are used only for still-present candidate IDs.
+    """
+
+    current = _reviews_for_generation(document, generation_digest)
+    candidate_ids = {str(candidate.get("candidate_id") or "") for candidate in candidates}
+    historical = {
+        str(row.get("candidate_id") or ""): row
+        for row in document.get("suggested_candidate_reviews") or []
+        if isinstance(row, dict)
+        and str(row.get("candidate_generation_digest") or "") != generation_digest
+        and str(row.get("candidate_id") or "") in candidate_ids
+    }
+    return {**historical, **current}
 
 
 def _candidate_time(candidate: Mapping[str, Any]) -> float:
@@ -326,7 +374,11 @@ def editor_state(published_id: str) -> dict[str, Any]:
             "unreviewed_clusters": [],
         }
     else:
-        reviews = _reviews_for_generation(document, str(projection["candidate_generation_digest"]))
+        reviews = _reviews_for_candidates(
+            document,
+            str(projection["candidate_generation_digest"]),
+            projection["candidates"],
+        )
         unreviewed, accepted, rejected = [], 0, 0
         for candidate in projection["candidates"]:
             status = str((reviews.get(str(candidate.get("candidate_id") or "")) or {}).get("review_status") or "unreviewed")
@@ -561,7 +613,7 @@ def _current_cluster(published_id: str, current: Mapping[str, Any], payload: Map
     clusters = _cluster_projection(
         projection["candidates"],
         candidate_generation_digest=digest,
-        reviews=_reviews_for_generation(current, digest),
+        reviews=_reviews_for_candidates(current, digest, projection["candidates"]),
         timeline_span_sec=_number(_record(report.get("match")).get("duration_sec")),
     )
     cluster_id = str(payload.get("cluster_id") or "")
@@ -614,7 +666,7 @@ def accept_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
     shot["suggested_cluster_id"] = str(cluster.get("cluster_id") or "")
     shot["suggested_cluster_member_candidate_ids"] = list(cluster.get("member_candidate_ids") or [])
     reviews: list[dict[str, Any]] | Any = current.get("suggested_candidate_reviews") or []
-    existing_reviews = _reviews_for_generation(current, digest)
+    existing_reviews = _reviews_for_candidates(current, digest, cluster["member_candidates"])
     reviewed_at = _now()
     for candidate_id in cluster.get("member_candidate_ids") or []:
         # A prior candidate-level rejection is durable operator truth.  A
@@ -643,7 +695,7 @@ def reject_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
     cluster = _current_cluster(published_id, current, payload)
     digest = str(payload.get("candidate_generation_digest") or "")
     reviews: list[dict[str, Any]] | Any = current.get("suggested_candidate_reviews") or []
-    existing_reviews = _reviews_for_generation(current, digest)
+    existing_reviews = _reviews_for_candidates(current, digest, cluster["member_candidates"])
     reviewed_at = _now()
     for candidate_id in cluster.get("member_candidate_ids") or []:
         if (existing_reviews.get(str(candidate_id)) or {}).get("review_status") == "rejected":
