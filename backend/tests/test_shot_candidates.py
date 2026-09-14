@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 import app.services.shot_candidates as shot_candidates
@@ -9,6 +10,7 @@ from app.services.shot_candidates import (
     PREVIOUS_POLICY_VERSION,
     V3_POLICY_VERSION,
     V4_CONTINUITY_BRIDGE_POLICY_VERSION,
+    V5_WEAK_BOUNDARY_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -335,6 +337,170 @@ class ShotCandidatesTests(unittest.TestCase):
         first = candidates([event("diag", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
         second = candidates([event("diag", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
         self.assertEqual(first["candidates"][0]["trajectory_evidence"]["continuity_bridge"], second["candidates"][0]["trajectory_evidence"]["continuity_bridge"])
+
+    def test_v5_reinterprets_one_spatially_consistent_weak_detected_boundary(self) -> None:
+        ball_document = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 26.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 23.0], "source": "detected", "confidence": 0.1},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 20.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 14.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+
+        v4 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
+        v5 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+
+        self.assertEqual(v4["candidates"], [])
+        self.assertEqual(len(v5["candidates"]), 1)
+        evidence = v5["candidates"][0]["trajectory_evidence"]["continuity_bridge"]
+        self.assertEqual(evidence["weak_boundary_state"], "weak_boundary_reinterpreted")
+        self.assertTrue(evidence["weak_boundary_considered"])
+        self.assertEqual(v5["weak_boundary_diagnostics"][0]["weak_boundary_state"], "weak_boundary_reinterpreted")
+        self.assertIn("continuity_bridge_applied", v5["candidates"][0]["reasons"])
+
+    def test_v5_keeps_v2_v3_and_v4_semantics_unchanged(self) -> None:
+        ball_document = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 26.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 23.0], "source": "detected", "confidence": 0.1},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 20.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 14.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+
+        v2 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=POLICY_VERSION)
+        v3 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V3_POLICY_VERSION)
+        v4 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
+        v5 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+
+        self.assertEqual(v2["candidates"], [])
+        self.assertEqual(v3["candidates"], [])
+        self.assertEqual(v4["candidates"], [])
+        self.assertNotIn("weak_boundary_diagnostics", v2)
+        self.assertNotIn("weak_boundary_diagnostics", v3)
+        self.assertNotIn("weak_boundary_diagnostics", v4)
+        self.assertEqual(len(v5["candidates"]), 1)
+
+    def test_v5_rejects_trusted_or_multiple_detected_boundaries(self) -> None:
+        trusted = ball_rows([(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.2, 15.0, 20.0), (1.3, 15.0, 14.0), (1.4, 15.0, 8.0)])
+        trusted_result = candidates([event("trusted", start=0.0, end=1.0)], [], ball_document=trusted, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        self.assertEqual(len(trusted_result["candidates"]), 1)
+        self.assertEqual(trusted_result["weak_boundary_diagnostics"], [])
+
+        multiple = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 26.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 20.0], "source": "detected", "confidence": 0.1},
+                {"frame": 37, "time_sec": 1.233, "position_m": [15.0, 18.0], "source": "detected", "confidence": 0.1},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 14.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 8.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+        result = candidates([event("multiple", start=0.0, end=1.0)], [], ball_document=multiple, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["weak_boundary_diagnostics"][0]["weak_boundary_state"], "weak_boundary_rejected_isolation")
+
+    def test_v5_rejects_unsafe_gap_speed_and_spatial_alternate_ball(self) -> None:
+        cases = {
+            "weak_boundary_rejected_gap": [
+                (1.0, 15.0, 30.0, .9), (1.1, 15.0, 26.0, .9), (1.2, 15.0, 20.0, .1), (1.7, 15.0, 14.0, .9), (1.8, 15.0, 8.0, .9),
+            ],
+            "weak_boundary_rejected_speed": [
+                (1.0, 15.0, 30.0, .9), (1.1, 15.0, 26.0, .9), (1.2, 15.0, 20.0, .1), (1.3, 15.0, 2.0, .9), (1.4, 15.0, 1.0, .9),
+            ],
+            "weak_boundary_rejected_spatially": [
+                (1.0, 15.0, 30.0, .9), (1.1, 15.0, 26.0, .9), (1.2, 29.0, 40.0, .1), (1.45, 15.0, 14.0, .9), (1.55, 15.0, 8.0, .9),
+            ],
+        }
+        for expected, points in cases.items():
+            ball_document = {"positions": [
+                {"frame": round(time_sec * 30), "time_sec": time_sec, "position_m": [x, y], "source": "detected", "confidence": confidence}
+                for time_sec, x, y, confidence in points
+            ]}
+            result = candidates([event(expected, start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+            self.assertEqual(result["candidates"], [])
+            self.assertEqual(result["weak_boundary_diagnostics"][0]["weak_boundary_state"], expected)
+
+    def test_v5_rejects_contact_segment_post_support_and_heading_boundaries(self) -> None:
+        base = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 26.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 23.0], "source": "detected", "confidence": 0.1},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 20.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 14.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+        contact_result = candidates(
+            [event("launch", start=0.0, end=1.0), event("intervening", start=1.2, end=1.25, team="B", player="B01")],
+            [], ball_document=deepcopy(base), policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION,
+        )
+        self.assertEqual(contact_result["weak_boundary_diagnostics"][0]["weak_boundary_state"], "weak_boundary_rejected_contact_boundary")
+
+        segmented = deepcopy(base)
+        for row in segmented["positions"]:
+            row["timeline_segment_id"] = "one" if row["time_sec"] <= 1.2 else "two"
+        segment_result = candidates([event("segment", start=0.0, end=1.0)], [], ball_document=segmented, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        self.assertEqual(segment_result["weak_boundary_diagnostics"][0]["weak_boundary_state"], "weak_boundary_rejected_segment_boundary")
+
+        insufficient = deepcopy(base)
+        insufficient["positions"] = insufficient["positions"][:-1]
+        support_result = candidates([event("support", start=0.0, end=1.0)], [], ball_document=insufficient, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        self.assertEqual(support_result["weak_boundary_diagnostics"][0]["weak_boundary_state"], "weak_boundary_rejected_insufficient_post_support")
+
+        heading = deepcopy(base)
+        heading["positions"][-1]["position_m"] = [15.0, 26.0]
+        heading_result = candidates([event("heading", start=0.0, end=1.0)], [], ball_document=heading, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        self.assertEqual(heading_result["weak_boundary_diagnostics"][0]["weak_boundary_state"], "weak_boundary_rejected_heading")
+
+    def test_v5_is_deterministic_and_never_mutates_the_ball_timeline(self) -> None:
+        ball_document = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 26.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 23.0], "source": "detected", "confidence": 0.1},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 20.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 14.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+        frozen = deepcopy(ball_document)
+        first = candidates([event("stable-v5", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        second = candidates([event("stable-v5", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+
+        self.assertEqual(first, second)
+        self.assertEqual(ball_document, frozen)
+
+    def test_v5_deduplication_keeps_an_existing_candidate_identity(self) -> None:
+        existing = {
+            "candidate_id": "shot-existing",
+            "candidate_key": "shot:v1:existing",
+            "confidence": .8,
+            "source_timestamp_sec": 1.0,
+            "trajectory_evidence": {"distance_m": 4.0},
+            "reasons": ["continuous_ball_trajectory"],
+        }
+        weak_bridge = {
+            "candidate_id": "shot-weak",
+            "candidate_key": "shot:v1:weak",
+            "confidence": .7,
+            "source_timestamp_sec": 1.1,
+            "trajectory_evidence": {"distance_m": 4.0, "continuity_bridge": {"weak_boundary_state": "weak_boundary_reinterpreted"}},
+            "reasons": ["continuity_bridge_applied"],
+        }
+
+        merged = shot_candidates._merge_cluster(
+            [existing, weak_bridge],
+            "source-1",
+            preserve_primary_candidate_identity=True,
+        )
+
+        self.assertEqual(merged["candidate_id"], "shot-existing")
+        self.assertEqual(merged["candidate_key"], "shot:v1:existing")
+        self.assertEqual(merged["deduplicated_hypothesis_count"], 2)
 
     def test_strong_short_goalward_prefix_before_explicit_boundary_is_a_candidate(self) -> None:
         document = candidates(
