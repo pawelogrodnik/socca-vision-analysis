@@ -23,6 +23,7 @@ from app.services.match_phase_config import direction_for_team_at_time
 POLICY_VERSION = "shot-candidate-shadow:v2"
 PREVIOUS_POLICY_VERSION = "shot-candidate-shadow:v1"
 V3_POLICY_VERSION = "shot-candidate-shadow:v3"
+V4_CONTINUITY_BRIDGE_POLICY_VERSION = "shot-candidate-shadow:v4-continuity-bridge"
 SCHEMA_VERSION = "shot-candidates:v1"
 SOURCE = "canonical_ball_contact_trajectory_shadow_v1"
 ALLOWED_CONTACT_STATUSES = {"accepted", "uncertain", "needs_review"}
@@ -49,6 +50,14 @@ V3_LATER_SHOT_HORIZON_SEC = 3.0
 V3_LATER_SHOT_MIN_CONFIDENCE_DELTA = 0.18
 V3_LATER_SHOT_GOAL_DISTANCE_M = 8.0
 V3_LATER_SHOT_CORRIDOR_DISTANCE_M = 6.0
+# v4 is deliberately a local, contact-bounded repair experiment.  These are
+# not ball-track selector settings and are never applied outside a candidate
+# trajectory that has already started at a reviewed contact.
+V4_MAX_CONTINUITY_BRIDGE_GAP_SEC = 0.35
+V4_MAX_CONTINUITY_BRIDGE_SPEED_MPS = 35.0
+V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC = 0.30
+V4_MIN_POST_ENDPOINT_SUPPORT = 2
+V4_MIN_HEADING_COSINE = 0.2
 
 
 def build_shot_candidates_document(
@@ -117,6 +126,14 @@ def build_shot_candidates_document(
                 "later_shot_horizon_sec": V3_LATER_SHOT_HORIZON_SEC,
                 "later_shot_min_confidence_delta": V3_LATER_SHOT_MIN_CONFIDENCE_DELTA,
             } if policy_version == V3_POLICY_VERSION else {}),
+            **({
+                "continuity_bridge_mode": "contact_bounded_trusted_endpoint_interpolation",
+                "max_continuity_bridge_gap_sec": V4_MAX_CONTINUITY_BRIDGE_GAP_SEC,
+                "max_continuity_bridge_speed_mps": V4_MAX_CONTINUITY_BRIDGE_SPEED_MPS,
+                "single_pre_endpoint_max_gap_sec": V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC,
+                "min_post_endpoint_support": V4_MIN_POST_ENDPOINT_SUPPORT,
+                "min_heading_cosine": V4_MIN_HEADING_COSINE,
+            } if policy_version == V4_CONTINUITY_BRIDGE_POLICY_VERSION else {}),
         },
         "source_match_id": source_match_id,
         "logical_offset_sec": _round(logical_offset_sec),
@@ -227,7 +244,13 @@ def _candidate_from_contact(
     launch = _nearest_trusted_position(ball_timeline, launch_time, MAX_LAUNCH_POSITION_DELTA_SEC)
     if launch is None:
         return None, "missing_launch_ball_position"
-    trajectory = _trajectory_from_launch(ball_timeline, launch, launch_time)
+    trajectory, bridge_diagnostics = _trajectory_for_policy(
+        ball_timeline,
+        launch,
+        launch_time,
+        policy_version=policy_version,
+        next_contact_time=_number(next_event.get("start_time_sec"), _number(next_event.get("end_time_sec"), -1.0)) if next_event else None,
+    )
     if trajectory is None:
         return None, "missing_continuous_ball_trajectory"
     trajectory_summary = _trajectory_summary(trajectory)
@@ -247,7 +270,7 @@ def _candidate_from_contact(
         trajectory_summary["distance_m"] >= MIN_TRAJECTORY_DISTANCE_M
         and trajectory_summary["mean_speed_mps"] >= MIN_TRAJECTORY_SPEED_MPS
     )
-    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION} and _is_strong_short_prefix(
+    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION} and _is_strong_short_prefix(
         trajectory_summary,
         ball_timeline,
         trajectory,
@@ -290,6 +313,8 @@ def _candidate_from_contact(
     reasons = ["contact_release", "continuous_ball_trajectory", "meaningful_ball_speed"]
     if uses_short_prefix:
         reasons.append("strong_trusted_prefix_before_boundary")
+    if bridge_diagnostics.get("applied"):
+        reasons.append("continuity_bridge_applied")
     if direction != "unknown":
         reasons.append("towards_opponent_goal")
     else:
@@ -365,6 +390,7 @@ def _candidate_from_contact(
             "cross_like": cross_like,
             "trusted_sources": sorted({str(row.get("source") or "") for row in trajectory}),
             "frames": [int(_number(row.get("frame"), -1)) for row in trajectory if _number(row.get("frame"), -1) >= 0],
+            **({"continuity_bridge": bridge_diagnostics} if bridge_diagnostics.get("applied") else {}),
         },
         "receiver_evidence": receiver,
         "source_evidence_refs": {
@@ -449,6 +475,230 @@ def _trajectory_from_launch(rows: list[dict[str, Any]], launch: Mapping[str, Any
         trajectory.append(row)
         previous = time_sec
     return trajectory if len(trajectory) >= 3 else None
+
+
+def _trajectory_for_policy(
+    rows: list[dict[str, Any]],
+    launch: Mapping[str, Any],
+    launch_time: float,
+    *,
+    policy_version: str,
+    next_contact_time: float | None = None,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    """Return the ordinary trajectory, optionally with a local v4 bridge.
+
+    v1/v2/v3 intentionally use the original function unchanged.  v4 only
+    considers the first discontinuity after this particular contact launch;
+    it does not repair or persist a global ball timeline.
+    """
+
+    ordinary = _trajectory_from_launch(rows, launch, launch_time)
+    if policy_version != V4_CONTINUITY_BRIDGE_POLICY_VERSION or ordinary is not None:
+        return ordinary, {"considered": False, "applied": False}
+    bridged, diagnostics = _contact_bounded_continuity_bridge(rows, launch, launch_time, next_contact_time=next_contact_time)
+    return bridged if diagnostics.get("applied") else ordinary, diagnostics
+
+
+def _contact_bounded_continuity_bridge(
+    rows: list[dict[str, Any]],
+    launch: Mapping[str, Any],
+    launch_time: float,
+    *,
+    next_contact_time: float | None,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    """Interpolate one short trusted-endpoint gap after a contact launch.
+
+    The synthetic rows live only in this returned trajectory.  They never
+    alter canonical ball tracks and are rejected unless a nearby trusted
+    continuation provides two post-gap endpoint samples.
+    """
+
+    horizon = launch_time + MAX_TRAJECTORY_SECONDS
+    start_index = next((index for index, row in enumerate(rows) if row is launch), None)
+    if start_index is None:
+        return None, _bridge_diagnostics(False, "launch_not_in_timeline")
+
+    prefix = [dict(launch)]
+    previous_time = _number(launch.get("time_sec"), launch_time)
+    boundary_index: int | None = None
+    for index in range(start_index + 1, len(rows)):
+        row = rows[index]
+        time_sec = _number(row.get("time_sec"), -1.0)
+        if time_sec > horizon:
+            return None, _bridge_diagnostics(False, "horizon_reached")
+        if not _is_trusted_ball_position(row) or time_sec - previous_time > MAX_TRAJECTORY_GAP_SEC:
+            boundary_index = index
+            break
+        if time_sec > previous_time + 0.001:
+            prefix.append(dict(row))
+            previous_time = time_sec
+    if boundary_index is None:
+        return None, _bridge_diagnostics(False, "no_discontinuity")
+
+    # A weak but still "detected" row can be an alternate physical-ball
+    # hypothesis.  Treating it as a gap would turn ordinary low-confidence
+    # detector ambiguity into invented continuity.  v4 only bridges explicit
+    # unknown/interpolated continuity breaks.
+    boundary_source = str(rows[boundary_index].get("source") or "")
+    if boundary_source not in {"unknown", "interpolated"}:
+        return None, _bridge_diagnostics(False, "detector_evidence_boundary")
+
+    pre = prefix[-1]
+    post_index = next(
+        (
+            index
+            for index in range(boundary_index, len(rows))
+            if _number(rows[index].get("time_sec"), horizon + 1.0) <= horizon
+            and _is_trusted_ball_position(rows[index])
+        ),
+        None,
+    )
+    if post_index is None:
+        return None, _bridge_diagnostics(False, "no_trusted_post_endpoint")
+    post = rows[post_index]
+    pre_time = _number(pre.get("time_sec"), launch_time)
+    post_time = _number(post.get("time_sec"), pre_time)
+    gap_sec = post_time - pre_time
+    if gap_sec <= 0 or gap_sec > V4_MAX_CONTINUITY_BRIDGE_GAP_SEC:
+        return None, _bridge_diagnostics(False, "gap_too_long", pre=pre, post=post)
+    if next_contact_time is not None and pre_time < next_contact_time < post_time:
+        return None, _bridge_diagnostics(False, "contact_boundary", pre=pre, post=post)
+    if len(prefix) == 1 and gap_sec > V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC:
+        return None, _bridge_diagnostics(False, "insufficient_pre_endpoint_support", pre=pre, post=post)
+    if not _same_timeline_segment(pre, post):
+        return None, _bridge_diagnostics(False, "timeline_boundary", pre=pre, post=post)
+
+    post_support = _trusted_post_support(rows, post_index, horizon)
+    if len(post_support) < V4_MIN_POST_ENDPOINT_SUPPORT:
+        return None, _bridge_diagnostics(False, "insufficient_post_endpoint_support", pre=pre, post=post)
+    distance_m = _distance(list(pre["position_m"]), list(post["position_m"]))
+    if distance_m / gap_sec > V4_MAX_CONTINUITY_BRIDGE_SPEED_MPS:
+        return None, _bridge_diagnostics(False, "implausible_bridge_speed", pre=pre, post=post)
+    if len(prefix) >= 2 and not _bridge_heading_is_consistent(prefix[-2], pre, post, post_support[1]):
+        return None, _bridge_diagnostics(False, "contradictory_heading", pre=pre, post=post)
+
+    missing_rows = [
+        row for row in rows[boundary_index:post_index]
+        if pre_time < _number(row.get("time_sec"), pre_time) < post_time
+    ]
+    bridge_rows = [_interpolated_bridge_row(pre, post, row) for row in missing_rows]
+    if not bridge_rows:
+        bridge_rows = [_interpolated_bridge_row(pre, post, {"time_sec": (pre_time + post_time) / 2.0, "frame": None})]
+    trajectory = prefix + bridge_rows
+    continuation, _ = _trusted_continuation(rows, post_index, post_time, horizon)
+    trajectory.extend(continuation)
+    diagnostics = _bridge_diagnostics(
+        True,
+        None,
+        pre=pre,
+        post=post,
+        pre_support_count=len(prefix),
+        post_support=post_support,
+        bridge_rows=bridge_rows,
+    )
+    return (trajectory if len(trajectory) >= 3 else None), diagnostics
+
+
+def _trusted_continuation(rows: list[dict[str, Any]], start_index: int, previous_time: float, horizon: float) -> tuple[list[dict[str, Any]], int]:
+    continuation: list[dict[str, Any]] = []
+    for index in range(start_index, len(rows)):
+        row = rows[index]
+        time_sec = _number(row.get("time_sec"), horizon + 1.0)
+        if time_sec > horizon or not _is_trusted_ball_position(row) or time_sec - previous_time > MAX_TRAJECTORY_GAP_SEC:
+            return continuation, index
+        if time_sec > previous_time + 0.001:
+            continuation.append(dict(row))
+            previous_time = time_sec
+    return continuation, len(rows)
+
+
+def _trusted_post_support(rows: list[dict[str, Any]], start_index: int, horizon: float) -> list[dict[str, Any]]:
+    support: list[dict[str, Any]] = []
+    previous_time: float | None = None
+    for row in rows[start_index:]:
+        time_sec = _number(row.get("time_sec"), horizon + 1.0)
+        if time_sec > horizon or not _is_trusted_ball_position(row):
+            break
+        if previous_time is not None and time_sec - previous_time > MAX_TRAJECTORY_GAP_SEC:
+            break
+        support.append(row)
+        previous_time = time_sec
+        if len(support) >= V4_MIN_POST_ENDPOINT_SUPPORT:
+            break
+    return support
+
+
+def _same_timeline_segment(first: Mapping[str, Any], second: Mapping[str, Any]) -> bool:
+    """Reject explicit source/segment changes while tolerating absent metadata."""
+
+    for key in ("source_match_id", "timeline_segment_id", "source_segment_id", "segment_id"):
+        first_value = _text(first.get(key))
+        second_value = _text(second.get(key))
+        if first_value is not None and second_value is not None and first_value != second_value:
+            return False
+    return True
+
+
+def _bridge_heading_is_consistent(pre_previous: Mapping[str, Any], pre: Mapping[str, Any], post: Mapping[str, Any], post_next: Mapping[str, Any]) -> bool:
+    before = _displacement(list(pre_previous["position_m"]), list(pre["position_m"]))
+    bridge = _displacement(list(pre["position_m"]), list(post["position_m"]))
+    after = _displacement(list(post["position_m"]), list(post_next["position_m"]))
+    return _heading_cosine(before, bridge) >= V4_MIN_HEADING_COSINE and _heading_cosine(bridge, after) >= V4_MIN_HEADING_COSINE
+
+
+def _heading_cosine(first: list[float], second: list[float]) -> float:
+    first_length = math.hypot(*first)
+    second_length = math.hypot(*second)
+    if first_length < 0.001 or second_length < 0.001:
+        return -1.0
+    return (first[0] * second[0] + first[1] * second[1]) / (first_length * second_length)
+
+
+def _interpolated_bridge_row(pre: Mapping[str, Any], post: Mapping[str, Any], target: Mapping[str, Any]) -> dict[str, Any]:
+    pre_time = _number(pre.get("time_sec"), 0.0)
+    post_time = _number(post.get("time_sec"), pre_time)
+    target_time = _number(target.get("time_sec"), (pre_time + post_time) / 2.0)
+    fraction = _clamp((target_time - pre_time) / max(0.001, post_time - pre_time), 0.0, 1.0)
+    start = list(pre["position_m"])
+    end = list(post["position_m"])
+    target_frame = target.get("frame")
+    frame = int(_number(target_frame, -1)) if _number(target_frame, -1) >= 0 else None
+    return {
+        "frame": frame,
+        "time_sec": _round(target_time),
+        "position_m": [_round(start[0] + (end[0] - start[0]) * fraction), _round(start[1] + (end[1] - start[1]) * fraction)],
+        "source": "continuity_bridge",
+        "confidence": _round(min(_number(pre.get("confidence"), 0.0), _number(post.get("confidence"), 0.0))),
+    }
+
+
+def _bridge_diagnostics(
+    applied: bool,
+    rejection_reason: str | None,
+    *,
+    pre: Mapping[str, Any] | None = None,
+    post: Mapping[str, Any] | None = None,
+    pre_support_count: int | None = None,
+    post_support: list[Mapping[str, Any]] | None = None,
+    bridge_rows: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    pre_time = _number(pre.get("time_sec"), 0.0) if pre else None
+    post_time = _number(post.get("time_sec"), 0.0) if post else None
+    return {
+        "considered": True,
+        "applied": applied,
+        "rejection_reason": rejection_reason,
+        "gap_frames": (int(_number(post.get("frame"), 0.0) - _number(pre.get("frame"), 0.0) - 1) if pre and post and _number(pre.get("frame"), -1) >= 0 and _number(post.get("frame"), -1) >= 0 else None),
+        "gap_sec": _round(post_time - pre_time) if pre_time is not None and post_time is not None else None,
+        "distance_m": _round(_distance(list(pre["position_m"]), list(post["position_m"]))) if pre and post else None,
+        "endpoint_support": {
+            "pre_trusted_samples": pre_support_count if pre is not None else None,
+            "post_trusted_samples": len(post_support or []),
+            "bridge_samples": len(bridge_rows or []),
+        },
+        "pre_endpoint_frame": pre.get("frame") if pre else None,
+        "post_endpoint_frame": post.get("frame") if post else None,
+    }
 
 
 def _is_strong_short_prefix(
@@ -568,7 +818,12 @@ def _deduplicate(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _merge_cluster(cluster: list[dict[str, Any]], source_id: str) -> dict[str, Any]:
     if len(cluster) == 1:
         return cluster[0]
-    primary = max(cluster, key=lambda row: (row["confidence"], row["trajectory_evidence"]["distance_m"], -row["source_timestamp_sec"], row["candidate_key"]))
+    # A v4 bridge is an additional hypothesis, not permission to replace a
+    # fully observed v1/v2/v3 hypothesis at the same contact.  Preserve the
+    # observed candidate as the representative of an existing deduplication
+    # cluster; bridge-only clusters remain reviewable additions.
+    observed = [row for row in cluster if "continuity_bridge_applied" not in row.get("reasons", [])]
+    primary = max(observed or cluster, key=lambda row: (row["confidence"], row["trajectory_evidence"]["distance_m"], -row["source_timestamp_sec"], row["candidate_key"]))
     member_keys = sorted(str(row["candidate_key"]) for row in cluster)
     key = _key("shot", {"source_match_id": source_id, "merged_hypotheses": member_keys})
     merged = dict(primary)
@@ -694,7 +949,7 @@ def _summary(candidates: list[dict[str, Any]], skipped: Counter[str], suppressed
 
 
 def _validate_policy_version(policy_version: str) -> None:
-    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION}:
+    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION}:
         raise ValueError(f"Unsupported shot candidate policy version: {policy_version}")
 
 

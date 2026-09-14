@@ -144,7 +144,18 @@ def _trace_contact_path(
 ) -> dict[str, Any]:
     launch_time = _number(contact.get("end_time_sec"), source_time)
     launch = shot_candidates._nearest_trusted_position(timeline, launch_time, shot_candidates.MAX_LAUNCH_POSITION_DELTA_SEC)
-    trajectory = shot_candidates._trajectory_from_launch(timeline, launch, launch_time) if launch is not None else None
+    next_contact_time = _number(next_contact.get("start_time_sec"), _number(next_contact.get("end_time_sec"), -1.0)) if next_contact else None
+    trajectory, bridge_diagnostics = (
+        shot_candidates._trajectory_for_policy(
+            timeline,
+            launch,
+            launch_time,
+            policy_version=policy_version,
+            next_contact_time=next_contact_time,
+        )
+        if launch is not None
+        else (None, {"considered": False, "applied": False})
+    )
     team_label = _text(contact.get("team_label"))
     phase = dict(direction_for_team_at_time(phase_config, team_label, launch_time)) if team_label else {"attack_direction": "unknown", "direction_source": "missing_team_attribution"}
     candidate, rejection_reason = shot_candidates._candidate_from_contact(
@@ -163,7 +174,11 @@ def _trace_contact_path(
         "ball_launch": _launch_trace(launch, contact),
         "raw_ball_evidence": _raw_ball_evidence(ball_candidates_document, launch_time, timeline),
         "selected_ball_position_near_launch": _position_trace(_nearest_row(timeline, launch_time), launch_time),
-        "trajectory": _trajectory_trace(timeline, launch, launch_time),
+        "trajectory": {
+            **_trajectory_trace(timeline, launch, launch_time),
+            "continuity_bridge": bridge_diagnostics if bridge_diagnostics.get("considered") else None,
+            "policy_trajectory_summary": shot_candidates._trajectory_summary(trajectory) if trajectory else None,
+        },
         "phase": {"team_label": team_label, **phase},
         "receiver_context": _receiver_for_trace(next_contact, launch_time, contact),
         "shot_policy": {
