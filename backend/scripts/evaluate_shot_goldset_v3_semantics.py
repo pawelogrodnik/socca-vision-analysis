@@ -41,7 +41,7 @@ def main() -> None:
     for key, semantic_report in semantic_reports.items():
         semantic_report["review_clusters"] = historical_operator_review["policies"][key]["review_clusters"]
     report = {
-        "schema_version": "shot-goldset-v3-semantic-policy-evaluation:v1",
+        "schema_version": "shot-goldset-v3-semantic-policy-evaluation:v2",
         "evaluation_only": True,
         "goldset_reconciliation": compare_shot_goldsets(_read_json(args.goldset_v2), goldset_v3),
         "policies": semantic_reports,

@@ -28,6 +28,9 @@ class ShotGoldsetV3Tests(unittest.TestCase):
         self.assertEqual([row["timestamp_sec"] for row in v3["shots"]], sorted(row["timestamp_sec"] for row in v3["shots"]))
         added = next(row for row in v3["shots"] if row["id"] == "shot-review-569ab3c8-4932-44e7-a782-22d875882aa6")
         self.assertEqual((added["timestamp_sec"], added["team"], added["outcome"], added["origin"]), (444.5, "Verisk", "blocked", "manual"))
+        self.assertEqual((added["timestamp_semantics"], added["timestamp_precision"]), ("pre_event_playback_anchor", "approximate"))
+        accepted = next(row for row in v3["shots"] if row["origin"] == "accepted_suggestion")
+        self.assertEqual((accepted["timestamp_semantics"], accepted["timestamp_precision"]), ("candidate_event_anchor", "detector_derived"))
         self.assertFalse(any({"revision", "suggested_candidate_id", "confidence", "location_m"} & row.keys() for row in v3["shots"]))
 
     def test_builder_projects_only_canonical_fields_from_review_state(self) -> None:
@@ -48,7 +51,7 @@ class ShotGoldsetV3Tests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first["shots"], [{
-            "id": "canonical-current", "timestamp_sec": 444.5, "timestamp_display": "07:24.5", "timestamp_precision": "canonical",
+            "id": "canonical-current", "timestamp_sec": 444.5, "timestamp_display": "07:24.5", "timestamp_semantics": "pre_event_playback_anchor", "timestamp_precision": "approximate",
             "team": "Verisk", "player": "B07", "outcome": "blocked", "origin": "manual", "provenance": "canonical_shot_review",
         }])
 
@@ -77,7 +80,14 @@ class ShotGoldsetV3Tests(unittest.TestCase):
 
     def test_runtime_never_imports_v3_goldset_or_semantic_audit(self) -> None:
         backend_root = Path(__file__).resolve().parents[1]
-        forbidden = ("shot_goldset_v3", "shot-goldset:v3", "shot_v5_weak_boundary_operator_audit", "shot_semantic_benchmark")
+        forbidden = (
+            "shot_goldset_v3",
+            "shot-goldset:v3",
+            "shot_v5_weak_boundary_operator_audit",
+            "shot_semantic_benchmark",
+            "shot_anchor_aware_benchmark",
+            "pre_event_playback_anchor",
+        )
         for path in (backend_root / "app").rglob("*.py"):
             content = path.read_text(encoding="utf-8")
             for marker in forbidden:

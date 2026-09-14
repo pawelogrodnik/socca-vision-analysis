@@ -23,9 +23,9 @@ def goldset() -> dict:
     return {
         "schema_version": "shot-goldset:v3",
         "shots": [
-            {"id": "new-shot", "timestamp_sec": 445.0, "team": "Verisk", "outcome": "blocked", "origin": "manual"},
-            {"id": "actual-finish", "timestamp_sec": 1833.5, "team": "Corgi", "outcome": "on_target", "origin": "manual"},
-            {"id": "unaudited-shot", "timestamp_sec": 2000.0, "team": "Verisk", "outcome": "goal", "origin": "accepted_suggestion"},
+            {"id": "new-shot", "timestamp_sec": 445.0, "timestamp_semantics": "pre_event_playback_anchor", "timestamp_precision": "approximate", "team": "Verisk", "outcome": "blocked", "origin": "manual"},
+            {"id": "actual-finish", "timestamp_sec": 1833.5, "timestamp_semantics": "pre_event_playback_anchor", "timestamp_precision": "approximate", "team": "Corgi", "outcome": "on_target", "origin": "manual"},
+            {"id": "unaudited-shot", "timestamp_sec": 2000.0, "timestamp_semantics": "candidate_event_anchor", "timestamp_precision": "detector_derived", "team": "Verisk", "outcome": "goal", "origin": "accepted_suggestion"},
         ],
         "hard_negatives": [],
     }
@@ -61,6 +61,9 @@ class SemanticShotBenchmarkTests(unittest.TestCase):
         match = report["semantic_matches"][0]
         self.assertEqual((match["gold_shot_id"], match["temporal_match"], match["semantic_match_status"], match["semantic_validated_match"]), ("actual-finish", True, "validated_false", False))
         self.assertEqual(report["temporal_false_positive_matches"][0]["operator_class"], "PASS_PRE_SHOT_ACTION")
+        audit_row = next(row for row in report["audited_v5_candidate_table"] if row["candidate_id"] == "pre-shot-pass")
+        self.assertFalse(audit_row["anchor_aware_eligible"])
+        self.assertEqual(audit_row["semantic_match_status"], "validated_false")
 
     def test_semantic_evaluation_and_v5_increment_are_deterministic(self) -> None:
         v4 = evaluate_semantic_shot_benchmark({"policy_version": "v4", "timeline_span_sec": 2100.0, "candidates": []}, goldset(), audit())

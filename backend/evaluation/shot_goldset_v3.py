@@ -53,17 +53,36 @@ def _project_shot(shot: Mapping[str, Any], teams: Mapping[str, str], players: Ma
         raise ValueError("Canonical Shot Review row is missing a resolvable shot or team ID")
     time_sec = _number(shot.get("time_sec"))
     player_id = str(shot.get("player_id") or "")
+    timestamp_semantics, timestamp_precision = _timestamp_metadata(shot)
     return {
         "id": shot_id,
         "timestamp_sec": time_sec,
         "timestamp_display": _clock(time_sec),
-        "timestamp_precision": "canonical",
+        "timestamp_semantics": timestamp_semantics,
+        "timestamp_precision": timestamp_precision,
         "team": teams[team_id],
         "player": players.get(player_id) if player_id else None,
         "outcome": str(shot.get("outcome") or ""),
         "origin": str(shot.get("origin") or ""),
         "provenance": "canonical_shot_review",
     }
+
+
+def _timestamp_metadata(shot: Mapping[str, Any]) -> tuple[str, str]:
+    """Keep canonical authority distinct from the meaning of a stored time.
+
+    Manual Shot Review times are deliberate pre-event playback anchors. An
+    accepted suggestion instead retains the detector-derived candidate event
+    time that the operator accepted. Neither provenance claim implies that a
+    frame-perfect contact annotation exists.
+    """
+
+    origin = str(shot.get("origin") or "")
+    if origin == "manual":
+        return "pre_event_playback_anchor", "approximate"
+    if origin == "accepted_suggestion":
+        return "candidate_event_anchor", "detector_derived"
+    raise ValueError(f"Canonical Shot Review row has an unsupported origin: {origin or '<missing>'}")
 
 
 def _number(value: Any) -> float:
