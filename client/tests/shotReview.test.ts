@@ -115,6 +115,7 @@ test('prefilled suggested team accepts after the operator chooses only an outcom
   fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
   assert.ok(view.getByText('Potencjalne akcje (1)'));
+  assert.ok(view.getByText('Verisk · 1:40.0 · 0.74'));
   fireEvent.click(view.getByRole('button', { name: 'Odtwórz' }));
   assert.deepEqual(players[0].seekCalls, [[99.5, true]]);
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));

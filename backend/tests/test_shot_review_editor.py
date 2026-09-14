@@ -253,6 +253,39 @@ class ShotReviewEditorTests(unittest.TestCase):
         deleted = editor.delete_canonical_shot("published-one", shot["shot_id"], {"expected_revision": accepted["revision"]})
         self.assertEqual((deleted["accepted_count"], deleted["rejected_count"], deleted["canonical_shots"]), (0, 2, []))
 
+    def test_cluster_accept_preserves_prior_rejection_and_delete_keeps_it_durable(self) -> None:
+        self._write_candidates([
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0, "confidence": .4},
+            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.5, "confidence": .8},
+        ])
+        initial = self._initial()
+        rejected_one = editor.reject_suggestion("published-one", {
+            "expected_revision": initial["revision"], "candidate_id": "candidate-1",
+            "candidate_generation_digest": initial["candidate_generation_digest"],
+        })
+        partial = rejected_one["unreviewed_suggestion_clusters"][0]
+        self.assertEqual(partial["status"], "partially_rejected")
+        before = editor.load_shot_review_document("published-one")
+        prior_rejection = next(row for row in before["suggested_candidate_reviews"] if row["candidate_id"] == "candidate-1")
+
+        accepted = editor.accept_cluster("published-one", {
+            "expected_revision": rejected_one["revision"], "cluster_id": partial["cluster_id"],
+            "candidate_generation_digest": rejected_one["candidate_generation_digest"],
+            "shot": {"team_id": "team-a", "outcome": "on_target"},
+        })
+        after = editor.load_shot_review_document("published-one")
+        candidate_one = next(row for row in after["suggested_candidate_reviews"] if row["candidate_id"] == "candidate-1")
+        candidate_two = next(row for row in after["suggested_candidate_reviews"] if row["candidate_id"] == "candidate-2")
+        self.assertEqual(candidate_one, prior_rejection)
+        self.assertEqual((candidate_two["review_status"], candidate_two["canonical_shot_id"], len(accepted["canonical_shots"])), ("accepted", accepted["accepted_shot"]["shot_id"], 1))
+        self.assertEqual(accepted["unreviewed_cluster_count"], 0)
+
+        deleted = editor.delete_canonical_shot("published-one", accepted["accepted_shot"]["shot_id"], {"expected_revision": accepted["revision"]})
+        reloaded = editor.load_shot_review_document("published-one")
+        self.assertEqual(next(row for row in reloaded["suggested_candidate_reviews"] if row["candidate_id"] == "candidate-1"), prior_rejection)
+        self.assertEqual((deleted["accepted_count"], deleted["rejected_count"], deleted["unreviewed_cluster_count"]), (0, 2, 0))
+        self.assertEqual(editor.editor_state("published-one"), deleted)
+
     def test_cluster_mutation_rejects_stale_revision_and_generation(self) -> None:
         self._write_candidates([
             {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0},

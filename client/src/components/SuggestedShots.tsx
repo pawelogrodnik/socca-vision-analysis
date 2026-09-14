@@ -28,6 +28,11 @@ function clusterTimes(cluster: ShotReviewSuggestionCluster): string {
   return `${formatKeyMomentTime(cluster.review_start_time_sec)}–${formatKeyMomentTime(cluster.review_end_time_sec)}`;
 }
 
+function memberSignal(candidate: ShotReviewSuggestion): string {
+  const time = formatKeyMomentTime(shotSuggestionTime(candidate));
+  return typeof candidate.confidence === 'number' ? `${time} · ${candidate.confidence.toFixed(2)}` : time;
+}
+
 export function SuggestedShots({ clusters, unavailable = false, disabled = false, onPlayAt, onAccept, onReject }: Props) {
   if (unavailable) return <section className='key-moment-suggestions'><p className='muted'>Sugestie strzałów nie są teraz dostępne.</p></section>;
   return <section className='key-moment-suggestions' aria-label='Sugerowane strzały'>
@@ -36,7 +41,7 @@ export function SuggestedShots({ clusters, unavailable = false, disabled = false
       <time>{clusterTimes(cluster)}</time>
       <div>
         <h3>{cluster.member_count} {cluster.member_count === 1 ? 'sygnał systemu' : 'sygnały systemu'}</h3>
-        <p>{suggestedTeamName(cluster.preferred_candidate)} · {cluster.member_candidates.map((candidate) => formatKeyMomentTime(shotSuggestionTime(candidate))).join(', ')}</p>
+        <p>{suggestedTeamName(cluster.preferred_candidate)} · {cluster.member_candidates.map(memberSignal).join(', ')}</p>
       </div>
       <div className='key-moment-action-list'>
         <button type='button' className='key-moment-action-button' aria-label='Odtwórz' title='Odtwórz' onClick={() => onPlayAt(cluster.review_start_time_sec)}><span aria-hidden='true'>▶</span></button>

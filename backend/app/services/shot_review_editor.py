@@ -596,8 +596,15 @@ def accept_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
     shot["suggested_cluster_id"] = str(cluster.get("cluster_id") or "")
     shot["suggested_cluster_member_candidate_ids"] = list(cluster.get("member_candidate_ids") or [])
     reviews: list[dict[str, Any]] | Any = current.get("suggested_candidate_reviews") or []
+    existing_reviews = _reviews_for_generation(current, digest)
     reviewed_at = _now()
     for candidate_id in cluster.get("member_candidate_ids") or []:
+        # A prior candidate-level rejection is durable operator truth.  A
+        # later cluster can resolve its remaining signals, but must not turn a
+        # known rejection into acceptance merely because both signals are near
+        # each other in time.
+        if (existing_reviews.get(str(candidate_id)) or {}).get("review_status") == "rejected":
+            continue
         reviews = _replace_review(reviews, {
             "candidate_id": str(candidate_id),
             "candidate_generation_digest": digest,
@@ -618,8 +625,11 @@ def reject_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
     cluster = _current_cluster(published_id, current, payload)
     digest = str(payload.get("candidate_generation_digest") or "")
     reviews: list[dict[str, Any]] | Any = current.get("suggested_candidate_reviews") or []
+    existing_reviews = _reviews_for_generation(current, digest)
     reviewed_at = _now()
     for candidate_id in cluster.get("member_candidate_ids") or []:
+        if (existing_reviews.get(str(candidate_id)) or {}).get("review_status") == "rejected":
+            continue
         reviews = _replace_review(reviews, {
             "candidate_id": str(candidate_id),
             "candidate_generation_digest": digest,
