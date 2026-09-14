@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import app.services.shot_candidates as shot_candidates
 from app.services.shot_candidates import (
     POLICY_VERSION,
     PREVIOUS_POLICY_VERSION,
+    V3_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -63,6 +65,7 @@ def candidates(
     *,
     unknown_at: float | None = None,
     ball_document: dict | None = None,
+    policy_version: str = POLICY_VERSION,
 ) -> dict:
     return build_shot_candidates_document(
         {"events": events},
@@ -71,6 +74,7 @@ def candidates(
         source_match_id="m1",
         pitch_width_m=30.0,
         pitch_length_m=47.4,
+        policy_version=policy_version,
     )
 
 
@@ -113,6 +117,76 @@ class ShotCandidatesTests(unittest.TestCase):
         self.assertTrue(document["candidates"][0]["receiver_evidence"]["same_team_receiver_before_goal"])
         self.assertLess(document["candidates"][0]["confidence"], 0.8)
 
+    def test_v3_suppresses_a_long_goalward_pass_to_a_same_team_receiver(self) -> None:
+        events = [event("long-pass", start=0.0, end=1.0), event("receiver", start=1.8, end=2.1, player="A02")]
+        points = [(1.0, 15.0, 35.0), (1.2, 15.0, 27.0), (1.4, 15.0, 15.0), (1.6, 15.0, 5.0)]
+
+        current = candidates(events, points, policy_version=POLICY_VERSION)
+        v3 = candidates(events, points, policy_version=V3_POLICY_VERSION)
+
+        self.assertEqual(len(current["candidates"]), 1)
+        self.assertEqual(v3["candidates"], [])
+        self.assertEqual(v3["summary"]["suppressed_evidence_reasons"], {"pass_like_same_team_receiver": 1})
+
+    def test_v3_suppresses_an_earlier_nonterminal_touch_before_a_stronger_later_shot(self) -> None:
+        document = candidates(
+            [event("pass", start=0.0, end=1.0), event("shot", start=0.0, end=2.2)],
+            [(1.0, 15.0, 35.0), (1.2, 15.0, 32.0), (1.4, 15.0, 29.0), (2.2, 15.0, 13.0), (2.4, 15.0, 8.0), (2.6, 15.0, 3.0)],
+            unknown_at=1.6,
+            policy_version=V3_POLICY_VERSION,
+        )
+
+        self.assertEqual([row["source_event_id"] for row in document["candidates"]], ["shot"])
+        self.assertEqual(document["summary"]["suppressed_evidence_reasons"], {"stronger_later_shot_action": 1})
+
+    def test_v3_retains_a_standalone_terminal_shot(self) -> None:
+        document = candidates(
+            [event("shot", start=0.0, end=1.0)],
+            [(1.0, 15.0, 15.0), (1.2, 15.0, 9.0), (1.4, 15.0, 3.0)],
+            policy_version=V3_POLICY_VERSION,
+        )
+
+        self.assertEqual([row["source_event_id"] for row in document["candidates"]], ["shot"])
+        self.assertEqual(document["suppressed_candidate_diagnostics"], [])
+
+    def test_v3_retains_a_strong_terminal_shot_followed_by_a_teammate_touch(self) -> None:
+        document = candidates(
+            [event("shot", start=0.0, end=1.0), event("rebound", start=1.6, end=1.8, player="A02")],
+            [(1.0, 15.0, 15.0), (1.2, 15.0, 9.0), (1.4, 15.0, 3.0)],
+            policy_version=V3_POLICY_VERSION,
+        )
+
+        self.assertEqual([row["source_event_id"] for row in document["candidates"]], ["shot"])
+        self.assertTrue(document["candidates"][0]["receiver_evidence"]["same_team_receiver_before_goal"])
+
+    def test_v3_keeps_two_terminal_shots_around_an_immediate_rebound(self) -> None:
+        document = candidates(
+            [event("first-shot", start=0.0, end=1.0), event("rebound-shot", start=0.0, end=2.0)],
+            [(1.0, 15.0, 15.0), (1.1, 15.0, 9.0), (1.2, 15.0, 3.0), (2.0, 15.0, 15.0), (2.1, 15.0, 9.0), (2.2, 15.0, 3.0)],
+            unknown_at=1.3,
+            policy_version=V3_POLICY_VERSION,
+        )
+
+        self.assertEqual([row["source_event_id"] for row in document["candidates"]], ["first-shot", "rebound-shot"])
+
+    def test_v3_keeps_a_cross_like_trajectory_under_existing_cross_handling(self) -> None:
+        document = candidates(
+            [event("cross", start=0.0, end=1.0)],
+            [(1.0, 2.0, 28.0), (1.2, 9.0, 22.0), (1.4, 18.0, 15.0), (1.6, 27.0, 7.0)],
+            policy_version=V3_POLICY_VERSION,
+        )
+
+        self.assertEqual(len(document["candidates"]), 1)
+        self.assertIn("cross_like_trajectory", document["candidates"][0]["reasons"])
+
+    def test_v3_later_shot_lookahead_never_crosses_source_boundaries(self) -> None:
+        earlier = {"source_match_id": "one", "source_timestamp_sec": 1.0, "suggested_team_label": "A", "confidence": .4, "trajectory_evidence": {"endpoint_goal_distance_m": 30.0, "goal_corridor_distance_m": .5}}
+        later_other_source = {"source_match_id": "two", "source_timestamp_sec": 1.2, "suggested_team_label": "A", "confidence": .9, "trajectory_evidence": {"endpoint_goal_distance_m": 2.0, "goal_corridor_distance_m": .5}}
+
+        retained, suppressed = shot_candidates._apply_v3_structural_suppression([earlier, later_other_source])
+
+        self.assertEqual((len(retained), suppressed), (2, []))
+
     def test_attack_direction_is_respected(self) -> None:
         phase = {"periods": [{**PHASE_Y_MIN["periods"][0], "team_attack_directions": {"A": "towards_y_max", "B": "towards_y_min"}}]}
         document = candidates([event("wrong-way", start=0.0, end=1.0)], [(1.0, 15.0, 30.0), (1.2, 15.0, 22.0), (1.4, 15.0, 12.0), (1.6, 15.0, 4.0)], phase)
@@ -148,6 +222,16 @@ class ShotCandidatesTests(unittest.TestCase):
         )
 
         self.assertEqual([row["attack_direction"] for row in document["candidates"]], ["towards_y_min", "towards_y_max"])
+        v3 = candidates(
+            [event("first-half", start=1.0, end=1.0), event("second-half", start=6.0, end=6.0)],
+            [
+                (1.0, 15.0, 29.0), (1.2, 15.0, 21.0), (1.4, 15.0, 12.0), (1.6, 15.0, 4.0),
+                (6.0, 15.0, 18.0), (6.2, 15.0, 28.0), (6.4, 15.0, 38.0), (6.6, 15.0, 44.0),
+            ],
+            phase,
+            policy_version=V3_POLICY_VERSION,
+        )
+        self.assertEqual([row["attack_direction"] for row in v3["candidates"]], ["towards_y_min", "towards_y_max"])
 
     def test_unsupported_x_attack_axis_does_not_fabricate_candidate(self) -> None:
         phase = {"periods": [{**PHASE_Y_MIN["periods"][0], "team_attack_directions": {"A": "towards_x_min", "B": "towards_x_max"}}]}
@@ -240,6 +324,10 @@ class ShotCandidatesTests(unittest.TestCase):
         self.assertEqual(first["candidates"][0]["candidate_key"], second["candidates"][0]["candidate_key"])
         self.assertEqual(first["candidates"][0]["candidate_id"], second["candidates"][0]["candidate_id"])
 
+        first_v3 = candidates(*args, policy_version=V3_POLICY_VERSION)
+        second_v3 = candidates(*args, policy_version=V3_POLICY_VERSION)
+        self.assertEqual(first_v3, second_v3)
+
     def test_nearby_hypotheses_deduplicate_but_two_seconds_apart_remain_distinct(self) -> None:
         nearby = candidates(
             [event("one", start=3.0, end=1.0), event("two", start=4.0, end=1.3)],
@@ -270,6 +358,8 @@ class ShotCandidatesTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             self.assertNotIn("shot_goldset_v1", source, path.as_posix())
             self.assertNotIn("shot-goldset:v1", source, path.as_posix())
+        detector_source = (runtime_root / "services" / "shot_candidates.py").read_text(encoding="utf-8")
+        self.assertNotIn("shot_review_editor", detector_source)
 
 
 if __name__ == "__main__":
