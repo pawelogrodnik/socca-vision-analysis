@@ -128,6 +128,7 @@ test('prefilled suggested team accepts after the operator chooses only an outcom
   await waitFor(() => assert.ok(accepted));
   assert.deepEqual(accepted, { expected_revision: 'shot-r1', cluster_id: 'cluster-1', candidate_generation_digest: 'candidate-r1', shot: { time_sec: 77.5, team_id: 'verisk', outcome: 'on_target', player_id: null } });
 
+  await waitFor(() => assert.ok(view.getByRole('tab', { name: 'Sugestie 1' })));
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
   fireEvent.click(view.getByRole('button', { name: 'Odrzuć' }));
   await waitFor(() => assert.ok(rejected));
