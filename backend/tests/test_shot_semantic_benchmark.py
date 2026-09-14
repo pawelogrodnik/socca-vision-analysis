@@ -31,12 +31,13 @@ def goldset() -> dict:
     }
 
 
-def audit() -> dict:
+def audit(*extra_audits: dict) -> dict:
     return {
         "schema_version": "shot-v5-weak-boundary-operator-audit:v1",
         "audits": [
             {"candidate_id": "new-candidate", "candidate_timestamp_sec": 445.2, "operator_class": "TRUE_SHOT_MISSING_CANONICAL", "canonical_shot_id": "new-shot"},
             {"candidate_id": "pre-shot-pass", "candidate_timestamp_sec": 1832.8, "operator_class": "PASS_PRE_SHOT_ACTION", "canonical_shot_id": "actual-finish"},
+            *extra_audits,
         ],
     }
 
@@ -134,6 +135,44 @@ class SemanticShotBenchmarkTests(unittest.TestCase):
             evaluate_semantic_shot_benchmark(document, goldset(), audit(), first_reviews),
             evaluate_semantic_shot_benchmark(document, goldset(), audit(), second_reviews),
         )
+
+    def test_confirmed_continuity_bridge_candidates_complete_v4_and_v5_anchor_truth_coverage(self) -> None:
+        continuity_goldset = {
+            "schema_version": "shot-goldset:v3",
+            "shots": [
+                {"id": "shot-review-ba46b1d8-e2b7-4ab9-ba24-591b72efc365", "timestamp_sec": 975.0, "timestamp_semantics": "pre_event_playback_anchor", "timestamp_precision": "approximate", "team": "Corgi", "player": "Krzysiek", "outcome": "on_target", "origin": "manual"},
+                {"id": "shot-review-96de3128-f42e-4838-9a16-f5d5171253b2", "timestamp_sec": 1715.5, "timestamp_semantics": "pre_event_playback_anchor", "timestamp_precision": "approximate", "team": "Verisk", "player": None, "outcome": "goal", "origin": "manual"},
+            ],
+            "hard_negatives": [],
+        }
+        continuity_audit = audit(
+            {"candidate_id": "shot-bb6f745d39d3", "candidate_timestamp_sec": 975.042, "operator_class": "TRUE_SHOT_EXISTING_CANONICAL", "canonical_shot_id": "shot-review-ba46b1d8-e2b7-4ab9-ba24-591b72efc365"},
+            {"candidate_id": "shot-f1ecee64c2e7", "candidate_timestamp_sec": 1716.227, "operator_class": "TRUE_SHOT_EXISTING_CANONICAL", "canonical_shot_id": "shot-review-96de3128-f42e-4838-9a16-f5d5171253b2"},
+        )
+        candidates = [candidate("shot-bb6f745d39d3", 975.042), candidate("shot-f1ecee64c2e7", 1716.227)]
+        reports = {
+            policy: evaluate_semantic_shot_benchmark(
+                {"policy_version": policy, "timeline_span_sec": 2100.0, "candidates": candidates},
+                continuity_goldset,
+                continuity_audit,
+                editorial(),
+            )
+            for policy in ("v4", "v5")
+        }
+
+        for report in reports.values():
+            matches = {row["candidate_id"]: row for row in report["anchor_aware_semantic_matches"]}
+            self.assertEqual(matches["shot-bb6f745d39d3"]["semantic_match_status"], "validated_true")
+            self.assertEqual(matches["shot-f1ecee64c2e7"]["semantic_match_status"], "validated_true")
+            self.assertEqual(report["anchor_aware_semantic_summary"]["operator_truth_coverage"], {
+                "reviewed_matched_candidates": 2,
+                "total_matched_candidates": 2,
+                "coverage_rate": 1.0,
+                "by_source": {"frozen_v5_audit": 2, "durable_shot_review": 0, "none": 0},
+            })
+
+        increment = compare_semantic_policy_increment(reports["v4"], reports["v5"])
+        self.assertEqual(increment["anchor_aware_semantic_validated_incremental_recoveries"], [])
 
     def test_semantic_evaluation_and_v5_increment_are_deterministic(self) -> None:
         v4 = evaluate_semantic_shot_benchmark({"policy_version": "v4", "timeline_span_sec": 2100.0, "candidates": []}, goldset(), audit(), editorial())

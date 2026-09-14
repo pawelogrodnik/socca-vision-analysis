@@ -69,14 +69,23 @@ class ShotGoldsetV3Tests(unittest.TestCase):
         audit = _read(FIXTURES_DIR / "shot_v5_weak_boundary_operator_audit_v1.json")
         rows = audit["audits"]
 
-        self.assertEqual(len(rows), 11)
-        self.assertEqual(len({row["candidate_id"] for row in rows}), 11)
+        self.assertEqual(len(rows), 13)
+        self.assertEqual(len({row["candidate_id"] for row in rows}), 13)
         self.assertEqual(
             {row["operator_class"] for row in rows},
             {"TRUE_SHOT_MISSING_CANONICAL", "TRUE_SHOT_EXISTING_CANONICAL", "PASS", "PASS_PRE_SHOT_ACTION", "CLEARANCE", "CLEARANCE_OR_LOOSE_BALL_ACTION", "DUEL_OR_TOUCH"},
         )
         identity_follow_up = next(row for row in rows if row["candidate_id"] == "shot-52888cc79b42")
         self.assertTrue(identity_follow_up["identity_followup_required"])
+        confirmed_continuity = {
+            row["candidate_id"]: row["canonical_shot_id"]
+            for row in rows
+            if row["candidate_id"] in {"shot-bb6f745d39d3", "shot-f1ecee64c2e7"}
+        }
+        self.assertEqual(confirmed_continuity, {
+            "shot-bb6f745d39d3": "shot-review-ba46b1d8-e2b7-4ab9-ba24-591b72efc365",
+            "shot-f1ecee64c2e7": "shot-review-96de3128-f42e-4838-9a16-f5d5171253b2",
+        })
 
     def test_runtime_never_imports_v3_goldset_or_semantic_audit(self) -> None:
         backend_root = Path(__file__).resolve().parents[1]
