@@ -107,6 +107,7 @@ def _trace_gold_shot(
     return {
         "gold_shot_id": gold.get("id"),
         "gold_team": gold.get("team"),
+        "gold_player": gold.get("player"),
         "gold_origin": gold.get("origin"),
         "gold_outcome": gold.get("outcome"),
         "logical_timestamp_sec": _round(logical_time),
