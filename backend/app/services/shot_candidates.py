@@ -20,12 +20,16 @@ from app.services.artifact_lineage import canonical_json_bytes
 from app.services.match_phase_config import direction_for_team_at_time
 
 
-POLICY_VERSION = "shot-candidate-shadow:v2"
 PREVIOUS_POLICY_VERSION = "shot-candidate-shadow:v1"
+V2_POLICY_VERSION = "shot-candidate-shadow:v2"
 V3_POLICY_VERSION = "shot-candidate-shadow:v3"
 V4_CONTINUITY_BRIDGE_POLICY_VERSION = "shot-candidate-shadow:v4-continuity-bridge"
 V5_WEAK_BOUNDARY_POLICY_VERSION = "shot-candidate-shadow:v5-weak-boundary"
 V6_COMPOSED_SUPPRESSION_POLICY_VERSION = "shot-candidate-shadow:v6-v5-structural-suppression"
+# Keep the validated v6 identifier itself as the production default.  Candidate
+# IDs intentionally remain policy-independent, while the persisted identifier
+# makes the exact historical construction and suppression contract reproducible.
+POLICY_VERSION = V6_COMPOSED_SUPPRESSION_POLICY_VERSION
 SCHEMA_VERSION = "shot-candidates:v1"
 SOURCE = "canonical_ball_contact_trajectory_shadow_v1"
 ALLOWED_CONTACT_STATUSES = {"accepted", "uncertain", "needs_review"}
@@ -343,7 +347,7 @@ def _candidate_from_contact(
         trajectory_summary["distance_m"] >= MIN_TRAJECTORY_DISTANCE_M
         and trajectory_summary["mean_speed_mps"] >= MIN_TRAJECTORY_SPEED_MPS
     )
-    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} and _is_strong_short_prefix(
+    short_prefix = policy_version in {V2_POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION} and _is_strong_short_prefix(
         trajectory_summary,
         ball_timeline,
         trajectory,
@@ -1205,7 +1209,7 @@ def _summary(candidates: list[dict[str, Any]], skipped: Counter[str], suppressed
 
 
 def _validate_policy_version(policy_version: str) -> None:
-    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION}:
+    if policy_version not in {PREVIOUS_POLICY_VERSION, V2_POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION}:
         raise ValueError(f"Unsupported shot candidate policy version: {policy_version}")
 
 

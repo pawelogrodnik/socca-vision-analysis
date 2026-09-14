@@ -8,6 +8,7 @@ import app.services.shot_candidates as shot_candidates
 from app.services.shot_candidates import (
     POLICY_VERSION,
     PREVIOUS_POLICY_VERSION,
+    V2_POLICY_VERSION,
     V3_POLICY_VERSION,
     V4_CONTINUITY_BRIDGE_POLICY_VERSION,
     V5_WEAK_BOUNDARY_POLICY_VERSION,
@@ -94,6 +95,17 @@ class ShotCandidatesTests(unittest.TestCase):
         self.assertEqual(candidate["suggested_outcome"], None)
         self.assertIn("towards_opponent_goal", candidate["reasons"])
 
+    def test_default_policy_is_the_exact_validated_v6_contract(self) -> None:
+        events = [event("long-pass", start=0.0, end=1.0), event("receiver", start=1.8, end=2.1, player="A02")]
+        points = [(1.0, 15.0, 35.0), (1.2, 15.0, 27.0), (1.4, 15.0, 15.0), (1.6, 15.0, 5.0)]
+
+        default_document = candidates(events, points)
+        validated_v6 = candidates(events, points, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+
+        self.assertEqual(POLICY_VERSION, V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+        self.assertEqual(default_document, validated_v6)
+        self.assertEqual(default_document["summary"]["suppressed_evidence_reasons"], {"pass_like_same_team_receiver": 1})
+
     def test_forward_pass_to_same_team_receiver_is_suppressed(self) -> None:
         document = candidates(
             [event("contact-1", start=0.0, end=1.0), event("receiver", start=1.7, end=2.0, player="A02")],
@@ -115,6 +127,7 @@ class ShotCandidatesTests(unittest.TestCase):
         document = candidates(
             [event("long-pass", start=0.0, end=1.0), event("receiver", start=1.8, end=2.1, player="A02")],
             [(1.0, 15.0, 35.0), (1.2, 15.0, 27.0), (1.4, 15.0, 15.0), (1.6, 15.0, 5.0)],
+            policy_version=V2_POLICY_VERSION,
         )
 
         self.assertEqual(len(document["candidates"]), 1)
@@ -125,7 +138,7 @@ class ShotCandidatesTests(unittest.TestCase):
         events = [event("long-pass", start=0.0, end=1.0), event("receiver", start=1.8, end=2.1, player="A02")]
         points = [(1.0, 15.0, 35.0), (1.2, 15.0, 27.0), (1.4, 15.0, 15.0), (1.6, 15.0, 5.0)]
 
-        current = candidates(events, points, policy_version=POLICY_VERSION)
+        current = candidates(events, points, policy_version=V2_POLICY_VERSION)
         v3 = candidates(events, points, policy_version=V3_POLICY_VERSION)
 
         self.assertEqual(len(current["candidates"]), 1)
@@ -264,7 +277,7 @@ class ShotCandidatesTests(unittest.TestCase):
             unknown_at=1.2,
         )
 
-        v2 = candidates([event("bridge", start=0.0, end=1.0)], [], ball_document=ball_document)
+        v2 = candidates([event("bridge", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V2_POLICY_VERSION)
         v4 = candidates(
             [event("bridge", start=0.0, end=1.0)],
             [],
@@ -372,7 +385,7 @@ class ShotCandidatesTests(unittest.TestCase):
             ]
         }
 
-        v2 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=POLICY_VERSION)
+        v2 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V2_POLICY_VERSION)
         v3 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V3_POLICY_VERSION)
         v4 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
         v5 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
@@ -577,11 +590,11 @@ class ShotCandidatesTests(unittest.TestCase):
 
         documents = {
             version: candidates(events, points, policy_version=version)
-            for version in (POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION)
+            for version in (V2_POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION)
         }
 
         self.assertEqual({version: len(document["candidates"]) for version, document in documents.items()}, {
-            POLICY_VERSION: 1,
+            V2_POLICY_VERSION: 1,
             V3_POLICY_VERSION: 1,
             V4_CONTINUITY_BRIDGE_POLICY_VERSION: 1,
             V5_WEAK_BOUNDARY_POLICY_VERSION: 1,
@@ -695,6 +708,7 @@ class ShotCandidatesTests(unittest.TestCase):
             self.assertNotIn("shot-goldset:v1", source, path.as_posix())
             self.assertNotIn("shot_goldset_v2", source, path.as_posix())
             self.assertNotIn("shot-goldset:v2", source, path.as_posix())
+
             self.assertNotIn("shot_goldset_v3", source, path.as_posix())
             self.assertNotIn("shot-goldset:v3", source, path.as_posix())
             self.assertNotIn("shot_v5_weak_boundary_operator_audit", source, path.as_posix())
@@ -703,6 +717,11 @@ class ShotCandidatesTests(unittest.TestCase):
             self.assertNotIn("shot_candidate_operator_review", source, path.as_posix())
         detector_source = (runtime_root / "services" / "shot_candidates.py").read_text(encoding="utf-8")
         self.assertNotIn("shot_review_editor", detector_source)
+
+    def test_public_report_builder_has_no_raw_shot_candidate_dependency(self) -> None:
+        public_report_source = (Path(__file__).resolve().parents[1] / "app" / "services" / "public_match_report.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("shot_candidates", public_report_source)
 
 
 if __name__ == "__main__":

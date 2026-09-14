@@ -1,18 +1,19 @@
-# Future Shot Review lifecycle
+# Shot Review lifecycle
 
 Issue [#133](https://github.com/pawelogrodnik/socca-vision-analysis/issues/133)
 freezes the manual Corgi–Verisk benchmark before a production shot detector is
 implemented. This document is the product contract for the later detector work
 in [#66](https://github.com/pawelogrodnik/socca-vision-analysis/issues/66).
-It deliberately does not implement a detector, review UI, shot map, public
-statistics or xG.
+It deliberately does not make a detector suggestion into a public statistic,
+shot map or xG value.
 
 ## Current shadow candidate generator
 
-The first engineering iteration is a deterministic shadow generator, not a
+The production generator is deterministic candidate generation, not a
 shot-statistics feature. Its production artifact is `shot_candidates.json`
 with schema `shot-candidates:v1` and policy
-`shot-candidate-shadow:v1`. Every candidate is emitted with:
+`shot-candidate-shadow:v6-v5-structural-suppression`. Every candidate is
+emitted with:
 
 ```text
 review_status = needs_review
@@ -43,6 +44,13 @@ deliberately supports only `towards_y_min` and `towards_y_max`. Horizontal
 `unsupported_attack_axis`; left/right-goal geometry is deferred until a future
 recording/calibration product iteration.
 
+v6 is the frozen composition of v5 construction and deduplication (including
+the continuity-bridge and weak-boundary evidence contracts) followed by the
+validated v3 structural suppression. It does not alter detector, ball-track or
+contact evidence. The persisted v6 identifier is retained as the production
+identifier so that rebuild lineage is explicit and historic v1–v5 artifacts
+remain reproducible through `--policy-version`.
+
 An obvious same-team receiver before the trajectory reaches the goal area is
 suppressed as a pass-like pattern. A goal-approaching trajectory with that
 receiver context is retained only as a lower-confidence suggestion and carries
@@ -61,7 +69,7 @@ PYTHONPATH=backend backend/.venv-mps/bin/python backend/scripts/benchmark_shot_c
   --output backend/storage/benchmarks/shot-candidates-shadow-v1/corgi-verisk/benchmark_report.json
 ```
 
-The first command cannot read the manual fixture. Only the second,
+The first command defaults to v6 and cannot read the manual fixture. Only the second,
 evaluation-only command loads `shot_goldset_v1.json`, with deterministic
 maximum-cardinality one-to-one matching inside a ±1.5-second tolerance. Among
 the maximum-recall assignments it minimizes total absolute timing error, then
@@ -114,7 +122,7 @@ measure.
 
 ## Operator workflow
 
-The later UI should follow the Suggested Key Moments pattern:
+The Shot Review UI follows the Suggested Key Moments pattern:
 
 ```text
 video/player + suggested shot queue + accept/reject + manual add
