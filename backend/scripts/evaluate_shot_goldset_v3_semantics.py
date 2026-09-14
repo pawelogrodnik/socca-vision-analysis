@@ -34,9 +34,13 @@ def main() -> None:
     documents = {key: _read_json(path) for key, path in {"v2": args.v2, "v3": args.v3, "v4": args.v4, "v5": args.v5}.items()}
     goldset_v3 = _read_json(args.goldset_v3)
     audit = _read_json(args.audit)
-    semantic_reports = {key: evaluate_semantic_shot_benchmark(document, goldset_v3, audit) for key, document in documents.items()}
+    editorial = _read_json(args.editorial)
+    semantic_reports = {
+        key: evaluate_semantic_shot_benchmark(document, goldset_v3, audit, editorial)
+        for key, document in documents.items()
+    }
     historical_operator_review = evaluate_operator_review_four_way(
-        documents["v2"], documents["v3"], documents["v4"], documents["v5"], _read_json(args.editorial),
+        documents["v2"], documents["v3"], documents["v4"], documents["v5"], editorial,
     )
     for key, semantic_report in semantic_reports.items():
         semantic_report["review_clusters"] = historical_operator_review["policies"][key]["review_clusters"]

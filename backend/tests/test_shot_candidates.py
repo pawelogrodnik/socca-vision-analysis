@@ -612,6 +612,8 @@ class ShotCandidatesTests(unittest.TestCase):
             self.assertNotIn("shot-goldset:v3", source, path.as_posix())
             self.assertNotIn("shot_v5_weak_boundary_operator_audit", source, path.as_posix())
             self.assertNotIn("shot_semantic_benchmark", source, path.as_posix())
+            self.assertNotIn("shot_anchor_aware_benchmark", source, path.as_posix())
+            self.assertNotIn("shot_candidate_operator_review", source, path.as_posix())
         detector_source = (runtime_root / "services" / "shot_candidates.py").read_text(encoding="utf-8")
         self.assertNotIn("shot_review_editor", detector_source)
 

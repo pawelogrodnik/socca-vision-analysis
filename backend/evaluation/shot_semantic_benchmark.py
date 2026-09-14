@@ -7,9 +7,10 @@ from typing import Any, Mapping
 
 from evaluation.shot_anchor_aware_benchmark import anchor_aware_sensitivity, benchmark_anchor_aware_shot_candidates
 from evaluation.shot_candidate_benchmark import benchmark_shot_candidates
+from evaluation.shot_candidate_operator_review import normalize_durable_shot_review_truth
 
 
-SCHEMA_VERSION = "shot-semantic-benchmark:v1"
+SCHEMA_VERSION = "shot-semantic-benchmark:v2"
 TRUE_SHOT_CLASSES = frozenset({"TRUE_SHOT_EXISTING_CANONICAL", "TRUE_SHOT_MISSING_CANONICAL"})
 
 
@@ -17,12 +18,13 @@ def evaluate_semantic_shot_benchmark(
     candidates_document: Mapping[str, Any],
     goldset_document: Mapping[str, Any],
     audit_document: Mapping[str, Any],
+    editorial_document: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Keep temporal matching intact and expose bounded operator truth beside it.
 
-    Only audited candidate IDs can be semantically validated. An unaudited
-    temporal match remains explicitly unaudited rather than being promoted to
-    a semantic success by timestamp proximity alone.
+    Frozen v5-only audit rows and historical durable Shot Review decisions are
+    both operator truth. An unaudited local match remains explicitly
+    unaudited rather than being promoted to semantic truth by proximity.
     """
 
     if str(audit_document.get("schema_version") or "") != "shot-v5-weak-boundary-operator-audit:v1":
@@ -31,17 +33,40 @@ def evaluate_semantic_shot_benchmark(
     anchor_aware = benchmark_anchor_aware_shot_candidates(candidates_document, goldset_document)
     sensitivity = anchor_aware_sensitivity(candidates_document, goldset_document)
     audits = _audits_by_candidate(audit_document)
+    durable_reviews = normalize_durable_shot_review_truth(
+        editorial_document,
+        require_canonical_shot_id_for_accepted=True,
+    )
     candidates = {_text(row.get("candidate_id")): row for row in candidates_document.get("candidates") or [] if isinstance(row, Mapping)}
     matches_by_candidate = {_text(row.get("candidate_id")): row for row in temporal.get("matches") or [] if isinstance(row, Mapping)}
     anchor_matches_by_candidate = {_text(row.get("candidate_id")): row for row in anchor_aware.get("matches") or [] if isinstance(row, Mapping)}
-    enriched_matches = [_enrich_match(row, audits.get(_text(row.get("candidate_id"))), eligibility_field="temporal_match") for row in temporal.get("matches") or [] if isinstance(row, Mapping)]
-    enriched_anchor_matches = [_enrich_match(row, audits.get(_text(row.get("candidate_id"))), eligibility_field="anchor_aware_eligible") for row in anchor_aware.get("matches") or [] if isinstance(row, Mapping)]
+    enriched_matches = [
+        _enrich_match(
+            row,
+            audits.get(_text(row.get("candidate_id"))),
+            durable_reviews.get(_text(row.get("candidate_id"))),
+            eligibility_field="temporal_match",
+        )
+        for row in temporal.get("matches") or []
+        if isinstance(row, Mapping)
+    ]
+    enriched_anchor_matches = [
+        _enrich_match(
+            row,
+            audits.get(_text(row.get("candidate_id"))),
+            durable_reviews.get(_text(row.get("candidate_id"))),
+            eligibility_field="anchor_aware_eligible",
+        )
+        for row in anchor_aware.get("matches") or []
+        if isinstance(row, Mapping)
+    ]
     audit_table = [
         _audit_row(
             audit,
             candidates.get(candidate_id),
             matches_by_candidate.get(candidate_id),
             anchor_matches_by_candidate.get(candidate_id),
+            durable_reviews.get(candidate_id),
         )
         for candidate_id, audit in sorted(audits.items(), key=lambda item: (_number(item[1].get("candidate_timestamp_sec")), item[0]))
     ]
@@ -80,8 +105,8 @@ def evaluate_semantic_shot_benchmark(
         "limitations": [
             "Legacy temporal matching remains the historical ±1.5 s candidate benchmark.",
             "Anchor-aware eligibility treats manual timestamps as directional pre-event playback anchors, not exact event times.",
-            "Only frozen operator-audited candidate IDs receive a semantic verdict; all other locally eligible candidates remain unaudited.",
-            "The operator audit is evaluation truth and never influences candidate generation or canonical Shot Review state.",
+            "Frozen v5-only audit rows and durable Shot Review candidate decisions are evaluation truth only and never influence candidate generation or canonical state.",
+            "Historical operator decisions describe the reviewed suggestion population; they are not a globally representative precision estimate.",
         ],
     }
 
@@ -106,6 +131,8 @@ def compare_semantic_policy_increment(
         "temporal_incremental_recoveries": sorted(v5_temporal - v4_temporal),
         "semantic_validated_incremental_recoveries": sorted(v5_semantic - v4_semantic),
         "false_temporal_incremental_recoveries": false_temporal,
+        "semantic_false_incremental_candidates": _incremental_candidates_by_status(v4_report, v5_report, match_key="semantic_matches", status="validated_false"),
+        "unaudited_incremental_candidates": _incremental_candidates_by_status(v4_report, v5_report, match_key="semantic_matches", status="unaudited"),
         "anchor_aware_incremental_eligible_recoveries": sorted(v5_anchor - v4_anchor),
         "anchor_aware_semantic_validated_incremental_recoveries": sorted(_validated_true_gold_ids(v5_report, match_key="anchor_aware_semantic_matches") - _validated_true_gold_ids(v4_report, match_key="anchor_aware_semantic_matches")),
         "anchor_aware_false_incremental_eligibilities": [
@@ -113,6 +140,8 @@ def compare_semantic_policy_increment(
             for row in v5_report.get("anchor_aware_semantic_false_positive_matches") or []
             if isinstance(row, Mapping) and _text(row.get("gold_shot_id")) not in v4_anchor
         ],
+        "anchor_aware_semantic_false_incremental_candidates": _incremental_candidates_by_status(v4_report, v5_report, match_key="anchor_aware_semantic_matches", status="validated_false"),
+        "anchor_aware_unaudited_incremental_candidates": _incremental_candidates_by_status(v4_report, v5_report, match_key="anchor_aware_semantic_matches", status="unaudited"),
     }
 
 
@@ -127,24 +156,100 @@ def _audits_by_candidate(audit_document: Mapping[str, Any]) -> dict[str, Mapping
     return audits
 
 
-def _enrich_match(match: Mapping[str, Any], audit: Mapping[str, Any] | None, *, eligibility_field: str) -> dict[str, Any]:
+def _enrich_match(
+    match: Mapping[str, Any],
+    audit: Mapping[str, Any] | None,
+    durable_review: Mapping[str, Any] | None,
+    *,
+    eligibility_field: str,
+) -> dict[str, Any]:
     result = dict(match)
-    if audit is None:
-        result.update({eligibility_field: True, "semantic_match_status": "unaudited", "semantic_validated_match": None})
-        return result
-    operator_class = _text(audit.get("operator_class"))
-    expected_shot_id = _text(audit.get("canonical_shot_id"))
-    same_action = operator_class in TRUE_SHOT_CLASSES and bool(expected_shot_id) and expected_shot_id == _text(match.get("gold_shot_id"))
+    truth = _resolve_operator_truth(match, audit, durable_review)
     result.update({
         eligibility_field: True,
-        "operator_class": operator_class,
-        "operator_notes": audit.get("notes"),
-        "identity_followup_required": bool(audit.get("identity_followup_required")),
-        "semantic_expected_canonical_shot_id": expected_shot_id or None,
-        "semantic_match_status": "validated_true" if same_action else "validated_false",
-        "semantic_validated_match": same_action,
+        **truth,
     })
     return result
+
+
+def _resolve_operator_truth(
+    match: Mapping[str, Any],
+    audit: Mapping[str, Any] | None,
+    durable_review: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Resolve truth with explicit audit precedence and fail-closed conflicts."""
+
+    frozen = _frozen_truth(match, audit) if audit is not None else None
+    durable = _durable_truth(match, durable_review) if durable_review is not None else None
+    if frozen is not None and durable is not None and not _truth_agrees(frozen, durable):
+        candidate_id = _text(match.get("candidate_id"))
+        raise ValueError(f"operator_truth_conflict for candidate {candidate_id}")
+    chosen = frozen or durable
+    diagnostics = {
+        "frozen_audit_operator_class": audit.get("operator_class") if audit is not None else None,
+        "frozen_audit_canonical_shot_id": audit.get("canonical_shot_id") if audit is not None else None,
+        "durable_review_status": durable_review.get("review_status") if durable_review is not None else None,
+        "durable_review_canonical_shot_id": durable_review.get("canonical_shot_id") if durable_review is not None else None,
+    }
+    if chosen is None:
+        return {
+            **diagnostics,
+            "semantic_truth_source": "none",
+            "semantic_match_status": "unaudited",
+            "semantic_validated_match": None,
+        }
+    return {
+        **diagnostics,
+        "semantic_truth_source": chosen["source"],
+        "semantic_match_status": chosen["status"],
+        "semantic_validated_match": chosen["status"] == "validated_true",
+        "semantic_expected_canonical_shot_id": chosen["canonical_shot_id"],
+        "operator_class": audit.get("operator_class") if audit is not None else None,
+        "operator_notes": audit.get("notes") if audit is not None else None,
+        "identity_followup_required": bool(audit.get("identity_followup_required")) if audit is not None else False,
+    }
+
+
+def _frozen_truth(match: Mapping[str, Any], audit: Mapping[str, Any]) -> dict[str, str | None]:
+    operator_class = _text(audit.get("operator_class"))
+    canonical_shot_id = _text(audit.get("canonical_shot_id")) or None
+    same_action = operator_class in TRUE_SHOT_CLASSES and canonical_shot_id == _text(match.get("gold_shot_id"))
+    return {
+        "source": "frozen_v5_audit",
+        "status": "validated_true" if same_action else "validated_false",
+        "action_kind": "accepted_action" if operator_class in TRUE_SHOT_CLASSES else "rejected_action",
+        "canonical_shot_id": canonical_shot_id,
+    }
+
+
+def _durable_truth(match: Mapping[str, Any], review: Mapping[str, Any]) -> dict[str, str | None]:
+    review_status = _text(review.get("review_status"))
+    canonical_shot_id = _text(review.get("canonical_shot_id")) or None
+    if review_status == "rejected":
+        return {
+            "source": "durable_shot_review",
+            "status": "validated_false",
+            "action_kind": "rejected_action",
+            "canonical_shot_id": None,
+        }
+    if review_status == "accepted":
+        return {
+            "source": "durable_shot_review",
+            "status": "validated_true" if canonical_shot_id == _text(match.get("gold_shot_id")) else "validated_false",
+            "action_kind": "accepted_action",
+            "canonical_shot_id": canonical_shot_id,
+        }
+    raise ValueError(f"Unsupported durable review status: {review_status or '<missing>'}")
+
+
+def _truth_agrees(frozen: Mapping[str, str | None], durable: Mapping[str, str | None]) -> bool:
+    if frozen.get("action_kind") != durable.get("action_kind"):
+        return False
+    if frozen.get("status") != durable.get("status"):
+        return False
+    if frozen.get("action_kind") == "accepted_action":
+        return frozen.get("canonical_shot_id") == durable.get("canonical_shot_id")
+    return True
 
 
 def _audit_row(
@@ -152,6 +257,7 @@ def _audit_row(
     candidate: Mapping[str, Any] | None,
     temporal_match: Mapping[str, Any] | None,
     anchor_aware_match: Mapping[str, Any] | None,
+    durable_review: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     operator_class = _text(audit.get("operator_class"))
     expected_shot_id = _text(audit.get("canonical_shot_id"))
@@ -168,6 +274,8 @@ def _audit_row(
         "anchor_aware_eligible": anchor_aware_match is not None,
         "anchor_aware_canonical_shot_id": anchor_aware_match.get("gold_shot_id") if anchor_aware_match else None,
         "anchor_aware_candidate_after_anchor_sec": anchor_aware_match.get("candidate_after_anchor_sec") if anchor_aware_match else None,
+        "durable_review_status": durable_review.get("review_status") if durable_review else None,
+        "durable_review_canonical_shot_id": durable_review.get("canonical_shot_id") if durable_review else None,
         "semantic_shot_match": semantic_match if temporal_match else False,
         "semantic_match_status": "validated_true" if semantic_match else "validated_false",
         "expected_canonical_shot_id": expected_shot_id or None,
@@ -186,6 +294,12 @@ def _semantic_summary(
 ) -> dict[str, Any]:
     gold_count = _number(_mapping(benchmark.get("summary")).get("gold_shots"))
     status_counts = Counter(_text(row.get("semantic_match_status")) for row in matches)
+    truth_sources = Counter(_text(row.get("semantic_truth_source")) for row in matches)
+    false_sources = Counter(
+        _text(row.get("semantic_truth_source"))
+        for row in matches
+        if row.get("semantic_match_status") == "validated_false"
+    )
     if "origin_recall" in benchmark:
         origin_breakdown = _mapping(benchmark.get("origin_recall"))
         team_breakdown = _mapping(benchmark.get("team_recall"))
@@ -201,6 +315,20 @@ def _semantic_summary(
         "validated_false": status_counts["validated_false"],
         unaudited_count_name: status_counts["unaudited"],
         "semantic_validated_recall_lower_bound": _ratio(status_counts["validated_true"], gold_count),
+        "operator_truth_coverage": {
+            "reviewed_matched_candidates": len(matches) - truth_sources["none"],
+            "total_matched_candidates": len(matches),
+            "coverage_rate": _ratio(len(matches) - truth_sources["none"], len(matches)),
+            "by_source": {
+                "frozen_v5_audit": truth_sources["frozen_v5_audit"],
+                "durable_shot_review": truth_sources["durable_shot_review"],
+                "none": truth_sources["none"],
+            },
+        },
+        "false_matches_by_operator_truth_source": {
+            "frozen_v5_audit": false_sources["frozen_v5_audit"],
+            "durable_shot_review": false_sources["durable_shot_review"],
+        },
         "manual_origin": _semantic_breakdown(matches, origin_breakdown, "gold_origin", match_count_name=breakdown_match_count_name),
         "team": _semantic_breakdown(matches, team_breakdown, "gold_team", match_count_name=breakdown_match_count_name),
         "outcome": _semantic_breakdown(matches, outcome_breakdown, "gold_outcome", match_count_name=breakdown_match_count_name),
@@ -238,8 +366,10 @@ def _false_positive_row(match: Mapping[str, Any]) -> dict[str, Any]:
         "canonical_shot_id": match.get("gold_shot_id"),
         "canonical_timestamp_sec": match.get("gold_timestamp_sec"),
         "signed_timing_error_sec": match.get("signed_timing_error_sec"),
+        "semantic_truth_source": match.get("semantic_truth_source"),
         "operator_class": match.get("operator_class"),
-        "reason": "operator_audit_identifies_a_different_football_action",
+        "durable_review_status": match.get("durable_review_status"),
+        "reason": "operator_truth_identifies_a_different_football_action",
     }
 
 
@@ -258,6 +388,32 @@ def _matched_gold_ids(report: Mapping[str, Any], *, benchmark_key: str = "tempor
 
 def _validated_true_gold_ids(report: Mapping[str, Any], *, match_key: str = "semantic_matches") -> set[str]:
     return {_text(row.get("gold_shot_id")) for row in report.get(match_key) or [] if isinstance(row, Mapping) and row.get("semantic_match_status") == "validated_true"}
+
+
+def _incremental_candidates_by_status(
+    v4_report: Mapping[str, Any],
+    v5_report: Mapping[str, Any],
+    *,
+    match_key: str,
+    status: str,
+) -> list[dict[str, Any]]:
+    v4_candidate_ids = {
+        _text(row.get("candidate_id"))
+        for row in v4_report.get(match_key) or []
+        if isinstance(row, Mapping)
+    }
+    return [
+        _false_positive_row(row) if status == "validated_false" else {
+            "candidate_id": row.get("candidate_id"),
+            "candidate_timestamp_sec": row.get("candidate_timestamp_sec"),
+            "canonical_shot_id": row.get("gold_shot_id"),
+            "semantic_truth_source": row.get("semantic_truth_source"),
+        }
+        for row in v5_report.get(match_key) or []
+        if isinstance(row, Mapping)
+        and row.get("semantic_match_status") == status
+        and _text(row.get("candidate_id")) not in v4_candidate_ids
+    ]
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

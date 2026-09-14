@@ -13,6 +13,39 @@ from typing import Any, Iterable, Mapping
 from app.services.shot_review_editor import build_review_clusters
 
 
+def normalize_durable_shot_review_truth(
+    editorial_doc: Mapping[str, Any],
+    *,
+    require_canonical_shot_id_for_accepted: bool = False,
+) -> dict[str, dict[str, str | None]]:
+    """Project durable candidate decisions into explicit evaluation truth.
+
+    This intentionally reads only the candidate-level review lineage. A
+    canonical shot's origin is not sufficient to identify the accepted
+    suggestion that produced it.
+    """
+
+    result: dict[str, dict[str, str | None]] = {}
+    rows = [row for row in editorial_doc.get("suggested_candidate_reviews") or [] if isinstance(row, Mapping)]
+    for row in sorted(rows, key=lambda value: (str(value.get("candidate_id") or ""), str(value.get("reviewed_at") or ""))):
+        candidate_id = str(row.get("candidate_id") or "").strip()
+        review_status = str(row.get("review_status") or "").strip()
+        if not candidate_id or review_status not in {"accepted", "rejected"}:
+            continue
+        canonical_shot_id = str(row.get("canonical_shot_id") or "").strip() or None
+        if review_status == "accepted" and canonical_shot_id is None and require_canonical_shot_id_for_accepted:
+            raise ValueError(f"Accepted durable review is missing canonical_shot_id: {candidate_id}")
+        truth = {
+            "candidate_id": candidate_id,
+            "review_status": review_status,
+            "canonical_shot_id": canonical_shot_id,
+        }
+        if candidate_id in result:
+            raise ValueError(f"Duplicate durable candidate review: {candidate_id}")
+        result[candidate_id] = truth
+    return result
+
+
 def evaluate_operator_review_ab(
     current_candidates_doc: Mapping[str, Any],
     v3_candidates_doc: Mapping[str, Any],
@@ -20,11 +53,7 @@ def evaluate_operator_review_ab(
 ) -> dict[str, Any]:
     """Compare candidate documents to historical accepted/rejected decisions."""
 
-    reviews = {
-        str(row.get("candidate_id") or ""): str(row.get("review_status") or "")
-        for row in editorial_doc.get("suggested_candidate_reviews") or []
-        if isinstance(row, Mapping) and row.get("candidate_id")
-    }
+    reviews = {candidate_id: str(row["review_status"] or "") for candidate_id, row in normalize_durable_shot_review_truth(editorial_doc).items()}
     current = _candidates(current_candidates_doc)
     v3 = _candidates(v3_candidates_doc)
     current_by_id = {_candidate_id(row): row for row in current}
@@ -82,11 +111,7 @@ def evaluate_operator_review_three_way(
     this report or the editorial input.
     """
 
-    reviews = {
-        str(row.get("candidate_id") or ""): str(row.get("review_status") or "")
-        for row in editorial_doc.get("suggested_candidate_reviews") or []
-        if isinstance(row, Mapping) and row.get("candidate_id")
-    }
+    reviews = {candidate_id: str(row["review_status"] or "") for candidate_id, row in normalize_durable_shot_review_truth(editorial_doc).items()}
     documents = {"v2": current_candidates_doc, "v3": v3_candidates_doc, "v4": v4_candidates_doc}
     candidates_by_policy = {key: _candidates(document) for key, document in documents.items()}
     baseline_ids = {_candidate_id(row) for row in candidates_by_policy["v2"]}
@@ -142,11 +167,7 @@ def evaluate_operator_review_four_way(
 ) -> dict[str, Any]:
     """Evaluate v2/v3/v4/v5 against read-only historical review labels."""
 
-    reviews = {
-        str(row.get("candidate_id") or ""): str(row.get("review_status") or "")
-        for row in editorial_doc.get("suggested_candidate_reviews") or []
-        if isinstance(row, Mapping) and row.get("candidate_id")
-    }
+    reviews = {candidate_id: str(row["review_status"] or "") for candidate_id, row in normalize_durable_shot_review_truth(editorial_doc).items()}
     documents = {"v2": v2_candidates_doc, "v3": v3_candidates_doc, "v4": v4_candidates_doc, "v5": v5_candidates_doc}
     candidates_by_policy = {key: _candidates(document) for key, document in documents.items()}
     baseline_ids = {_candidate_id(row) for row in candidates_by_policy["v2"]}
