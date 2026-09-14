@@ -188,6 +188,15 @@ def _cluster_member(candidate: Mapping[str, Any]) -> dict[str, Any]:
     return {key: copy.deepcopy(candidate.get(key)) for key in keys if key in candidate}
 
 
+def _preferred_candidate(candidates: list[Mapping[str, Any]]) -> Mapping[str, Any]:
+    """Choose the deterministic default signal for a reviewable cluster."""
+
+    return min(
+        candidates,
+        key=lambda row: (-(_number(row.get("confidence")) or 0.0), _candidate_time(row), str(row.get("candidate_id") or "")),
+    )
+
+
 def build_review_clusters(
     candidates: list[Mapping[str, Any]],
     *,
@@ -216,10 +225,7 @@ def build_review_clusters(
             ordered = sorted(current, key=lambda row: (_candidate_time(row), str(row.get("candidate_id") or "")))
             first_time, last_time = _candidate_time(ordered[0]), _candidate_time(ordered[-1])
             members = [_cluster_member(row) for row in ordered]
-            preferred = min(
-                members,
-                key=lambda row: (-(_number(row.get("confidence")) or 0.0), _candidate_time(row), str(row.get("candidate_id") or "")),
-            )
+            preferred = _preferred_candidate(members)
             cluster_key = canonical_json_sha256({
                 "schema_version": "shot-review-cluster:v1",
                 "candidate_generation_digest": candidate_generation_digest,
@@ -286,6 +292,18 @@ def _cluster_projection(
     )
     for row in rows:
         row["status"], row["canonical_shot_ids"] = _cluster_status(row, reviews)
+        if row["status"] in {"unreviewed", "partially_rejected"}:
+            unresolved_members = [
+                member
+                for member in row["member_candidates"]
+                if str((reviews.get(str(member.get("candidate_id") or "")) or {}).get("review_status") or "unreviewed") == "unreviewed"
+            ]
+            # Rejected signals remain durable raw evidence, but a new cluster
+            # action must default to the signal the operator can still accept.
+            if unresolved_members:
+                preferred = _preferred_candidate(unresolved_members)
+                row["preferred_candidate_id"] = str(preferred.get("candidate_id") or "")
+                row["preferred_candidate"] = preferred
     return rows
 
 

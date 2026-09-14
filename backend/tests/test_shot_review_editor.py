@@ -255,8 +255,8 @@ class ShotReviewEditorTests(unittest.TestCase):
 
     def test_cluster_accept_preserves_prior_rejection_and_delete_keeps_it_durable(self) -> None:
         self._write_candidates([
-            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0, "confidence": .4},
-            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.5, "confidence": .8},
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0, "confidence": .9},
+            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.5, "confidence": .6},
         ])
         initial = self._initial()
         rejected_one = editor.reject_suggestion("published-one", {
@@ -265,6 +265,7 @@ class ShotReviewEditorTests(unittest.TestCase):
         })
         partial = rejected_one["unreviewed_suggestion_clusters"][0]
         self.assertEqual(partial["status"], "partially_rejected")
+        self.assertEqual((partial["preferred_candidate_id"], partial["preferred_candidate"]["time_sec"]), ("candidate-2", 11.5))
         before = editor.load_shot_review_document("published-one")
         prior_rejection = next(row for row in before["suggested_candidate_reviews"] if row["candidate_id"] == "candidate-1")
 
@@ -278,6 +279,8 @@ class ShotReviewEditorTests(unittest.TestCase):
         candidate_two = next(row for row in after["suggested_candidate_reviews"] if row["candidate_id"] == "candidate-2")
         self.assertEqual(candidate_one, prior_rejection)
         self.assertEqual((candidate_two["review_status"], candidate_two["canonical_shot_id"], len(accepted["canonical_shots"])), ("accepted", accepted["accepted_shot"]["shot_id"], 1))
+        canonical = after["canonical_shots"][0]
+        self.assertEqual((canonical["suggested_candidate_id"], canonical["time_sec"]), ("candidate-2", 11.5))
         self.assertEqual(accepted["unreviewed_cluster_count"], 0)
 
         deleted = editor.delete_canonical_shot("published-one", accepted["accepted_shot"]["shot_id"], {"expected_revision": accepted["revision"]})
