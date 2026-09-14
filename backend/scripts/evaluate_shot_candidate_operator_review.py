@@ -11,17 +11,25 @@ import json
 from pathlib import Path
 from typing import Any
 
-from evaluation.shot_candidate_operator_review import evaluate_operator_review_ab
+from evaluation.shot_candidate_operator_review import evaluate_operator_review_ab, evaluate_operator_review_three_way
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--current", required=True, type=Path)
     parser.add_argument("--v3", required=True, type=Path)
+    parser.add_argument("--v4", type=Path, help="Optional continuity-bridge shadow candidate document.")
     parser.add_argument("--editorial", required=True, type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = evaluate_operator_review_ab(_read_json(args.current), _read_json(args.v3), _read_json(args.editorial))
+    current = _read_json(args.current)
+    v3 = _read_json(args.v3)
+    editorial = _read_json(args.editorial)
+    report = (
+        evaluate_operator_review_three_way(current, v3, _read_json(args.v4), editorial)
+        if args.v4
+        else evaluate_operator_review_ab(current, v3, editorial)
+    )
     rendered = json.dumps(report, indent=2, ensure_ascii=False)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

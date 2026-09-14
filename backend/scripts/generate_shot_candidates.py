@@ -18,6 +18,7 @@ from app.services.shot_candidates import (
     POLICY_VERSION,
     PREVIOUS_POLICY_VERSION,
     V3_POLICY_VERSION,
+    V4_CONTINUITY_BRIDGE_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -30,7 +31,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group-id", default=DEFAULT_GROUP_ID)
     parser.add_argument("--output", type=Path, help="Shadow-only logical output path.")
-    parser.add_argument("--policy-version", choices=(PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION), default=POLICY_VERSION)
+    parser.add_argument("--policy-version", choices=(PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION), default=POLICY_VERSION)
     args = parser.parse_args()
 
     manifest_path = config.PUBLISHED_DIR / "match-groups" / args.group_id / "manifest.json"

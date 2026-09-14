@@ -70,6 +70,67 @@ def evaluate_operator_review_ab(
     }
 
 
+def evaluate_operator_review_three_way(
+    current_candidates_doc: Mapping[str, Any],
+    v3_candidates_doc: Mapping[str, Any],
+    v4_candidates_doc: Mapping[str, Any],
+    editorial_doc: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Evaluate v2/v3/v4 against the same historical review labels only.
+
+    This is deliberately evaluation-only.  v4 candidate generation never sees
+    this report or the editorial input.
+    """
+
+    reviews = {
+        str(row.get("candidate_id") or ""): str(row.get("review_status") or "")
+        for row in editorial_doc.get("suggested_candidate_reviews") or []
+        if isinstance(row, Mapping) and row.get("candidate_id")
+    }
+    documents = {"v2": current_candidates_doc, "v3": v3_candidates_doc, "v4": v4_candidates_doc}
+    candidates_by_policy = {key: _candidates(document) for key, document in documents.items()}
+    baseline_ids = {_candidate_id(row) for row in candidates_by_policy["v2"]}
+    accepted_ids = {candidate_id for candidate_id in baseline_ids if reviews.get(candidate_id) == "accepted"}
+    rejected_ids = {candidate_id for candidate_id in baseline_ids if reviews.get(candidate_id) == "rejected"}
+    policy_ids = {key: {_candidate_id(row) for row in rows} for key, rows in candidates_by_policy.items()}
+    policy_metrics = {
+        key: _policy_metrics(
+            candidates_by_policy[key],
+            _cluster_count(candidates_by_policy[key], documents[key]),
+            accepted_ids,
+            rejected_ids,
+            available_candidate_ids=policy_ids[key],
+        )
+        for key in documents
+    }
+    baseline_reviewed = accepted_ids | rejected_ids
+    return {
+        "schema_version": "shot-candidate-operator-review-3way:v1",
+        "evaluation_only": True,
+        "policy_versions": {key: document.get("policy_version") for key, document in documents.items()},
+        "operator_review_baseline": {
+            "reviewed_candidates": len(baseline_reviewed),
+            "accepted": len(accepted_ids),
+            "rejected": len(rejected_ids),
+        },
+        "policies": policy_metrics,
+        "comparisons": {
+            key: {
+                "delta_raw_candidates_vs_v2": policy_metrics[key]["raw_candidates"] - policy_metrics["v2"]["raw_candidates"],
+                "delta_review_clusters_vs_v2": policy_metrics[key]["review_clusters"] - policy_metrics["v2"]["review_clusters"],
+                "delta_review_clusters_vs_v3": policy_metrics[key]["review_clusters"] - policy_metrics["v3"]["review_clusters"],
+                "rejected_reviewed_cases_newly_introduced_vs_v2": len((rejected_ids & policy_ids[key]) - (rejected_ids & baseline_ids)),
+                "rejected_reviewed_cases_present_in_v4_absent_in_v3": len((rejected_ids & policy_ids[key]) - (rejected_ids & policy_ids["v3"])) if key == "v4" else 0,
+                "rejected_reviewed_cases_unchanged_from_v2": len(rejected_ids & policy_ids[key]),
+                "new_raw_candidates_without_prior_review_lineage": len(policy_ids[key] - baseline_ids),
+            }
+            for key in ("v3", "v4")
+        },
+        "limitations": [
+            "Operator decisions are historical evaluation labels only and are never read by production candidate generation.",
+            "New candidates cannot have historical review lineage until an operator reviews them.",
+        ],
+    }
 def _policy_metrics(
     candidates: list[dict[str, Any]],
     clusters: int,

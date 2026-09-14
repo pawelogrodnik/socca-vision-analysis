@@ -8,6 +8,7 @@ from app.services.shot_candidates import (
     POLICY_VERSION,
     PREVIOUS_POLICY_VERSION,
     V3_POLICY_VERSION,
+    V4_CONTINUITY_BRIDGE_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -253,6 +254,87 @@ class ShotCandidatesTests(unittest.TestCase):
         document = candidates([event("gap", start=0.0, end=1.0)], [], ball_document=ball_document)
 
         self.assertEqual(document["candidates"], [])
+
+    def test_v4_bridges_a_short_plausible_post_contact_gap(self) -> None:
+        ball_document = ball_rows(
+            [(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.3, 15.0, 20.0), (1.4, 15.0, 14.0), (1.5, 15.0, 8.0)],
+            unknown_at=1.2,
+        )
+
+        v2 = candidates([event("bridge", start=0.0, end=1.0)], [], ball_document=ball_document)
+        v4 = candidates(
+            [event("bridge", start=0.0, end=1.0)],
+            [],
+            ball_document=ball_document,
+            policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION,
+        )
+
+        self.assertEqual(v2["candidates"], [])
+        self.assertEqual(len(v4["candidates"]), 1)
+        evidence = v4["candidates"][0]["trajectory_evidence"]["continuity_bridge"]
+        self.assertTrue(evidence["applied"])
+        self.assertEqual(evidence["gap_frames"], 5)
+        self.assertEqual(evidence["gap_sec"], 0.2)
+        self.assertEqual(evidence["endpoint_support"], {"pre_trusted_samples": 2, "post_trusted_samples": 2, "bridge_samples": 1})
+        self.assertIn("continuity_bridge_applied", v4["candidates"][0]["reasons"])
+
+    def test_v4_does_not_bridge_a_long_gap(self) -> None:
+        ball_document = ball_rows(
+            [(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.7, 15.0, 20.0), (1.8, 15.0, 14.0)],
+            unknown_at=1.2,
+        )
+        document = candidates(
+            [event("long-gap", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION
+        )
+        self.assertEqual(document["candidates"], [])
+
+    def test_v4_does_not_bridge_an_implausible_spatial_jump(self) -> None:
+        ball_document = ball_rows(
+            [(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.3, 15.0, 2.0), (1.4, 15.0, 1.0)],
+            unknown_at=1.2,
+        )
+        document = candidates(
+            [event("teleport", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION
+        )
+        self.assertEqual(document["candidates"], [])
+
+    def test_v4_does_not_bridge_an_explicit_timeline_boundary(self) -> None:
+        ball_document = ball_rows(
+            [(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.3, 15.0, 20.0), (1.4, 15.0, 14.0)], unknown_at=1.2
+        )
+        for row in ball_document["positions"]:
+            row["timeline_segment_id"] = "one" if row["time_sec"] < 1.3 else "two"
+        document = candidates(
+            [event("boundary", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION
+        )
+        self.assertEqual(document["candidates"], [])
+
+    def test_v4_does_not_bridge_across_a_new_contact_boundary(self) -> None:
+        ball_document = ball_rows(
+            [(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.3, 15.0, 20.0), (1.4, 15.0, 14.0)], unknown_at=1.2
+        )
+        document = candidates(
+            [event("launch", start=0.0, end=1.0), event("new-contact", start=1.2, end=1.25, player="B01", team="B")],
+            [],
+            ball_document=ball_document,
+            policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION,
+        )
+        self.assertEqual(document["candidates"], [])
+
+    def test_v4_is_deterministic_and_no_gap_trajectory_remains_unbridged(self) -> None:
+        args = ([event("stable-v4", start=0.0, end=1.0)], [(1.0, 15.0, 30.0), (1.1, 15.0, 24.0), (1.2, 15.0, 16.0), (1.3, 15.0, 8.0)])
+        first = candidates(*args, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
+        second = candidates(*args, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
+        self.assertEqual(first, second)
+        self.assertNotIn("continuity_bridge", first["candidates"][0]["trajectory_evidence"])
+
+    def test_v4_bridge_diagnostics_are_stable(self) -> None:
+        ball_document = ball_rows(
+            [(1.0, 15.0, 30.0), (1.1, 15.0, 26.0), (1.3, 15.0, 20.0), (1.4, 15.0, 14.0)], unknown_at=1.2
+        )
+        first = candidates([event("diag", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
+        second = candidates([event("diag", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V4_CONTINUITY_BRIDGE_POLICY_VERSION)
+        self.assertEqual(first["candidates"][0]["trajectory_evidence"]["continuity_bridge"], second["candidates"][0]["trajectory_evidence"]["continuity_bridge"])
 
     def test_strong_short_goalward_prefix_before_explicit_boundary_is_a_candidate(self) -> None:
         document = candidates(
