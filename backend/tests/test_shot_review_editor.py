@@ -71,6 +71,38 @@ class ShotReviewEditorTests(unittest.TestCase):
         shot = accepted["canonical_shots"][0]
         self.assertEqual((shot["origin"], shot["time_sec"], shot["team_id"]), ("accepted_suggestion", 10.0, "team-a"))
 
+    def test_public_canonical_projection_is_minimal_sorted_and_keeps_null_location(self) -> None:
+        initial = self._initial()
+        accepted = self._accept(initial)
+        saved = editor.create_manual_shot("published-one", {
+            "expected_revision": accepted["revision"],
+            "shot": {"time_sec": 4, "team_id": "team-b", "outcome": "goal", "player_id": "p-b-1"},
+        })
+        editor.create_manual_shot("published-one", {
+            "expected_revision": saved["revision"],
+            "shot": {"time_sec": 20, "team_id": "team-a", "outcome": "blocked", "player_id": "p-a-1", "location_m": {"x": 2, "y": 3}},
+        })
+        state = editor.editor_state("published-one")
+        editor.create_manual_shot("published-one", {
+            "expected_revision": state["revision"],
+            "shot": {"time_sec": 17, "team_id": "team-a", "outcome": "on_target"},
+        })
+        rows = editor.public_canonical_shots_projection("published-one")
+        self.assertEqual([row["time_sec"] for row in rows or []], [4.0, 10.0, 17.0, 20.0])
+        self.assertEqual({key for row in rows or [] for key in row}, {"shot_id", "time_sec", "team_id", "outcome", "player_id", "location_m"})
+        self.assertEqual({row["outcome"] for row in rows or []}, {"goal", "on_target", "off_target", "blocked"})
+        self.assertIsNone((rows or [])[1]["location_m"])
+        self.assertEqual((rows or [])[3]["location_m"], {"x": 2.0, "y": 3.0})
+
+    def test_public_projection_preserves_legacy_absence_and_fails_closed_for_recovery(self) -> None:
+        self.assertIsNone(editor.public_canonical_shots_projection("published-one"))
+        editorial = self.root / "editorial"
+        editorial.mkdir(parents=True, exist_ok=True)
+        (editorial / "published-one.authority.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(editor.ShotReviewError) as error:
+            editor.public_canonical_shots_projection("published-one")
+        self.assertEqual(error.exception.code, "shot_review_recovery_required")
+
     def test_rejection_is_durable_for_same_lineage(self) -> None:
         initial = self._initial()
         rejected = editor.reject_suggestion("published-one", {"expected_revision": initial["revision"], "candidate_id": "candidate-1", "candidate_generation_digest": initial["suggestions"]["candidate_generation_digest"]})

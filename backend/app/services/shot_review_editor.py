@@ -19,6 +19,7 @@ from app import config
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.json_publish_store import MERGED_SOURCE_KIND, get_published_match
 from app.services.match_groups import get_match_group
+from app.services.match_phase_config import direction_for_team_at_time
 from app.services.merged_public_match import group_id_for_merged_published_id
 from app.services.resolved_player_timeline import build_resolved_player_timeline_from_files
 from app.services.shot_candidates import MIN_BALL_CONFIDENCE, build_logical_shot_candidates_document
@@ -98,6 +99,90 @@ def load_shot_review_document(published_id: str) -> dict[str, Any]:
     value["_exists"] = True
     value["revision"] = _revision(value)
     return value
+
+
+def public_canonical_shots_projection(published_id: str) -> list[dict[str, Any]] | None:
+    """Return the deliberately small public read model of canonical shots.
+
+    ``None`` means that this publication predates Shot Review and therefore
+    has no authoritative shot projection.  An existing-but-unreadable
+    editorial sidecar deliberately raises through ``load_shot_review_document``:
+    publishing must never turn unavailable operator truth into ``shots: []``.
+    """
+    document = load_shot_review_document(published_id)
+    if not document.get("_exists"):
+        return None
+
+    match = get_published_match(published_id)
+    report = _record(match.get("public_report"))
+    rows: list[dict[str, Any]] = []
+    for row in document.get("canonical_shots") or []:
+        if not isinstance(row, Mapping) or str(row.get("origin") or "") not in {"accepted_suggestion", "manual"}:
+            continue
+        time_sec = _number(row.get("time_sec"))
+        shot_id = str(row.get("shot_id") or "")
+        team_id = str(row.get("team_id") or "")
+        outcome = str(row.get("outcome") or "")
+        if time_sec is None or not shot_id or not team_id or outcome not in OUTCOMES:
+            # Canonical writes validate these values.  A malformed persisted
+            # canonical record is an authority failure, not public data.
+            raise ShotReviewError("shot_review_editorial_store_invalid", "Dane Shot Review zawierają nieprawidłowy strzał kanoniczny.", 409)
+        location = _record(row.get("location_m"))
+        x, y = _number(location.get("x")), _number(location.get("y"))
+        public_location = {"x": round(x, 6), "y": round(y, 6)} if x is not None and y is not None else None
+        player_id = row.get("player_id")
+        public_row = {
+            "shot_id": shot_id,
+            "time_sec": round(time_sec, 6),
+            "team_id": team_id,
+            "outcome": outcome,
+            "player_id": str(player_id) if player_id else None,
+            "location_m": public_location,
+        }
+        map_location = _public_map_location(published_id, report, public_row)
+        if map_location is not None:
+            # This display-only coordinate is separately named so the raw
+            # canonical pitch point remains immutable and auditable.
+            public_row["map_location"] = map_location
+        rows.append(public_row)
+    return sorted(rows, key=lambda row: (row["time_sec"], row["shot_id"]))
+
+
+def _public_map_location(published_id: str, report: Mapping[str, Any], shot: Mapping[str, Any]) -> dict[str, float] | None:
+    """Normalize one canonical point towards the attacking end from saved phases.
+
+    The frontend receives no direction heuristic.  If the older source lacks
+    a usable phase document it can still render the raw calibrated point, but
+    new reports get the deterministic display transform here.
+    """
+    location = _record(shot.get("location_m"))
+    x, y = _number(location.get("x")), _number(location.get("y"))
+    context = _source_context(published_id, report, _number(shot.get("time_sec")) or 0.0)
+    if x is None or y is None or context is None:
+        return None
+    source_id, source_time = context
+    pitch = _read_object(config.MATCHES_DIR / source_id / "pitch_config.json")
+    width, length = _number(pitch.get("width_m")) or 30.0, _number(pitch.get("length_m")) or 47.4
+    if not (0 <= x <= width and 0 <= y <= length):
+        return None
+    team_id = str(shot.get("team_id") or "")
+    team_label = next((str(row.get("team_label") or "") for row in report.get("teams") or [] if isinstance(row, Mapping) and str(row.get("team_id") or "") == team_id), "")
+    if not team_label:
+        team_config = _read_object(config.MATCHES_DIR / source_id / "team_config.json")
+        team_label = next((str(row.get("team_label") or "") for row in team_config.get("teams") or [] if isinstance(row, Mapping) and str(row.get("team_id") or "") == team_id), "")
+    phase = _read_object(config.MATCHES_DIR / source_id / "match_phase_config.json")
+    direction = str(direction_for_team_at_time(phase, team_label, source_time).get("attack_direction") or "unknown")
+    raw_x, raw_y = x / width, y / length
+    transforms = {
+        "towards_y_min": (raw_x, raw_y),
+        "towards_y_max": (1.0 - raw_x, 1.0 - raw_y),
+        "towards_x_min": (raw_y, raw_x),
+        "towards_x_max": (1.0 - raw_y, 1.0 - raw_x),
+    }
+    point = transforms.get(direction)
+    if point is None:
+        return None
+    return {"x": round(point[0], 6), "y": round(point[1], 6)}
 
 
 def _read_object(path: Path) -> dict[str, Any]:

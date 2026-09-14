@@ -8699,7 +8699,7 @@
     "restart_passes": 12,
     "same_team_pass_candidates": 260
   },
-  "generated_at": "2026-09-11T10:31:48.236630+00:00",
+  "generated_at": "2026-09-14T20:06:55.043334+00:00",
   "id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
   "key_moments": {
     "moments": [
@@ -99619,6 +99619,491 @@
   ],
   "report_type": "public_match_report",
   "schema_version": "0.1.0",
+  "shots": [
+    {
+      "location_m": {
+        "x": 10.525,
+        "y": 37.609
+      },
+      "map_location": {
+        "x": 0.649167,
+        "y": 0.206561
+      },
+      "outcome": "blocked",
+      "player_id": null,
+      "shot_id": "shot-review-c2fbf99d-3ca7-401f-a3c7-989f427785c1",
+      "team_id": "team-verisk",
+      "time_sec": 43.5
+    },
+    {
+      "location_m": {
+        "x": 9.316,
+        "y": 39.871
+      },
+      "map_location": {
+        "x": 0.689467,
+        "y": 0.15884
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-430af4ed-703c-4f49-b801-0856aaa896b0",
+      "team_id": "team-verisk",
+      "time_sec": 50.0
+    },
+    {
+      "location_m": {
+        "x": 13.442,
+        "y": 32.176
+      },
+      "map_location": {
+        "x": 0.551933,
+        "y": 0.321181
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-c4583520-b3d5-4bcc-a3c5-0008d6a4433d",
+      "team_id": "team-verisk",
+      "time_sec": 124.1
+    },
+    {
+      "location_m": {
+        "x": 8.828,
+        "y": 33.34
+      },
+      "map_location": {
+        "x": 0.705733,
+        "y": 0.296624
+      },
+      "outcome": "on_target",
+      "player_id": null,
+      "shot_id": "shot-review-0378902c-c928-44dc-bf54-d41639c95fa8",
+      "team_id": "team-verisk",
+      "time_sec": 139.2
+    },
+    {
+      "location_m": {
+        "x": 14.37,
+        "y": 32.169
+      },
+      "map_location": {
+        "x": 0.521,
+        "y": 0.321329
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-d5c49baa-86fb-4111-b532-2812c008fd95",
+      "team_id": "team-verisk",
+      "time_sec": 223.5
+    },
+    {
+      "location_m": {
+        "x": 16.604,
+        "y": 42.386
+      },
+      "map_location": {
+        "x": 0.446533,
+        "y": 0.105781
+      },
+      "outcome": "on_target",
+      "player_id": null,
+      "shot_id": "shot-review-c5e15746-b12d-466e-890e-a08375c74500",
+      "team_id": "team-verisk",
+      "time_sec": 431.9
+    },
+    {
+      "location_m": {
+        "x": 17.991,
+        "y": 32.087
+      },
+      "map_location": {
+        "x": 0.4003,
+        "y": 0.323059
+      },
+      "outcome": "blocked",
+      "player_id": null,
+      "shot_id": "shot-review-569ab3c8-4932-44e7-a782-22d875882aa6",
+      "team_id": "team-verisk",
+      "time_sec": 444.5
+    },
+    {
+      "location_m": {
+        "x": 16.212,
+        "y": 42.304
+      },
+      "map_location": {
+        "x": 0.4596,
+        "y": 0.107511
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-cce63c62-650c-4e92-b2da-0c3a07bb5138",
+      "team_id": "team-verisk",
+      "time_sec": 460.0
+    },
+    {
+      "location_m": {
+        "x": 9.032,
+        "y": 15.638
+      },
+      "map_location": {
+        "x": 0.301067,
+        "y": 0.329916
+      },
+      "outcome": "on_target",
+      "player_id": null,
+      "shot_id": "shot-review-0c9a417f-6d11-4b06-9a1d-b33dcc4f2990",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 588.5
+    },
+    {
+      "location_m": {
+        "x": 16.307,
+        "y": 14.987
+      },
+      "map_location": {
+        "x": 0.543567,
+        "y": 0.316181
+      },
+      "outcome": "goal",
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "shot_id": "shot-review-49a57e87-d29a-488e-850e-8d2841f52f64",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 594.3
+    },
+    {
+      "location_m": {
+        "x": 2.348,
+        "y": 35.998
+      },
+      "map_location": {
+        "x": 0.921733,
+        "y": 0.240549
+      },
+      "outcome": "blocked",
+      "player_id": null,
+      "shot_id": "shot-review-10b411fe-af6f-4b75-94e2-314a8c870ffd",
+      "team_id": "team-verisk",
+      "time_sec": 654.0
+    },
+    {
+      "location_m": null,
+      "outcome": "off_target",
+      "player_id": "team-corgi-1fc405-player-1-pawel",
+      "shot_id": "shot-review-9843d938-e70d-4483-90d0-cdb01c095f89",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 817.5
+    },
+    {
+      "location_m": {
+        "x": 13.473,
+        "y": 41.41
+      },
+      "map_location": {
+        "x": 0.4491,
+        "y": 0.873629
+      },
+      "outcome": "on_target",
+      "player_id": "team-corgi-1fc405-player-5-mateusz",
+      "shot_id": "shot-review-495a70aa-664d-4333-95e0-e186b84eb6b4",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 890.0
+    },
+    {
+      "location_m": {
+        "x": 13.031,
+        "y": 19.134
+      },
+      "map_location": {
+        "x": 0.434367,
+        "y": 0.403671
+      },
+      "outcome": "on_target",
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "shot_id": "shot-review-ba46b1d8-e2b7-4ab9-ba24-591b72efc365",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 975.0
+    },
+    {
+      "location_m": {
+        "x": 26.633,
+        "y": 5.259
+      },
+      "map_location": {
+        "x": 0.887767,
+        "y": 0.110949
+      },
+      "outcome": "blocked",
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "shot_id": "shot-review-8396ae1e-dd0c-4a57-9ae4-808952714abd",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1022.0
+    },
+    {
+      "location_m": {
+        "x": 0.907,
+        "y": 5.932
+      },
+      "map_location": {
+        "x": 0.030233,
+        "y": 0.125148
+      },
+      "outcome": "off_target",
+      "player_id": "team-corgi-1fc405-player-3-przemek",
+      "shot_id": "shot-review-4b602c04-9055-4bad-a41b-6666a210cfc8",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1050.5
+    },
+    {
+      "location_m": {
+        "x": 13.284,
+        "y": 28.08
+      },
+      "map_location": {
+        "x": 0.5572,
+        "y": 0.407595
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-ccb525f8-dc58-4755-8a9e-809bc8b0d39c",
+      "team_id": "team-verisk",
+      "time_sec": 1092.0
+    },
+    {
+      "location_m": {
+        "x": 8.301,
+        "y": 13.849
+      },
+      "map_location": {
+        "x": 0.2767,
+        "y": 0.292173
+      },
+      "outcome": "blocked",
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "shot_id": "shot-review-ee516acd-3e32-4139-85ae-8859c442153d",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1132.0
+    },
+    {
+      "location_m": {
+        "x": 6.093,
+        "y": 15.547
+      },
+      "map_location": {
+        "x": 0.2031,
+        "y": 0.327996
+      },
+      "outcome": "blocked",
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "shot_id": "shot-review-0318a2e5-4317-4bbe-bcc2-b3fad4961590",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1177.6
+    },
+    {
+      "location_m": {
+        "x": 8.444,
+        "y": 3.347
+      },
+      "map_location": {
+        "x": 0.281467,
+        "y": 0.070612
+      },
+      "outcome": "on_target",
+      "player_id": "team-corgi-1fc405-player-5-mateusz",
+      "shot_id": "shot-review-d34a8681-4c93-435f-b050-a35141803a6a",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1233.0
+    },
+    {
+      "location_m": {
+        "x": 20.252,
+        "y": 37.408
+      },
+      "map_location": {
+        "x": 0.324933,
+        "y": 0.210802
+      },
+      "outcome": "blocked",
+      "player_id": null,
+      "shot_id": "shot-review-478361d8-451d-472a-9a6d-81526a5c6f5b",
+      "team_id": "team-verisk",
+      "time_sec": 1368.5
+    },
+    {
+      "location_m": null,
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-9aa7bbf4-8a90-4be8-97d9-f28fbdd846d7",
+      "team_id": "team-verisk",
+      "time_sec": 1400.5
+    },
+    {
+      "location_m": {
+        "x": 21.851,
+        "y": 32.161
+      },
+      "map_location": {
+        "x": 0.271633,
+        "y": 0.321498
+      },
+      "outcome": "blocked",
+      "player_id": null,
+      "shot_id": "shot-review-93eca07b-de24-4921-9cae-e67d4624f6fc",
+      "team_id": "team-verisk",
+      "time_sec": 1454.5
+    },
+    {
+      "location_m": {
+        "x": 17.191,
+        "y": 5.446
+      },
+      "map_location": {
+        "x": 0.573033,
+        "y": 0.114895
+      },
+      "outcome": "goal",
+      "player_id": "team-corgi-1fc405-player-1-pawel",
+      "shot_id": "shot-review-aa7559a2-3204-459e-bad0-fe2b96e04847",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1541.5
+    },
+    {
+      "location_m": {
+        "x": 21.797,
+        "y": 33.454
+      },
+      "map_location": {
+        "x": 0.273433,
+        "y": 0.294219
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-8da300dc-6403-4f81-bebd-c3a286a290da",
+      "team_id": "team-verisk",
+      "time_sec": 1563.1
+    },
+    {
+      "location_m": null,
+      "outcome": "goal",
+      "player_id": null,
+      "shot_id": "shot-review-96de3128-f42e-4838-9a16-f5d5171253b2",
+      "team_id": "team-verisk",
+      "time_sec": 1715.5
+    },
+    {
+      "location_m": null,
+      "outcome": "blocked",
+      "player_id": null,
+      "shot_id": "shot-review-4fa1b416-04ce-4e09-8eff-b53a8b77252f",
+      "team_id": "team-verisk",
+      "time_sec": 1784.0
+    },
+    {
+      "location_m": {
+        "x": 15.111,
+        "y": 38.302
+      },
+      "map_location": {
+        "x": 0.4963,
+        "y": 0.191941
+      },
+      "outcome": "on_target",
+      "player_id": null,
+      "shot_id": "shot-review-962984be-75c2-4a09-af97-5f461c0c0b63",
+      "team_id": "team-verisk",
+      "time_sec": 1786.1
+    },
+    {
+      "location_m": null,
+      "outcome": "off_target",
+      "player_id": "team-corgi-1fc405-player-5-mateusz",
+      "shot_id": "shot-review-f0b70547-3dbb-4b75-bdd4-12ce05b73abe",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1792.0
+    },
+    {
+      "location_m": null,
+      "outcome": "on_target",
+      "player_id": "team-corgi-1fc405-player-12-patryk",
+      "shot_id": "shot-review-96b0fd71-0dd8-4381-96c1-b7dacf6c2a9c",
+      "team_id": "team-corgi-1fc405",
+      "time_sec": 1833.5
+    },
+    {
+      "location_m": {
+        "x": 26.556,
+        "y": 37.189
+      },
+      "map_location": {
+        "x": 0.1148,
+        "y": 0.215422
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-1f710931-cfba-4a8d-b711-406dfa08552b",
+      "team_id": "team-verisk",
+      "time_sec": 1929.5
+    },
+    {
+      "location_m": {
+        "x": 14.283,
+        "y": 40.151
+      },
+      "map_location": {
+        "x": 0.5239,
+        "y": 0.152932
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-63d963e9-44e0-47c2-ae3b-03293e5b0f1b",
+      "team_id": "team-verisk",
+      "time_sec": 2009.5
+    },
+    {
+      "location_m": {
+        "x": 20.219,
+        "y": 29.569
+      },
+      "map_location": {
+        "x": 0.326033,
+        "y": 0.376181
+      },
+      "outcome": "goal",
+      "player_id": null,
+      "shot_id": "shot-review-66fac8fd-632a-4880-82b6-e50f8276c678",
+      "team_id": "team-verisk",
+      "time_sec": 2042.0
+    },
+    {
+      "location_m": {
+        "x": 24.926,
+        "y": 40.68
+      },
+      "map_location": {
+        "x": 0.169133,
+        "y": 0.141772
+      },
+      "outcome": "off_target",
+      "player_id": null,
+      "shot_id": "shot-review-fdaac82f-fcc2-4c80-8e82-50ac1fd79570",
+      "team_id": "team-verisk",
+      "time_sec": 2067.8
+    },
+    {
+      "location_m": {
+        "x": 14.023,
+        "y": 41.235
+      },
+      "map_location": {
+        "x": 0.532567,
+        "y": 0.130063
+      },
+      "outcome": "goal",
+      "player_id": null,
+      "shot_id": "shot-review-f5c3cf0e-ee9a-43cc-8a9e-0cf6b5ab5b07",
+      "team_id": "team-verisk",
+      "time_sec": 2099.3
+    }
+  ],
   "source_match_id": "match-group-c3fbd48a-356d-44a0-a740-c630de69b527",
   "stats_semantics": {
     "ball": "experimental_candidates",

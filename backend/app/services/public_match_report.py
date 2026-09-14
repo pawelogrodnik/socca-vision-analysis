@@ -869,6 +869,14 @@ def write_public_match_report_bundle(
     editorial_key_moments = apply_editorial_key_moments(report, published_id, source_kind="physical")
     if editorial_key_moments:
         report["key_moments"] = editorial_key_moments
+    # This is intentionally read through Shot Review's authority loader.  It
+    # distinguishes legacy publications (no projection) from a real empty
+    # canonical list and fails closed when operator-owned state needs recovery.
+    from app.services.shot_review_editor import public_canonical_shots_projection
+
+    public_shots = public_canonical_shots_projection(published_id)
+    if public_shots is not None:
+        report["shots"] = public_shots
     public_dir.mkdir(parents=True, exist_ok=True)
     (public_dir / "public_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True),

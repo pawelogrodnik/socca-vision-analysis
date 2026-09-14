@@ -134,3 +134,32 @@ test('desktop expanded analysis keeps the same player, closes by control and Esc
   fireEvent.keyDown(window, { key: 'Escape' });
   assert.equal(view.queryByRole('dialog', { name: 'Rozszerzona analiza meczu' }), null);
 });
+
+test('static canonical shots use the existing player and expose two separate read-only team maps', async () => {
+  const players = installPlayer();
+  const publicShotReport: PublicMatchReport = {
+    ...report,
+    teams: [{ team_id: 'corgi', team_name: 'Corgi' }, { team_id: 'verisk', team_name: 'Verisk' }],
+    players: [{ player_id: 'krzysiek', player_name: 'Krzysiek', team_id: 'corgi' }],
+    shots: [
+      { shot_id: 'goal', time_sec: 10, team_id: 'corgi', outcome: 'goal', player_id: 'krzysiek', location_m: { x: 10, y: 12 } },
+      { shot_id: 'blocked', time_sec: 20, team_id: 'verisk', outcome: 'blocked', location_m: null },
+      { shot_id: 'off', time_sec: 30, team_id: 'verisk', outcome: 'off_target', location_m: { x: 20, y: 30 } },
+    ],
+  };
+  const view = render(React.createElement(RedesignedReportVideoMoments, {
+    report: publicShotReport,
+    externalVideo: { group_id: 'group', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1', linked_video: { generation_id: 'g', input_semantic_digest: 'input', output_semantic_digest: 'output', timeline_span_sec: 120 }, updated_at: 'now' } },
+  }));
+  await waitFor(() => assert.equal(players.length, 1));
+  await act(async () => { players[0].ready(); });
+  fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
+  assert.equal(view.getAllByLabelText(/Mapa strzałów:/).length, 2);
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 2);
+  assert.equal(view.queryByText(/Sugestie/), null);
+  assert.equal(view.queryByRole('button', { name: 'Dodaj strzał' }), null);
+  fireEvent.click(view.getByRole('button', { name: /Gol, 0:10/ }));
+  assert.deepEqual(players[0].seekCalls, [[10, true]]);
+  assert.equal(players.length, 1);
+  assert.equal(view.container.querySelectorAll('iframe').length, 1);
+});

@@ -347,6 +347,13 @@ def build_canonical_merged_report(
     )
     if editorial_key_moments:
         report["key_moments"] = editorial_key_moments
+    # The merged publication has its own durable Shot Review authority.  Do
+    # not reconstruct public shots from source candidates or source reports.
+    from app.services.shot_review_editor import public_canonical_shots_projection
+
+    public_shots = public_canonical_shots_projection(merged_published_id)
+    if public_shots is not None:
+        report["shots"] = public_shots
     report["_heatmap_jobs"] = heatmap_jobs
     return report
 
