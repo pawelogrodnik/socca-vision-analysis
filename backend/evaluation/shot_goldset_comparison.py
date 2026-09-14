@@ -7,7 +7,10 @@ from typing import Any, Mapping
 
 
 COMPARISON_SCHEMA_VERSION = "shot-goldset-comparison:v1"
-DEFAULT_MATCH_TOLERANCE_SEC = 1.5
+# v1 anchors were intentionally recorded as approximate clocks.  This is a
+# reconciliation bound between two manual truth sets, not the tighter
+# candidate-to-gold benchmark tolerance.
+DEFAULT_RECONCILIATION_TOLERANCE_SEC = 3.0
 MATERIAL_TIMESTAMP_CHANGE_SEC = 0.25
 
 
@@ -15,14 +18,14 @@ def compare_shot_goldsets(
     v1_doc: Mapping[str, Any],
     v2_doc: Mapping[str, Any],
     *,
-    tolerance_sec: float = DEFAULT_MATCH_TOLERANCE_SEC,
+    tolerance_sec: float = DEFAULT_RECONCILIATION_TOLERANCE_SEC,
 ) -> dict[str, Any]:
     """Compare v1's approximate anchors with v2's canonical shot-review state.
 
     Pairing is chronological, one-to-one and bounded by ``tolerance_sec``.
-    Team is reported as a semantic consistency check, rather than a matching
-    prerequisite, so a corrected team attribution is visible as one revision
-    instead of misleading v1-only/v2-only rows.
+    It maximizes paired actions, then prefers team/outcome/player consistency,
+    then minimizes timing error. Semantic fields remain soft evidence: a
+    canonical correction is still paired rather than represented as two rows.
     """
 
     if str(v1_doc.get("schema_version") or "") != "shot-goldset:v1":
@@ -46,6 +49,7 @@ def compare_shot_goldsets(
         "baseline_schema_version": "shot-goldset:v1",
         "canonical_schema_version": "shot-goldset:v2",
         "match_tolerance_sec": tolerance_sec,
+        "matching_strategy": "maximum_pairs_then_semantic_consistency_then_timing_error",
         "material_timestamp_change_sec": MATERIAL_TIMESTAMP_CHANGE_SEC,
         "summary": {
             "v1_shots": len(v1),
@@ -76,20 +80,25 @@ def _ordered_maximum_match(
     right: list[dict[str, Any]],
     tolerance_sec: float,
 ) -> tuple[tuple[int, int], ...]:
-    """Maximize pairs then minimize timing error without crossing time order."""
+    """Match chronological actions by count, soft semantics, then clock error."""
 
     @lru_cache(maxsize=None)
-    def solve(left_index: int, right_index: int) -> tuple[int, int, tuple[tuple[int, int], ...]]:
+    def solve(left_index: int, right_index: int) -> tuple[int, int, int, tuple[tuple[int, int], ...]]:
         if left_index == len(left) or right_index == len(right):
-            return 0, 0, ()
+            return 0, 0, 0, ()
         choices = [solve(left_index + 1, right_index), solve(left_index, right_index + 1)]
         delta = abs(_time(left[left_index]) - _time(right[right_index]))
         if delta <= tolerance_sec:
-            count, error_micros, pairs = solve(left_index + 1, right_index + 1)
-            choices.append((count + 1, error_micros + int(round(delta * 1_000_000)), ((left_index, right_index), *pairs)))
-        return min(choices, key=lambda value: (-value[0], value[1], value[2]))
+            count, semantic_penalty, error_micros, pairs = solve(left_index + 1, right_index + 1)
+            choices.append((
+                count + 1,
+                semantic_penalty + _semantic_penalty(left[left_index], right[right_index]),
+                error_micros + int(round(delta * 1_000_000)),
+                ((left_index, right_index), *pairs),
+            ))
+        return min(choices, key=lambda value: (-value[0], value[1], value[2], value[3]))
 
-    return solve(0, 0)[2]
+    return solve(0, 0)[3]
 
 
 def _match_row(v1: Mapping[str, Any], v2: Mapping[str, Any]) -> dict[str, Any]:
@@ -111,6 +120,7 @@ def _match_row(v1: Mapping[str, Any], v2: Mapping[str, Any]) -> dict[str, Any]:
         "v2_player": v2.get("player"),
         "player_changed": v1.get("player") != v2.get("player"),
         "v2_origin": v2.get("origin"),
+        "semantic_consistency": _semantic_consistency(v1, v2),
     }
 
 
@@ -124,3 +134,28 @@ def _summary(row: Mapping[str, Any]) -> dict[str, Any]:
 def _time(row: Mapping[str, Any]) -> float:
     value = row.get("timestamp_sec")
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _semantic_penalty(v1: Mapping[str, Any], v2: Mapping[str, Any]) -> int:
+    consistency = _semantic_consistency(v1, v2)
+    # Team and outcome are strong action discriminators. Player evidence is
+    # only considered when both goldsets actually know a player.
+    return (
+        (4 if consistency["team"] is False else 0)
+        + (3 if consistency["outcome"] is False else 0)
+        + (1 if consistency["player"] is False else 0)
+    )
+
+
+def _semantic_consistency(v1: Mapping[str, Any], v2: Mapping[str, Any]) -> dict[str, bool | None]:
+    return {
+        "team": _field_consistency(v1.get("team"), v2.get("team")),
+        "outcome": _field_consistency(v1.get("outcome"), v2.get("outcome")),
+        "player": _field_consistency(v1.get("player"), v2.get("player")),
+    }
+
+
+def _field_consistency(left: Any, right: Any) -> bool | None:
+    if left in (None, "") or right in (None, ""):
+        return None
+    return left == right

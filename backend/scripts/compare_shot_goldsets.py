@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from evaluation.shot_goldset_comparison import DEFAULT_MATCH_TOLERANCE_SEC, compare_shot_goldsets
+from evaluation.shot_goldset_comparison import DEFAULT_RECONCILIATION_TOLERANCE_SEC, compare_shot_goldsets
 
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
@@ -18,7 +18,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--v1", type=Path, default=FIXTURES_DIR / "shot_goldset_v1.json")
     parser.add_argument("--v2", type=Path, default=FIXTURES_DIR / "shot_goldset_v2.json")
-    parser.add_argument("--tolerance-sec", type=float, default=DEFAULT_MATCH_TOLERANCE_SEC)
+    parser.add_argument("--tolerance-sec", type=float, default=DEFAULT_RECONCILIATION_TOLERANCE_SEC)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = compare_shot_goldsets(_read_json(args.v1), _read_json(args.v2), tolerance_sec=args.tolerance_sec)
