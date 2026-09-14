@@ -24,6 +24,7 @@ POLICY_VERSION = "shot-candidate-shadow:v2"
 PREVIOUS_POLICY_VERSION = "shot-candidate-shadow:v1"
 V3_POLICY_VERSION = "shot-candidate-shadow:v3"
 V4_CONTINUITY_BRIDGE_POLICY_VERSION = "shot-candidate-shadow:v4-continuity-bridge"
+V5_WEAK_BOUNDARY_POLICY_VERSION = "shot-candidate-shadow:v5-weak-boundary"
 SCHEMA_VERSION = "shot-candidates:v1"
 SOURCE = "canonical_ball_contact_trajectory_shadow_v1"
 ALLOWED_CONTACT_STATUSES = {"accepted", "uncertain", "needs_review"}
@@ -58,6 +59,10 @@ V4_MAX_CONTINUITY_BRIDGE_SPEED_MPS = 35.0
 V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC = 0.30
 V4_MIN_POST_ENDPOINT_SUPPORT = 2
 V4_MIN_HEADING_COSINE = 0.2
+# v5 retains every v4 continuity constraint.  The sole additional check is a
+# local interpretation of one untrusted detected row whose geometry agrees
+# with its trusted endpoints.  This is deliberately not a detector threshold.
+V5_WEAK_BOUNDARY_MAX_SPATIAL_RESIDUAL_M = 0.75
 
 
 def build_shot_candidates_document(
@@ -78,6 +83,7 @@ def build_shot_candidates_document(
     ball_timeline = _ball_timeline(ball_tracks_doc)
     candidates: list[dict[str, Any]] = []
     skipped = Counter()
+    weak_boundary_diagnostics: list[dict[str, Any]] = []
     for index, event in enumerate(contacts):
         next_event = contacts[index + 1] if index + 1 < len(contacts) else None
         candidate, reason = _candidate_from_contact(
@@ -90,13 +96,17 @@ def build_shot_candidates_document(
             pitch_length_m=pitch_length_m,
             logical_offset_sec=logical_offset_sec,
             policy_version=policy_version,
+            weak_boundary_diagnostics=weak_boundary_diagnostics,
         )
         if candidate is None:
             skipped[reason or "insufficient_evidence"] += 1
             continue
         candidates.append(candidate)
 
-    deduplicated = _deduplicate(candidates)
+    deduplicated = _deduplicate(
+        candidates,
+        preserve_primary_candidate_identity=policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION,
+    )
     suppressed: list[dict[str, Any]] = []
     if policy_version == V3_POLICY_VERSION:
         deduplicated, suppressed = _apply_v3_structural_suppression(deduplicated)
@@ -133,7 +143,11 @@ def build_shot_candidates_document(
                 "single_pre_endpoint_max_gap_sec": V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC,
                 "min_post_endpoint_support": V4_MIN_POST_ENDPOINT_SUPPORT,
                 "min_heading_cosine": V4_MIN_HEADING_COSINE,
-            } if policy_version == V4_CONTINUITY_BRIDGE_POLICY_VERSION else {}),
+            } if policy_version in {V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION} else {}),
+            **({
+                "weak_detected_boundary_mode": "single_local_detected_row_with_trusted_endpoint_geometry",
+                "weak_detected_boundary_max_spatial_residual_m": V5_WEAK_BOUNDARY_MAX_SPATIAL_RESIDUAL_M,
+            } if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION else {}),
         },
         "source_match_id": source_match_id,
         "logical_offset_sec": _round(logical_offset_sec),
@@ -141,6 +155,7 @@ def build_shot_candidates_document(
         "summary": summary,
         "candidates": sorted(deduplicated, key=lambda row: (row["logical_timestamp_sec"], row["candidate_key"])),
         **({"suppressed_candidate_diagnostics": suppressed} if policy_version == V3_POLICY_VERSION else {}),
+        **({"weak_boundary_diagnostics": sorted(weak_boundary_diagnostics, key=lambda row: (str(row.get("contact_event_id") or ""), str(row.get("weak_boundary_state") or "")))} if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION else {}),
         "notes": [
             "Every row is a suggested shot candidate requiring future operator confirmation.",
             "final_stat_eligible is always false in the shadow candidate layer.",
@@ -181,6 +196,7 @@ def build_logical_shot_candidates_document(
 
     _validate_policy_version(policy_version)
     candidates: list[dict[str, Any]] = []
+    weak_boundary_diagnostics: list[dict[str, Any]] = []
     for source in sources:
         source_id = str(source.get("source_match_id") or "")
         offset = _number(source.get("logical_offset_sec"), 0.0)
@@ -207,6 +223,16 @@ def build_logical_shot_candidates_document(
                 "logical_context_end_sec": _round(offset + _number(physical.get("source_context_end_sec"), source_time)),
                 "physical_candidate_key": physical.get("candidate_key"),
             })
+        if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION:
+            for diagnostic in document.get("weak_boundary_diagnostics") or []:
+                if not isinstance(diagnostic, Mapping):
+                    continue
+                source_time = _number(diagnostic.get("contact_timestamp_sec"), 0.0)
+                weak_boundary_diagnostics.append({
+                    **dict(diagnostic),
+                    "source_match_id": source_id,
+                    "logical_contact_timestamp_sec": _round(offset + source_time),
+                })
     candidates.sort(key=lambda row: (row["logical_timestamp_sec"], row["candidate_key"]))
     return {
         "schema_version": SCHEMA_VERSION,
@@ -221,6 +247,7 @@ def build_logical_shot_candidates_document(
             "candidates_per_10_minutes": _round(len(candidates) / (timeline_span_sec / 600.0)) if timeline_span_sec > 0 else None,
         },
         "candidates": candidates,
+        **({"weak_boundary_diagnostics": sorted(weak_boundary_diagnostics, key=lambda row: (str(row.get("source_match_id") or ""), _number(row.get("contact_timestamp_sec"), 0.0), str(row.get("contact_event_id") or "")))} if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION else {}),
         "notes": [
             "Logical timestamps are source-local timestamps rebased with the canonical logical offset.",
             "Candidates remain suggestions and are excluded from all canonical analytics.",
@@ -239,6 +266,7 @@ def _candidate_from_contact(
     pitch_length_m: float,
     logical_offset_sec: float,
     policy_version: str,
+    weak_boundary_diagnostics: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     launch_time = _number(event.get("end_time_sec"), _number(event.get("start_time_sec"), 0.0))
     launch = _nearest_trusted_position(ball_timeline, launch_time, MAX_LAUNCH_POSITION_DELTA_SEC)
@@ -251,6 +279,14 @@ def _candidate_from_contact(
         policy_version=policy_version,
         next_contact_time=_number(next_event.get("start_time_sec"), _number(next_event.get("end_time_sec"), -1.0)) if next_event else None,
     )
+    if policy_version == V5_WEAK_BOUNDARY_POLICY_VERSION and bridge_diagnostics.get("weak_boundary_considered"):
+        if weak_boundary_diagnostics is not None:
+            weak_boundary_diagnostics.append({
+                "contact_event_id": event.get("event_id"),
+                "contact_end_frame": event.get("end_frame"),
+                "contact_timestamp_sec": _round(launch_time),
+                **bridge_diagnostics,
+            })
     if trajectory is None:
         return None, "missing_continuous_ball_trajectory"
     trajectory_summary = _trajectory_summary(trajectory)
@@ -270,7 +306,7 @@ def _candidate_from_contact(
         trajectory_summary["distance_m"] >= MIN_TRAJECTORY_DISTANCE_M
         and trajectory_summary["mean_speed_mps"] >= MIN_TRAJECTORY_SPEED_MPS
     )
-    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION} and _is_strong_short_prefix(
+    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION} and _is_strong_short_prefix(
         trajectory_summary,
         ball_timeline,
         trajectory,
@@ -485,18 +521,135 @@ def _trajectory_for_policy(
     policy_version: str,
     next_contact_time: float | None = None,
 ) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
-    """Return the ordinary trajectory, optionally with a local v4 bridge.
+    """Return the ordinary trajectory, optionally with a local policy bridge.
 
     v1/v2/v3 intentionally use the original function unchanged.  v4 only
-    considers the first discontinuity after this particular contact launch;
-    it does not repair or persist a global ball timeline.
+    considers the first discontinuity after this particular contact launch.
+    v5 first executes the same v4 bridge and only then considers one isolated
+    untrusted ``detected`` boundary.  Neither policy repairs or persists a
+    global ball timeline.
     """
 
     ordinary = _trajectory_from_launch(rows, launch, launch_time)
-    if policy_version != V4_CONTINUITY_BRIDGE_POLICY_VERSION or ordinary is not None:
+    if policy_version not in {V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION} or ordinary is not None:
         return ordinary, {"considered": False, "applied": False}
     bridged, diagnostics = _contact_bounded_continuity_bridge(rows, launch, launch_time, next_contact_time=next_contact_time)
-    return bridged if diagnostics.get("applied") else ordinary, diagnostics
+    if diagnostics.get("applied") or policy_version == V4_CONTINUITY_BRIDGE_POLICY_VERSION:
+        return bridged if diagnostics.get("applied") else ordinary, diagnostics
+    if diagnostics.get("rejection_reason") != "detector_evidence_boundary":
+        return ordinary, diagnostics
+    weak_bridged, weak_diagnostics = _weak_detected_boundary_bridge(
+        rows,
+        launch,
+        launch_time,
+        next_contact_time=next_contact_time,
+    )
+    return weak_bridged if weak_diagnostics.get("applied") else ordinary, weak_diagnostics
+
+
+def _weak_detected_boundary_bridge(
+    rows: list[dict[str, Any]],
+    launch: Mapping[str, Any],
+    launch_time: float,
+    *,
+    next_contact_time: float | None,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    """Locally bridge one geometrically compatible weak detected boundary.
+
+    This is a v5-only candidate hypothesis.  The weak row and all canonical
+    ball-track rows remain untouched.  Unknown/interpolated rows may occur
+    after the one weak detected row, but a second untrusted detected row is an
+    alternate-ball ambiguity and therefore fails closed.
+    """
+
+    horizon = launch_time + MAX_TRAJECTORY_SECONDS
+    start_index = next((index for index, row in enumerate(rows) if row is launch), None)
+    if start_index is None:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_launch_not_in_timeline")
+
+    prefix = [dict(launch)]
+    previous_time = _number(launch.get("time_sec"), launch_time)
+    boundary_index: int | None = None
+    for index in range(start_index + 1, len(rows)):
+        row = rows[index]
+        time_sec = _number(row.get("time_sec"), -1.0)
+        if time_sec > horizon:
+            return None, _weak_boundary_diagnostics("weak_boundary_rejected_horizon")
+        if not _is_trusted_ball_position(row) or time_sec - previous_time > MAX_TRAJECTORY_GAP_SEC:
+            boundary_index = index
+            break
+        if time_sec > previous_time + 0.001:
+            prefix.append(dict(row))
+            previous_time = time_sec
+    if boundary_index is None:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_no_discontinuity")
+
+    weak = rows[boundary_index]
+    if str(weak.get("source") or "") != "detected" or _is_trusted_ball_position(weak):
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_not_single_untrusted_detected")
+    if not _valid_position(weak.get("position_m")):
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_spatially")
+
+    post_index = next(
+        (
+            index
+            for index in range(boundary_index + 1, len(rows))
+            if _number(rows[index].get("time_sec"), horizon + 1.0) <= horizon
+            and _is_trusted_ball_position(rows[index])
+        ),
+        None,
+    )
+    if post_index is None:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_insufficient_post_support")
+    post = rows[post_index]
+    pre = prefix[-1]
+    pre_time = _number(pre.get("time_sec"), launch_time)
+    post_time = _number(post.get("time_sec"), pre_time)
+    gap_sec = post_time - pre_time
+    if gap_sec <= 0 or gap_sec > V4_MAX_CONTINUITY_BRIDGE_GAP_SEC:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_gap", pre=pre, post=post)
+    if next_contact_time is not None and pre_time < next_contact_time < post_time:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_contact_boundary", pre=pre, post=post)
+    if len(prefix) == 1 and gap_sec > V4_SINGLE_PRE_ENDPOINT_MAX_GAP_SEC:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_insufficient_pre_endpoint_support", pre=pre, post=post)
+
+    between = rows[boundary_index + 1:post_index]
+    if any(str(row.get("source") or "") == "detected" for row in between):
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_isolation", pre=pre, post=post)
+    if not _same_timeline_segment_chain([pre, weak, *between, post]):
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_segment_boundary", pre=pre, post=post)
+
+    post_support = _trusted_post_support(rows, post_index, horizon)
+    if len(post_support) < V4_MIN_POST_ENDPOINT_SUPPORT:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_insufficient_post_support", pre=pre, post=post)
+    pre_position = list(pre["position_m"])
+    weak_position = list(weak["position_m"])
+    post_position = list(post["position_m"])
+    distance_m = _distance(pre_position, post_position)
+    if distance_m / gap_sec > V4_MAX_CONTINUITY_BRIDGE_SPEED_MPS:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_speed", pre=pre, post=post)
+    residual_m = abs(_distance(pre_position, weak_position) + _distance(weak_position, post_position) - distance_m)
+    if residual_m > V5_WEAK_BOUNDARY_MAX_SPATIAL_RESIDUAL_M:
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_spatially", pre=pre, post=post, weak=weak, spatial_residual_m=residual_m)
+    if len(prefix) >= 2 and not _bridge_heading_is_consistent(prefix[-2], pre, post, post_support[1]):
+        return None, _weak_boundary_diagnostics("weak_boundary_rejected_heading", pre=pre, post=post, weak=weak, spatial_residual_m=residual_m)
+
+    bridge_rows = [_interpolated_bridge_row(pre, post, row) for row in rows[boundary_index:post_index]]
+    trajectory = prefix + bridge_rows
+    continuation, _ = _trusted_continuation(rows, post_index, post_time, horizon)
+    trajectory.extend(continuation)
+    diagnostics = _weak_boundary_diagnostics(
+        "weak_boundary_reinterpreted",
+        applied=True,
+        pre=pre,
+        post=post,
+        weak=weak,
+        pre_support_count=len(prefix),
+        post_support=post_support,
+        bridge_rows=bridge_rows,
+        spatial_residual_m=residual_m,
+    )
+    return (trajectory if len(trajectory) >= 3 else None), diagnostics
 
 
 def _contact_bounded_continuity_bridge(
@@ -639,6 +792,10 @@ def _same_timeline_segment(first: Mapping[str, Any], second: Mapping[str, Any]) 
     return True
 
 
+def _same_timeline_segment_chain(rows: list[Mapping[str, Any]]) -> bool:
+    return all(_same_timeline_segment(first, second) for first, second in zip(rows, rows[1:]))
+
+
 def _bridge_heading_is_consistent(pre_previous: Mapping[str, Any], pre: Mapping[str, Any], post: Mapping[str, Any], post_next: Mapping[str, Any]) -> bool:
     before = _displacement(list(pre_previous["position_m"]), list(pre["position_m"]))
     bridge = _displacement(list(pre["position_m"]), list(post["position_m"]))
@@ -699,6 +856,39 @@ def _bridge_diagnostics(
         "pre_endpoint_frame": pre.get("frame") if pre else None,
         "post_endpoint_frame": post.get("frame") if post else None,
     }
+
+
+def _weak_boundary_diagnostics(
+    state: str,
+    *,
+    applied: bool = False,
+    pre: Mapping[str, Any] | None = None,
+    post: Mapping[str, Any] | None = None,
+    weak: Mapping[str, Any] | None = None,
+    pre_support_count: int | None = None,
+    post_support: list[Mapping[str, Any]] | None = None,
+    bridge_rows: list[Mapping[str, Any]] | None = None,
+    spatial_residual_m: float | None = None,
+) -> dict[str, Any]:
+    """Stable, v5-only diagnostics for a local weak-boundary decision."""
+
+    base = _bridge_diagnostics(
+        applied,
+        None if applied else state,
+        pre=pre,
+        post=post,
+        pre_support_count=pre_support_count,
+        post_support=post_support,
+        bridge_rows=bridge_rows,
+    )
+    base.update({
+        "weak_boundary_considered": True,
+        "weak_boundary_state": state,
+        "weak_boundary_frame": weak.get("frame") if weak else None,
+        "weak_boundary_confidence": _round(_number(weak.get("confidence"), 0.0)) if weak else None,
+        "weak_boundary_spatial_residual_m": _round_or_none(spatial_residual_m),
+    })
+    return base
 
 
 def _is_strong_short_prefix(
@@ -798,7 +988,11 @@ def _is_cross_like(displacement: list[float], approaches_goal: bool) -> bool:
     return approaches_goal and abs(displacement[0]) > max(2.0, abs(displacement[1]) * 1.15)
 
 
-def _deduplicate(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _deduplicate(
+    candidates: list[dict[str, Any]],
+    *,
+    preserve_primary_candidate_identity: bool = False,
+) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in candidates:
         grouped.setdefault(str(row.get("source_match_id") or ""), []).append(row)
@@ -807,17 +1001,36 @@ def _deduplicate(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cluster: list[dict[str, Any]] = []
         for row in sorted(rows, key=lambda item: (item["source_timestamp_sec"], item["candidate_key"])):
             if cluster and row["source_timestamp_sec"] - cluster[-1]["source_timestamp_sec"] > DEDUPLICATION_WINDOW_SEC:
-                result.append(_merge_cluster(cluster, source_id))
+                result.append(_merge_cluster(cluster, source_id, preserve_primary_candidate_identity=preserve_primary_candidate_identity))
                 cluster = []
             cluster.append(row)
         if cluster:
-            result.append(_merge_cluster(cluster, source_id))
+            result.append(_merge_cluster(cluster, source_id, preserve_primary_candidate_identity=preserve_primary_candidate_identity))
     return result
 
 
-def _merge_cluster(cluster: list[dict[str, Any]], source_id: str) -> dict[str, Any]:
+def _merge_cluster(
+    cluster: list[dict[str, Any]],
+    source_id: str,
+    *,
+    preserve_primary_candidate_identity: bool = False,
+) -> dict[str, Any]:
     if len(cluster) == 1:
         return cluster[0]
+    weak_boundary_rows = [row for row in cluster if _is_v5_weak_boundary_candidate(row)]
+    existing_rows = [row for row in cluster if not _is_v5_weak_boundary_candidate(row)]
+    if preserve_primary_candidate_identity and weak_boundary_rows and existing_rows:
+        # Preserve the exact v4 representative/merged key for a pre-existing
+        # cluster.  Otherwise merely adding a v5 hypothesis would rewrite a
+        # durable candidate id and make a historical operator decision appear
+        # lost even though its underlying contact is still present.
+        existing = _merge_cluster(existing_rows, source_id)
+        merged = dict(existing)
+        merged.update({
+            "deduplicated_hypothesis_count": len(cluster),
+            "merged_candidate_keys": sorted(str(row["candidate_key"]) for row in cluster if str(row["candidate_key"]) != str(existing["candidate_key"])),
+        })
+        return merged
     # A v4 bridge is an additional hypothesis, not permission to replace a
     # fully observed v1/v2/v3 hypothesis at the same contact.  Preserve the
     # observed candidate as the representative of an existing deduplication
@@ -835,6 +1048,12 @@ def _merge_cluster(cluster: list[dict[str, Any]], source_id: str) -> dict[str, A
         "reasons": sorted({reason for row in cluster for reason in row["reasons"]}),
     })
     return merged
+
+
+def _is_v5_weak_boundary_candidate(candidate: Mapping[str, Any]) -> bool:
+    trajectory = candidate.get("trajectory_evidence") if isinstance(candidate.get("trajectory_evidence"), Mapping) else {}
+    bridge = trajectory.get("continuity_bridge") if isinstance(trajectory.get("continuity_bridge"), Mapping) else {}
+    return str(bridge.get("weak_boundary_state") or "") == "weak_boundary_reinterpreted"
 
 
 def _apply_v3_structural_suppression(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -949,7 +1168,7 @@ def _summary(candidates: list[dict[str, Any]], skipped: Counter[str], suppressed
 
 
 def _validate_policy_version(policy_version: str) -> None:
-    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION}:
+    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION}:
         raise ValueError(f"Unsupported shot candidate policy version: {policy_version}")
 
 

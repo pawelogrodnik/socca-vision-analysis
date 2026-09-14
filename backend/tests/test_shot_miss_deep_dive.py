@@ -159,6 +159,8 @@ class ShotMissDeepDiveTests(unittest.TestCase):
         for path in runtime_root.rglob("*.py"):
             contents = path.read_text(encoding="utf-8")
             self.assertNotIn("shot_miss_deep_dive", contents, path.as_posix())
+            self.assertNotIn("shot_weak_boundary_shadow", contents, path.as_posix())
+            self.assertNotIn("shot_candidate_operator_review", contents, path.as_posix())
             self.assertNotIn("shot_goldset_v2", contents, path.as_posix())
 
 

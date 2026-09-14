@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from evaluation.shot_candidate_operator_review import evaluate_operator_review_ab, evaluate_operator_review_three_way
+from evaluation.shot_candidate_operator_review import evaluate_operator_review_ab, evaluate_operator_review_four_way, evaluate_operator_review_three_way
 
 
 def candidate(candidate_id: str, *, timestamp: float, confidence: float, receiver: bool = False, endpoint: float = 20.0) -> dict:
@@ -72,6 +72,21 @@ class ShotCandidateOperatorReviewTests(unittest.TestCase):
         self.assertEqual(report["comparisons"]["v4"]["delta_raw_candidates_vs_v2"], 1)
         self.assertEqual(report["comparisons"]["v4"]["rejected_reviewed_cases_newly_introduced_vs_v2"], 0)
         self.assertEqual(report["comparisons"]["v4"]["rejected_reviewed_cases_present_in_v4_absent_in_v3"], 1)
+
+    def test_four_way_evaluation_isolates_v5_workload_against_v4(self) -> None:
+        v2 = {"policy_version": "shot-candidate-shadow:v2", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("rejected", timestamp=11, confidence=.6)]}
+        v3 = {"policy_version": "shot-candidate-shadow:v3", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2)]}
+        v4 = {"policy_version": "shot-candidate-shadow:v4-continuity-bridge", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("rejected", timestamp=11, confidence=.6)]}
+        v5 = {"policy_version": "shot-candidate-shadow:v5-weak-boundary", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("rejected", timestamp=11, confidence=.6), candidate("new-weak", timestamp=20, confidence=.6)]}
+        editorial = {"suggested_candidate_reviews": [{"candidate_id": "accepted", "review_status": "accepted"}, {"candidate_id": "rejected", "review_status": "rejected"}]}
+
+        report = evaluate_operator_review_four_way(v2, v3, v4, v5, editorial)
+
+        self.assertTrue(report["evaluation_only"])
+        self.assertEqual(report["policies"]["v5"]["accepted_operator_shots_kept"], 1)
+        self.assertEqual(report["policies"]["v5"]["rejected_reviewed_candidates_surviving"], 1)
+        self.assertEqual(report["comparisons"]["v5"]["delta_raw_candidates_vs_v4"], 1)
+        self.assertEqual(report["comparisons"]["v5"]["new_candidates_without_prior_review_lineage"], 1)
 
 
 if __name__ == "__main__":
