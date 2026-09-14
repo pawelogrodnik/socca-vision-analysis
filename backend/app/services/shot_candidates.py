@@ -22,6 +22,7 @@ from app.services.match_phase_config import direction_for_team_at_time
 
 POLICY_VERSION = "shot-candidate-shadow:v2"
 PREVIOUS_POLICY_VERSION = "shot-candidate-shadow:v1"
+V3_POLICY_VERSION = "shot-candidate-shadow:v3"
 SCHEMA_VERSION = "shot-candidates:v1"
 SOURCE = "canonical_ball_contact_trajectory_shadow_v1"
 ALLOWED_CONTACT_STATUSES = {"accepted", "uncertain", "needs_review"}
@@ -41,6 +42,13 @@ SHORT_PREFIX_MIN_SPEED_MPS = 5.0
 SHORT_PREFIX_MAX_START_GOAL_DISTANCE_M = 18.0
 SAME_TEAM_RECEIVER_SUPPRESSION_SEC = 2.5
 DEDUPLICATION_WINDOW_SEC = 0.75
+V3_PASS_LIKE_MIN_TRAJECTORY_DISTANCE_M = 6.0
+V3_STRONG_TERMINAL_GOAL_DISTANCE_M = 4.0
+V3_STRONG_TERMINAL_CORRIDOR_DISTANCE_M = 4.0
+V3_LATER_SHOT_HORIZON_SEC = 3.0
+V3_LATER_SHOT_MIN_CONFIDENCE_DELTA = 0.18
+V3_LATER_SHOT_GOAL_DISTANCE_M = 8.0
+V3_LATER_SHOT_CORRIDOR_DISTANCE_M = 6.0
 
 
 def build_shot_candidates_document(
@@ -80,7 +88,10 @@ def build_shot_candidates_document(
         candidates.append(candidate)
 
     deduplicated = _deduplicate(candidates)
-    summary = _summary(deduplicated, skipped)
+    suppressed: list[dict[str, Any]] = []
+    if policy_version == V3_POLICY_VERSION:
+        deduplicated, suppressed = _apply_v3_structural_suppression(deduplicated)
+    summary = _summary(deduplicated, skipped, suppressed)
     return {
         "schema_version": SCHEMA_VERSION,
         "policy_version": policy_version,
@@ -101,12 +112,18 @@ def build_shot_candidates_document(
             "goal_approach_zone_m": GOAL_APPROACH_ZONE_M,
             "same_team_receiver_suppression_sec": SAME_TEAM_RECEIVER_SUPPRESSION_SEC,
             "deduplication_window_sec": DEDUPLICATION_WINDOW_SEC,
+            **({
+                "pass_like_min_trajectory_distance_m": V3_PASS_LIKE_MIN_TRAJECTORY_DISTANCE_M,
+                "later_shot_horizon_sec": V3_LATER_SHOT_HORIZON_SEC,
+                "later_shot_min_confidence_delta": V3_LATER_SHOT_MIN_CONFIDENCE_DELTA,
+            } if policy_version == V3_POLICY_VERSION else {}),
         },
         "source_match_id": source_match_id,
         "logical_offset_sec": _round(logical_offset_sec),
         "pitch_dimensions_m": {"width": _round(pitch_width_m), "length": _round(pitch_length_m)},
         "summary": summary,
         "candidates": sorted(deduplicated, key=lambda row: (row["logical_timestamp_sec"], row["candidate_key"])),
+        **({"suppressed_candidate_diagnostics": suppressed} if policy_version == V3_POLICY_VERSION else {}),
         "notes": [
             "Every row is a suggested shot candidate requiring future operator confirmation.",
             "final_stat_eligible is always false in the shadow candidate layer.",
@@ -230,7 +247,7 @@ def _candidate_from_contact(
         trajectory_summary["distance_m"] >= MIN_TRAJECTORY_DISTANCE_M
         and trajectory_summary["mean_speed_mps"] >= MIN_TRAJECTORY_SPEED_MPS
     )
-    short_prefix = policy_version == POLICY_VERSION and _is_strong_short_prefix(
+    short_prefix = policy_version in {POLICY_VERSION, V3_POLICY_VERSION} and _is_strong_short_prefix(
         trajectory_summary,
         ball_timeline,
         trajectory,
@@ -565,7 +582,102 @@ def _merge_cluster(cluster: list[dict[str, Any]], source_id: str) -> dict[str, A
     return merged
 
 
-def _summary(candidates: list[dict[str, Any]], skipped: Counter[str]) -> dict[str, Any]:
+def _apply_v3_structural_suppression(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Suppress only explainably pass-like or pre-shot signals in v3.
+
+    This bounded post-processing sees the existing candidate evidence only. It
+    deliberately does not read operator decisions, canonical shots, or any
+    benchmark fixture. A later signal can suppress an earlier one only when
+    it has materially stronger terminal evidence for the same attacking team.
+    """
+
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        by_source.setdefault(str(candidate.get("source_match_id") or ""), []).append(candidate)
+    retained: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    for source_candidates in by_source.values():
+        ordered = sorted(source_candidates, key=lambda row: (_candidate_timestamp(row), str(row.get("candidate_key") or "")))
+        for index, candidate in enumerate(ordered):
+            reason = _v3_suppression_reason(candidate, ordered[index + 1 :])
+            if reason is None:
+                if _v3_strong_terminal_goal_approach(candidate):
+                    candidate = {
+                        **candidate,
+                        "reasons": sorted({*candidate.get("reasons", []), "terminal_goal_approach"}),
+                    }
+                retained.append(candidate)
+                continue
+            suppressed.append({
+                "candidate_id": candidate.get("candidate_id"),
+                "candidate_key": candidate.get("candidate_key"),
+                "source_match_id": candidate.get("source_match_id"),
+                "source_timestamp_sec": candidate.get("source_timestamp_sec"),
+                "suppression_reason": reason,
+            })
+    return retained, sorted(suppressed, key=lambda row: (_number(row.get("source_timestamp_sec"), 0.0), str(row.get("candidate_key") or "")))
+
+
+def _v3_suppression_reason(candidate: Mapping[str, Any], later_candidates: list[Mapping[str, Any]]) -> str | None:
+    if _v3_pass_like_same_team_receiver(candidate):
+        return "pass_like_same_team_receiver"
+    if _v3_has_stronger_later_shot(candidate, later_candidates):
+        return "stronger_later_shot_action"
+    return None
+
+
+def _v3_pass_like_same_team_receiver(candidate: Mapping[str, Any]) -> bool:
+    receiver = candidate.get("receiver_evidence") if isinstance(candidate.get("receiver_evidence"), Mapping) else {}
+    trajectory = candidate.get("trajectory_evidence") if isinstance(candidate.get("trajectory_evidence"), Mapping) else {}
+    return (
+        bool(receiver.get("same_team_receiver_before_goal"))
+        and _number(trajectory.get("distance_m"), 0.0) >= V3_PASS_LIKE_MIN_TRAJECTORY_DISTANCE_M
+        and not _v3_strong_terminal_goal_approach(candidate)
+    )
+
+
+def _v3_has_stronger_later_shot(candidate: Mapping[str, Any], later_candidates: list[Mapping[str, Any]]) -> bool:
+    if _v3_later_shot_goal_approach(candidate):
+        return False
+    source_team = _candidate_team_identity(candidate)
+    timestamp = _candidate_timestamp(candidate)
+    for later in later_candidates:
+        if _candidate_timestamp(later) - timestamp > V3_LATER_SHOT_HORIZON_SEC:
+            break
+        if source_team is None or source_team != _candidate_team_identity(later):
+            continue
+        if _number(later.get("confidence"), 0.0) < _number(candidate.get("confidence"), 0.0) + V3_LATER_SHOT_MIN_CONFIDENCE_DELTA:
+            continue
+        if _v3_later_shot_goal_approach(later):
+            return True
+    return False
+
+
+def _v3_strong_terminal_goal_approach(candidate: Mapping[str, Any]) -> bool:
+    trajectory = candidate.get("trajectory_evidence") if isinstance(candidate.get("trajectory_evidence"), Mapping) else {}
+    return (
+        _number(trajectory.get("endpoint_goal_distance_m"), math.inf) <= V3_STRONG_TERMINAL_GOAL_DISTANCE_M
+        and _number(trajectory.get("goal_corridor_distance_m"), math.inf) <= V3_STRONG_TERMINAL_CORRIDOR_DISTANCE_M
+    )
+
+
+def _v3_later_shot_goal_approach(candidate: Mapping[str, Any]) -> bool:
+    trajectory = candidate.get("trajectory_evidence") if isinstance(candidate.get("trajectory_evidence"), Mapping) else {}
+    return (
+        _number(trajectory.get("endpoint_goal_distance_m"), math.inf) <= V3_LATER_SHOT_GOAL_DISTANCE_M
+        and _number(trajectory.get("goal_corridor_distance_m"), math.inf) <= V3_LATER_SHOT_CORRIDOR_DISTANCE_M
+    )
+
+
+def _candidate_timestamp(candidate: Mapping[str, Any]) -> float:
+    return _number(candidate.get("source_timestamp_sec"), _number(candidate.get("candidate_timestamp_sec"), 0.0))
+
+
+def _candidate_team_identity(candidate: Mapping[str, Any]) -> str | None:
+    return _text(candidate.get("suggested_team_label")) or _text(candidate.get("suggested_team_name"))
+
+
+def _summary(candidates: list[dict[str, Any]], skipped: Counter[str], suppressed: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     confidences = [float(row["confidence"]) for row in candidates]
     return {
         "candidates_total": len(candidates),
@@ -577,11 +689,12 @@ def _summary(candidates: list[dict[str, Any]], skipped: Counter[str]) -> dict[st
         "reason_distribution": dict(sorted(Counter(reason for row in candidates for reason in row["reasons"]).items())),
         "confidence": {"min": _round(min(confidences)) if confidences else None, "median": _round(median(confidences)) if confidences else None, "max": _round(max(confidences)) if confidences else None},
         "skipped_evidence_reasons": dict(sorted(skipped.items())),
+        "suppressed_evidence_reasons": dict(sorted(Counter(str(row.get("suppression_reason") or "unknown") for row in suppressed or []).items())),
     }
 
 
 def _validate_policy_version(policy_version: str) -> None:
-    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION}:
+    if policy_version not in {PREVIOUS_POLICY_VERSION, POLICY_VERSION, V3_POLICY_VERSION}:
         raise ValueError(f"Unsupported shot candidate policy version: {policy_version}")
 
 
