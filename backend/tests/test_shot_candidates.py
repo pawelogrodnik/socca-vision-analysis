@@ -11,6 +11,7 @@ from app.services.shot_candidates import (
     V3_POLICY_VERSION,
     V4_CONTINUITY_BRIDGE_POLICY_VERSION,
     V5_WEAK_BOUNDARY_POLICY_VERSION,
+    V6_COMPOSED_SUPPRESSION_POLICY_VERSION,
     build_logical_shot_candidates_document,
     build_shot_candidates_document,
 )
@@ -501,6 +502,92 @@ class ShotCandidatesTests(unittest.TestCase):
         self.assertEqual(merged["candidate_id"], "shot-existing")
         self.assertEqual(merged["candidate_key"], "shot:v1:existing")
         self.assertEqual(merged["deduplicated_hypothesis_count"], 2)
+
+    def test_v6_runs_v5_construction_before_v3_pass_like_suppression(self) -> None:
+        events = [event("long-pass", start=0.0, end=1.0), event("receiver", start=1.8, end=2.1, player="A02")]
+        points = [(1.0, 15.0, 35.0), (1.2, 15.0, 27.0), (1.4, 15.0, 15.0), (1.6, 15.0, 5.0)]
+
+        v5 = candidates(events, points, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        v6 = candidates(events, points, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+
+        self.assertEqual(len(v5["candidates"]), 1)
+        self.assertEqual(v6["candidates"], [])
+        self.assertEqual(v6["summary"]["suppressed_evidence_reasons"], {"pass_like_same_team_receiver": 1})
+        self.assertEqual(v6["suppressed_candidate_diagnostics"][0]["candidate_id"], v5["candidates"][0]["candidate_id"])
+
+    def test_v6_applies_stronger_later_shot_suppression_after_v5_deduplication(self) -> None:
+        document = candidates(
+            [event("pass", start=0.0, end=1.0), event("shot", start=0.0, end=2.2)],
+            [(1.0, 15.0, 35.0), (1.2, 15.0, 32.0), (1.4, 15.0, 29.0), (2.2, 15.0, 13.0), (2.4, 15.0, 8.0), (2.6, 15.0, 3.0)],
+            policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION,
+        )
+
+        self.assertEqual([row["source_event_id"] for row in document["candidates"]], ["shot"])
+        self.assertEqual(document["summary"]["suppressed_evidence_reasons"], {"stronger_later_shot_action": 1})
+
+    def test_v6_retains_a_v5_weak_boundary_candidate_with_stable_identity(self) -> None:
+        ball_document = {
+            "positions": [
+                {"frame": 30, "time_sec": 1.0, "position_m": [15.0, 30.0], "source": "detected", "confidence": 0.9},
+                {"frame": 33, "time_sec": 1.1, "position_m": [15.0, 26.0], "source": "detected", "confidence": 0.9},
+                {"frame": 36, "time_sec": 1.2, "position_m": [15.0, 23.0], "source": "detected", "confidence": 0.1},
+                {"frame": 39, "time_sec": 1.3, "position_m": [15.0, 20.0], "source": "detected", "confidence": 0.9},
+                {"frame": 42, "time_sec": 1.4, "position_m": [15.0, 14.0], "source": "detected", "confidence": 0.9},
+            ]
+        }
+        v5 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        v6 = candidates([event("weak", start=0.0, end=1.0)], [], ball_document=ball_document, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+
+        self.assertEqual(len(v6["candidates"]), 1)
+        self.assertEqual(
+            (v6["candidates"][0]["candidate_id"], v6["candidates"][0]["candidate_key"]),
+            (v5["candidates"][0]["candidate_id"], v5["candidates"][0]["candidate_key"]),
+        )
+        self.assertEqual(v6["suppressed_candidate_diagnostics"], [])
+
+    def test_v6_keeps_terminal_goal_approach_protection_and_diagnostics_deterministic(self) -> None:
+        events = [event("shot", start=0.0, end=1.0), event("rebound", start=1.6, end=1.8, player="A02")]
+        points = [(1.0, 15.0, 15.0), (1.2, 15.0, 9.0), (1.4, 15.0, 3.0)]
+
+        first = candidates(events, points, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+        second = candidates(events, points, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+
+        self.assertEqual(first, second)
+        self.assertEqual([row["source_event_id"] for row in first["candidates"]], ["shot"])
+        self.assertIn("terminal_goal_approach", first["candidates"][0]["reasons"])
+        self.assertEqual(first["suppressed_candidate_diagnostics"], [])
+
+    def test_v6_logical_suppression_diagnostic_uses_the_v5_logical_candidate_identity(self) -> None:
+        events = [event("long-pass", start=0.0, end=1.0), event("receiver", start=1.8, end=2.1, player="A02")]
+        points = [(1.0, 15.0, 35.0), (1.2, 15.0, 27.0), (1.4, 15.0, 15.0), (1.6, 15.0, 5.0)]
+        v5_physical = candidates(events, points, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        v6_physical = candidates(events, points, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+        source = {"source_match_id": "m1", "logical_offset_sec": 100.0}
+        v5_logical = build_logical_shot_candidates_document([{**source, "shot_candidates": v5_physical}], timeline_span_sec=200.0, policy_version=V5_WEAK_BOUNDARY_POLICY_VERSION)
+        v6_logical = build_logical_shot_candidates_document([{**source, "shot_candidates": v6_physical}], timeline_span_sec=200.0, policy_version=V6_COMPOSED_SUPPRESSION_POLICY_VERSION)
+
+        self.assertEqual(v6_logical["candidates"], [])
+        self.assertEqual(v6_logical["summary"]["suppressed_candidates_total"], 1)
+        self.assertEqual(v6_logical["suppressed_candidate_diagnostics"][0]["candidate_id"], v5_logical["candidates"][0]["candidate_id"])
+        self.assertEqual(v6_logical["suppressed_candidate_diagnostics"][0]["suppression_reason"], "pass_like_same_team_receiver")
+
+    def test_v6_registration_does_not_change_existing_policy_contracts(self) -> None:
+        events = [event("stable", start=0.0, end=1.0)]
+        points = [(1.0, 15.0, 29.0), (1.2, 15.0, 22.0), (1.4, 15.0, 12.0), (1.6, 15.0, 4.0)]
+
+        documents = {
+            version: candidates(events, points, policy_version=version)
+            for version in (POLICY_VERSION, V3_POLICY_VERSION, V4_CONTINUITY_BRIDGE_POLICY_VERSION, V5_WEAK_BOUNDARY_POLICY_VERSION)
+        }
+
+        self.assertEqual({version: len(document["candidates"]) for version, document in documents.items()}, {
+            POLICY_VERSION: 1,
+            V3_POLICY_VERSION: 1,
+            V4_CONTINUITY_BRIDGE_POLICY_VERSION: 1,
+            V5_WEAK_BOUNDARY_POLICY_VERSION: 1,
+        })
+        self.assertNotIn("suppressed_candidate_diagnostics", documents[V5_WEAK_BOUNDARY_POLICY_VERSION])
+        self.assertNotIn("weak_boundary_diagnostics", documents[V4_CONTINUITY_BRIDGE_POLICY_VERSION])
 
     def test_strong_short_goalward_prefix_before_explicit_boundary_is_a_candidate(self) -> None:
         document = candidates(

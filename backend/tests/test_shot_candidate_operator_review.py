@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from evaluation.shot_candidate_operator_review import evaluate_operator_review_ab, evaluate_operator_review_four_way, evaluate_operator_review_three_way
+from evaluation.shot_candidate_operator_review import evaluate_operator_review_ab, evaluate_operator_review_five_way, evaluate_operator_review_four_way, evaluate_operator_review_three_way
 
 
 def candidate(candidate_id: str, *, timestamp: float, confidence: float, receiver: bool = False, endpoint: float = 20.0) -> dict:
@@ -87,6 +87,26 @@ class ShotCandidateOperatorReviewTests(unittest.TestCase):
         self.assertEqual(report["policies"]["v5"]["rejected_reviewed_candidates_surviving"], 1)
         self.assertEqual(report["comparisons"]["v5"]["delta_raw_candidates_vs_v4"], 1)
         self.assertEqual(report["comparisons"]["v5"]["new_candidates_without_prior_review_lineage"], 1)
+
+    def test_five_way_evaluation_reports_v6_historical_suppression_impact(self) -> None:
+        v2 = {"policy_version": "shot-candidate-shadow:v2", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("rejected", timestamp=11, confidence=.6)]}
+        v3 = {"policy_version": "shot-candidate-shadow:v3", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2)]}
+        v4 = {"policy_version": "shot-candidate-shadow:v4-continuity-bridge", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("rejected", timestamp=11, confidence=.6)]}
+        v5 = {"policy_version": "shot-candidate-shadow:v5-weak-boundary", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("rejected", timestamp=11, confidence=.6), candidate("new-weak", timestamp=20, confidence=.6)]}
+        v6 = {"policy_version": "shot-candidate-shadow:v6-v5-structural-suppression", "timeline_span_sec": 30, "candidates": [candidate("accepted", timestamp=10, confidence=.8, endpoint=2), candidate("new-weak", timestamp=20, confidence=.6)]}
+        editorial = {"suggested_candidate_reviews": [{"candidate_id": "accepted", "review_status": "accepted"}, {"candidate_id": "rejected", "review_status": "rejected"}]}
+
+        report = evaluate_operator_review_five_way(v2, v3, v4, v5, v6, editorial)
+
+        self.assertEqual(report["policies"]["v6"]["accepted_operator_shots_kept"], 1)
+        self.assertEqual(report["policies"]["v6"]["rejected_reviewed_candidates_removed"], 1)
+        self.assertEqual(report["comparisons"]["v6_vs_v5"], {
+            "delta_raw_candidates": -1,
+            "delta_review_clusters": 0,
+            "historical_accepted_delta": 0,
+            "historical_rejected_surviving_delta": -1,
+            "historical_rejected_removed_delta": 1,
+        })
 
 
 if __name__ == "__main__":
