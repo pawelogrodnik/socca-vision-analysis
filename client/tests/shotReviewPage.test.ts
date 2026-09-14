@@ -39,7 +39,7 @@ test('Shot Review revision conflict reloads the server state and does not silent
     if (path.endsWith('/key-moments/editor')) return Response.json({ key_moment_editor_allowed: true, revision: 'km-r1', moments: [], suggestions: { status: 'ready', candidates: [], unreviewed_count: 0 } });
     if (path.endsWith('/shot-review/editor')) {
       shotStateReads += 1;
-      return Response.json({ published_id: 'published-shot-review', revision: shotStateReads === 1 ? 'shot-r1' : 'shot-r2', has_editorial_sidecar: true, canonical_shots: [{ shot_id: 'shot-1', time_sec: 10, team_id: 'corgi', outcome: 'blocked', player_id: null, origin: 'manual', location_m: { x: 4, y: 5 }, location_source: 'ball' }], candidate_generation_digest: 'digest', candidate_count: 0, accepted_count: 0, rejected_count: 0, unreviewed_count: 0, unreviewed_suggestions: [] });
+      return Response.json({ published_id: 'published-shot-review', revision: shotStateReads === 1 ? 'shot-r1' : 'shot-r2', has_editorial_sidecar: true, canonical_shots: [{ shot_id: 'shot-1', time_sec: 10, team_id: 'corgi', outcome: 'blocked', player_id: null, origin: 'manual', location_m: { x: 4, y: 5 }, location_source: 'ball' }], candidate_generation_digest: 'digest', candidate_count: 0, accepted_count: 0, rejected_count: 0, unreviewed_count: 0, unreviewed_suggestions: [], cluster_count: 0, unreviewed_cluster_count: 0, unreviewed_suggestion_clusters: [] });
     }
     if (path.endsWith('/shot-review/editor/shots/shot-1') && init?.method === 'PUT') {
       return Response.json({ detail: { code: 'shot_review_revision_conflict', detail: 'stale' } }, { status: 409 });

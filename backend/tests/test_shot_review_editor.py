@@ -58,6 +58,9 @@ class ShotReviewEditorTests(unittest.TestCase):
             "shot": {"team_id": "team-a", "outcome": "off_target"},
         })
 
+    def _write_candidates(self, rows: list[dict]) -> None:
+        _write(self.matches / "source-one" / "shot_candidates.json", {"policy_version": "shot-candidate-shadow:v2", "candidates": rows})
+
     def test_accept_creates_canonical_shot_hides_suggestion_and_changes_revision(self) -> None:
         initial = self._initial()
         accepted = self._accept(initial)
@@ -202,7 +205,72 @@ class ShotReviewEditorTests(unittest.TestCase):
         source = Path(editor.__file__).read_text(encoding="utf-8")
         self.assertNotIn("shot_goldset", source)
 
+    def test_cluster_builder_is_source_bounded_deterministic_and_keeps_singletons(self) -> None:
+        rows = [
+            {"candidate_id": "a", "source_match_id": "one", "time_sec": 10.0, "confidence": .4},
+            {"candidate_id": "b", "source_match_id": "one", "time_sec": 12.0, "confidence": .9},
+            {"candidate_id": "c", "source_match_id": "one", "time_sec": 15.1, "confidence": .8},
+            {"candidate_id": "d", "source_match_id": "two", "time_sec": 12.1, "confidence": .7},
+        ]
+        first = editor.build_review_clusters(rows, candidate_generation_digest="digest", timeline_span_sec=20)
+        second = editor.build_review_clusters(list(reversed(rows)), candidate_generation_digest="digest", timeline_span_sec=20)
+        self.assertEqual(first, second)
+        self.assertEqual([["a", "b"], ["d"], ["c"]], [row["member_candidate_ids"] for row in first])
+        self.assertEqual((first[0]["preferred_candidate_id"], first[0]["review_start_time_sec"], first[0]["review_end_time_sec"]), ("b", 9.5, 12.5))
+
+    def test_cluster_rejection_is_atomic_and_durable_for_same_lineage(self) -> None:
+        self._write_candidates([
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0, "confidence": .4},
+            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.5, "confidence": .8},
+        ])
+        initial = self._initial()
+        cluster = initial["unreviewed_suggestion_clusters"][0]
+        rejected = editor.reject_cluster("published-one", {
+            "expected_revision": initial["revision"], "cluster_id": cluster["cluster_id"],
+            "candidate_generation_digest": initial["candidate_generation_digest"],
+        })
+        self.assertEqual((rejected["unreviewed_cluster_count"], rejected["rejected_count"]), (0, 2))
+        document = editor.load_shot_review_document("published-one")
+        self.assertEqual({row["review_status"] for row in document["suggested_candidate_reviews"]}, {"rejected"})
+        self.assertEqual(editor.editor_state("published-one")["unreviewed_cluster_count"], 0)
+
+    def test_cluster_accepts_once_resolves_siblings_and_delete_has_no_dangling_reviews(self) -> None:
+        self._write_candidates([
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0, "confidence": .4},
+            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.5, "confidence": .8},
+        ])
+        initial = self._initial()
+        cluster = initial["unreviewed_suggestion_clusters"][0]
+        accepted = editor.accept_cluster("published-one", {
+            "expected_revision": initial["revision"], "cluster_id": cluster["cluster_id"],
+            "candidate_generation_digest": initial["candidate_generation_digest"],
+            "shot": {"time_sec": 11.2, "team_id": "team-a", "outcome": "blocked"},
+        })
+        self.assertEqual((len(accepted["canonical_shots"]), accepted["unreviewed_cluster_count"], accepted["accepted_count"]), (1, 0, 2))
+        shot = accepted["accepted_shot"]
+        document = editor.load_shot_review_document("published-one")
+        self.assertEqual((shot["time_sec"], document["canonical_shots"][0]["suggested_cluster_member_candidate_ids"]), (11.2, ["candidate-1", "candidate-2"]))
+        deleted = editor.delete_canonical_shot("published-one", shot["shot_id"], {"expected_revision": accepted["revision"]})
+        self.assertEqual((deleted["accepted_count"], deleted["rejected_count"], deleted["canonical_shots"]), (0, 2, []))
+
+    def test_cluster_mutation_rejects_stale_revision_and_generation(self) -> None:
+        self._write_candidates([
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0},
+            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.0},
+        ])
+        state = self._initial()
+        cluster = state["unreviewed_suggestion_clusters"][0]
+        editor.create_manual_shot("published-one", {"expected_revision": state["revision"], "shot": {"time_sec": 30, "team_id": "team-a", "outcome": "goal"}})
+        with self.assertRaises(editor.ShotReviewError) as stale_revision:
+            editor.reject_cluster("published-one", {"expected_revision": state["revision"], "cluster_id": cluster["cluster_id"], "candidate_generation_digest": state["candidate_generation_digest"]})
+        self.assertEqual(stale_revision.exception.code, "shot_review_revision_conflict")
+        current = self._initial()
+        self._write_candidates([{"candidate_id": "candidate-3", "candidate_timestamp_sec": 20.0}])
+        with self.assertRaises(editor.ShotReviewError) as stale_generation:
+            editor.reject_cluster("published-one", {"expected_revision": current["revision"], "cluster_id": cluster["cluster_id"], "candidate_generation_digest": current["candidate_generation_digest"]})
+        self.assertEqual(stale_generation.exception.code, "shot_review_candidate_stale")
+
     def test_editor_endpoints_are_registered_without_frontend_routes(self) -> None:
         paths = {getattr(route, "path", "") for route in app.routes}
         base = "/api/published/matches/{published_match_id}/shot-review/editor"
-        self.assertTrue({base, f"{base}/suggestions/accept", f"{base}/suggestions/reject", f"{base}/shots", f"{base}/shots/{{shot_id}}"}.issubset(paths))
+        self.assertTrue({base, f"{base}/suggestions/accept", f"{base}/suggestions/reject", f"{base}/suggestion-clusters/accept", f"{base}/suggestion-clusters/reject", f"{base}/shots", f"{base}/shots/{{shot_id}}"}.issubset(paths))

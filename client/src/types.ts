@@ -3585,6 +3585,20 @@ export type ShotReviewSuggestion = {
   reasons?: string[];
 };
 
+export type ShotReviewSuggestionCluster = {
+  cluster_id: string;
+  source_match_id: string;
+  review_start_time_sec: number;
+  review_end_time_sec: number;
+  member_count: number;
+  member_candidate_ids: string[];
+  member_candidates: ShotReviewSuggestion[];
+  preferred_candidate_id: string;
+  preferred_candidate: ShotReviewSuggestion;
+  status: 'unreviewed' | 'partially_rejected' | 'accepted' | 'rejected' | string;
+  canonical_shot_ids?: string[];
+};
+
 export type ShotReviewShotInput = {
   time_sec: number;
   team_id: string;
@@ -3607,9 +3621,15 @@ export type ShotReviewEditorState = {
   rejected_count: number;
   unreviewed_count: number;
   unreviewed_suggestions: ShotReviewSuggestion[];
+  cluster_count: number;
+  unreviewed_cluster_count: number;
+  unreviewed_suggestion_clusters: ShotReviewSuggestionCluster[];
   suggestions?: {
     status?: 'ready' | 'not_available' | string;
     reason?: string | null;
+    cluster_count?: number;
+    unreviewed_cluster_count?: number;
+    unreviewed_clusters?: ShotReviewSuggestionCluster[];
   };
 };
 

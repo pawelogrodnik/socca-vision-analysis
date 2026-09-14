@@ -88,11 +88,13 @@ from app.services.key_moment_editor import (
 )
 from app.services.shot_review_editor import (
     ShotReviewError,
+    accept_cluster as accept_shot_suggestion_cluster,
     accept_suggestion as accept_shot_suggestion,
     create_manual_shot,
     delete_canonical_shot,
     edit_canonical_shot,
     editor_state as shot_review_editor_state,
+    reject_cluster as reject_shot_suggestion_cluster,
     reject_suggestion as reject_shot_suggestion,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
@@ -4201,6 +4203,26 @@ def api_accept_shot_suggestion(published_match_id: str, payload: dict[str, Any] 
 def api_reject_shot_suggestion(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
         return reject_shot_suggestion(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/shot-review/editor/suggestion-clusters/accept")
+def api_accept_shot_suggestion_cluster(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return accept_shot_suggestion_cluster(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotReviewError as error:
+        raise _shot_review_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/shot-review/editor/suggestion-clusters/reject")
+def api_reject_shot_suggestion_cluster(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return reject_shot_suggestion_cluster(published_match_id, payload)
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
     except ShotReviewError as error:
