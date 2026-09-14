@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 BENCHMARK_SCHEMA_VERSION = "shot-candidate-benchmark:v1"
 DEFAULT_TOLERANCE_SEC = 1.5
+SUPPORTED_GOLDSET_SCHEMAS = frozenset({"shot-goldset:v1", "shot-goldset:v2"})
 
 
 def benchmark_shot_candidates(
@@ -20,8 +21,8 @@ def benchmark_shot_candidates(
 ) -> dict[str, Any]:
     """Match suggestions to manual contact anchors without influencing generation."""
 
-    if str(goldset_doc.get("schema_version") or "") != "shot-goldset:v1":
-        raise ValueError("Expected shot-goldset:v1 evaluation fixture")
+    if str(goldset_doc.get("schema_version") or "") not in SUPPORTED_GOLDSET_SCHEMAS:
+        raise ValueError("Expected a supported shot goldset evaluation fixture")
     if tolerance_sec <= 0:
         raise ValueError("tolerance_sec must be positive")
     gold = sorted((dict(row) for row in goldset_doc.get("shots") or [] if isinstance(row, Mapping)), key=lambda row: (_time(row), str(row.get("id") or "")))
@@ -50,6 +51,7 @@ def benchmark_shot_candidates(
             "gold_player": shot.get("player"),
             "suggested_player": candidate.get("suggested_player_id"),
             "gold_outcome": shot.get("outcome"),
+            "gold_origin": shot.get("origin"),
             "candidate_reasons": list(candidate.get("reasons") or []),
             "candidate_confidence": _number(candidate.get("confidence"), 0.0),
         })
@@ -89,6 +91,7 @@ def benchmark_shot_candidates(
         "review_budget": _review_budget_metrics(candidates_doc, goldset_doc, tolerance_sec),
         "outcome_recall": _breakdown(gold, matches, "outcome", "gold_outcome"),
         "team_recall": _breakdown(gold, matches, "team", "gold_team"),
+        "origin_recall": _breakdown(gold, matches, "origin", "gold_origin"),
         "player_attribution_diagnostics": _player_diagnostics(matches),
         "matches": matches,
         "missed_gold_shots": missed,
@@ -323,7 +326,7 @@ def _review_row(candidate: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _gold_summary(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: row.get(key) for key in ("id", "timestamp_sec", "timestamp_display", "team", "player", "outcome")}
+    return {key: row.get(key) for key in ("id", "timestamp_sec", "timestamp_display", "team", "player", "outcome", "origin")}
 
 
 def _candidate_time(row: Mapping[str, Any]) -> float:

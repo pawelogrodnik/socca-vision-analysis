@@ -177,6 +177,23 @@ class ShotCandidateFailureAnalysisTests(unittest.TestCase):
 
         self.assertEqual(report["gold_shot_traces"][0]["gold_team"], "Corgi")
 
+    def test_v2_manual_origin_is_preserved_and_failure_trace_is_deterministic(self) -> None:
+        v2_goldset = {
+            "schema_version": "shot-goldset:v2",
+            "shots": [{
+                "id": "canonical-1", "timestamp_sec": 10.0, "timestamp_display": "00:10.0",
+                "team": "Corgi", "outcome": "blocked", "origin": "manual",
+            }],
+            "hard_negatives": [],
+        }
+
+        first = analyze_shot_candidate_failures(candidates_document(), v2_goldset, [source([], [], [])])
+        second = analyze_shot_candidate_failures(candidates_document(), v2_goldset, [source([], [], [])])
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["gold_shot_traces"][0]["gold_origin"], "manual")
+        self.assertEqual(first["gold_shot_traces"][0]["gold_outcome"], "blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

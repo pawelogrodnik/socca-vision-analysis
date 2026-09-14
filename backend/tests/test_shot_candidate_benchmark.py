@@ -132,6 +132,21 @@ class ShotCandidateBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(report["summary"]["matched_gold_shots"], 2)
 
+    def test_v2_goldset_exposes_manual_and_accepted_origin_recall(self) -> None:
+        gold = {
+            "schema_version": "shot-goldset:v2",
+            "shots": [
+                {"id": "manual", "timestamp_sec": 10.0, "team": "Corgi", "outcome": "goal", "origin": "manual"},
+                {"id": "accepted", "timestamp_sec": 20.0, "team": "Verisk", "outcome": "blocked", "origin": "accepted_suggestion"},
+            ],
+            "hard_negatives": [],
+        }
+
+        report = benchmark_shot_candidates({"timeline_span_sec": 60.0, "candidates": [candidate("only-manual", 10.0)]}, gold)
+
+        self.assertEqual(report["origin_recall"]["manual"], {"gold": 1, "matched": 1, "recall": 1.0})
+        self.assertEqual(report["origin_recall"]["accepted_suggestion"], {"gold": 1, "matched": 0, "recall": 0.0})
+
 
 if __name__ == "__main__":
     unittest.main()
