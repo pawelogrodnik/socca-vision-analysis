@@ -147,6 +147,21 @@ class ShotCandidateBenchmarkTests(unittest.TestCase):
         self.assertEqual(report["origin_recall"]["manual"], {"gold": 1, "matched": 1, "recall": 1.0})
         self.assertEqual(report["origin_recall"]["accepted_suggestion"], {"gold": 1, "matched": 0, "recall": 0.0})
 
+    def test_v2_and_v3_shadow_documents_benchmark_deterministically(self) -> None:
+        gold = {
+            "schema_version": "shot-goldset:v2",
+            "shots": [{"id": "gold", "timestamp_sec": 10.0, "team": "Corgi", "outcome": "goal", "origin": "manual"}],
+            "hard_negatives": [],
+        }
+        for policy_version in ("shot-candidate-shadow:v2", "shot-candidate-shadow:v3"):
+            document = {"policy_version": policy_version, "timeline_span_sec": 60.0, "candidates": [candidate("candidate", 10.0)]}
+
+            first = benchmark_shot_candidates(document, gold)
+            second = benchmark_shot_candidates(document, gold)
+
+            self.assertEqual(first, second)
+            self.assertEqual(first["summary"]["matched_gold_shots"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

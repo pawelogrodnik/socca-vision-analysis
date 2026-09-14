@@ -20,7 +20,18 @@ class ShotGoldsetComparisonTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first["summary"]["v1_shots"], 31)
-        self.assertEqual(first["summary"]["v2_shots"], 33)
+        self.assertEqual(first["summary"]["v2_shots"], 34)
+        self.assertEqual(first["summary"], {
+            "v1_shots": 31,
+            "v2_shots": 34,
+            "same_action_pairs": 31,
+            "timestamp_materially_corrected": 24,
+            "team_corrected": 0,
+            "outcome_corrected": 1,
+            "player_attribution_changed": 12,
+            "v1_only": 0,
+            "v2_only": 3,
+        })
         self.assertEqual(len({row["v1_id"] for row in first["same_action_matches"]}), len(first["same_action_matches"]))
         self.assertEqual(len({row["v2_id"] for row in first["same_action_matches"]}), len(first["same_action_matches"]))
 
@@ -32,7 +43,7 @@ class ShotGoldsetComparisonTests(unittest.TestCase):
         pairs = {row["v1_id"]: row["v2_id"] for row in report["same_action_matches"]}
 
         self.assertEqual(pairs["shot-013"], "canonical-014")
-        self.assertEqual(report["summary"]["same_action_pairs"], 30)
+        self.assertEqual(report["summary"]["same_action_pairs"], 31)
         self.assertNotIn("shot-013", {row["id"] for row in report["v1_only"]})
         self.assertNotIn("canonical-014", {row["id"] for row in report["v2_only"]})
 
@@ -43,7 +54,7 @@ class ShotGoldsetComparisonTests(unittest.TestCase):
         report = compare_shot_goldsets(v1, v2)
         pairs = {row["v1_id"]: row["v2_id"] for row in report["same_action_matches"]}
 
-        self.assertNotIn("shot-024", pairs)  # 29:45 blocked free kick
+        self.assertEqual(pairs["shot-024"], "canonical-034")  # 29:45 blocked free kick
         self.assertEqual(pairs["shot-025"], "canonical-026")  # 29:47 on target rebound
         self.assertEqual(pairs["shot-026"], "canonical-027")  # 29:52 separate Corgi shot
 

@@ -25,18 +25,32 @@ class ShotGoldsetV2Tests(unittest.TestCase):
         self.assertEqual(self.goldset["schema_version"], "shot-goldset:v2")
         self.assertEqual(self.goldset["scope"], "evaluation_only")
         self.assertEqual(self.goldset["source_authority"], "canonical_shot_review")
-        self.assertEqual(len(shots), 33)
+        self.assertEqual(len(shots), 34)
         self.assertEqual(len(self.goldset["hard_negatives"]), 14)
         self.assertEqual(self.goldset["uncertain"], [])
         self.assertEqual([row["timestamp_sec"] for row in shots], sorted(row["timestamp_sec"] for row in shots))
-        self.assertEqual(len({row["id"] for row in shots}), 33)
-        self.assertEqual(Counter(row["team"] for row in shots), {"Verisk": 20, "Corgi": 13})
+        self.assertEqual(len({row["id"] for row in shots}), 34)
+        self.assertEqual(Counter(row["team"] for row in shots), {"Verisk": 21, "Corgi": 13})
         self.assertEqual(Counter(row["outcome"] for row in shots), {
-            "off_target": 13, "on_target": 8, "blocked": 7, "goal": 5,
+            "off_target": 13, "on_target": 8, "blocked": 8, "goal": 5,
         })
         self.assertEqual(Counter(row["origin"] for row in shots), {
-            "manual": 18, "accepted_suggestion": 15,
+            "manual": 19, "accepted_suggestion": 15,
         })
+        self.assertEqual(sum(row["player"] is not None for row in shots), 12)
+
+    def test_crowded_free_kick_rebound_and_later_corgi_shot_remain_distinct(self) -> None:
+        rows = [
+            (row["id"], row["timestamp_sec"], row["team"], row["outcome"], row["origin"])
+            for row in self.goldset["shots"]
+            if 1775.0 <= row["timestamp_sec"] <= 1800.0
+        ]
+
+        self.assertEqual(rows, [
+            ("canonical-034", 1784.0, "Verisk", "blocked", "manual"),
+            ("canonical-026", 1786.1, "Verisk", "on_target", "accepted_suggestion"),
+            ("canonical-027", 1792.0, "Corgi", "off_target", "manual"),
+        ])
 
     def test_v2_rows_carry_only_canonical_evaluation_fields(self) -> None:
         for shot in self.goldset["shots"]:
