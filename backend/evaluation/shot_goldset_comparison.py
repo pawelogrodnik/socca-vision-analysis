@@ -15,12 +15,12 @@ MATERIAL_TIMESTAMP_CHANGE_SEC = 0.25
 
 
 def compare_shot_goldsets(
-    v1_doc: Mapping[str, Any],
-    v2_doc: Mapping[str, Any],
+    baseline_doc: Mapping[str, Any],
+    canonical_doc: Mapping[str, Any],
     *,
     tolerance_sec: float = DEFAULT_RECONCILIATION_TOLERANCE_SEC,
 ) -> dict[str, Any]:
-    """Compare v1's approximate anchors with v2's canonical shot-review state.
+    """Compare two frozen truth versions without changing candidate matching.
 
     Pairing is chronological, one-to-one and bounded by ``tolerance_sec``.
     It maximizes paired actions, then prefers team/outcome/player consistency,
@@ -28,43 +28,49 @@ def compare_shot_goldsets(
     canonical correction is still paired rather than represented as two rows.
     """
 
-    if str(v1_doc.get("schema_version") or "") != "shot-goldset:v1":
-        raise ValueError("Expected shot-goldset:v1 as the baseline")
-    if str(v2_doc.get("schema_version") or "") != "shot-goldset:v2":
-        raise ValueError("Expected shot-goldset:v2 as the canonical comparison")
+    baseline_schema = str(baseline_doc.get("schema_version") or "")
+    canonical_schema = str(canonical_doc.get("schema_version") or "")
+    if baseline_schema not in {"shot-goldset:v1", "shot-goldset:v2"}:
+        raise ValueError("Expected shot-goldset:v1 or shot-goldset:v2 as the baseline")
+    if canonical_schema not in {"shot-goldset:v2", "shot-goldset:v3"}:
+        raise ValueError("Expected shot-goldset:v2 or shot-goldset:v3 as the canonical comparison")
+    if baseline_schema == canonical_schema:
+        raise ValueError("Goldset comparison requires two distinct versions")
     if tolerance_sec <= 0:
         raise ValueError("tolerance_sec must be positive")
 
-    v1 = _ordered_shots(v1_doc)
-    v2 = _ordered_shots(v2_doc)
-    pairs = _ordered_maximum_match(v1, v2, tolerance_sec)
+    baseline_label = _version_label(baseline_schema)
+    canonical_label = _version_label(canonical_schema)
+    baseline = _ordered_shots(baseline_doc)
+    canonical = _ordered_shots(canonical_doc)
+    pairs = _ordered_maximum_match(baseline, canonical, tolerance_sec)
     paired_v1 = {left for left, _ in pairs}
     paired_v2 = {right for _, right in pairs}
-    matches = [_match_row(v1[left], v2[right]) for left, right in pairs]
-    v1_only = [_summary(row) for index, row in enumerate(v1) if index not in paired_v1]
-    v2_only = [_summary(row) for index, row in enumerate(v2) if index not in paired_v2]
+    matches = [_match_row(baseline[left], canonical[right], baseline_label, canonical_label) for left, right in pairs]
+    baseline_only = [_summary(row) for index, row in enumerate(baseline) if index not in paired_v1]
+    canonical_only = [_summary(row) for index, row in enumerate(canonical) if index not in paired_v2]
     return {
         "schema_version": COMPARISON_SCHEMA_VERSION,
         "evaluation_only": True,
-        "baseline_schema_version": "shot-goldset:v1",
-        "canonical_schema_version": "shot-goldset:v2",
+        "baseline_schema_version": baseline_schema,
+        "canonical_schema_version": canonical_schema,
         "match_tolerance_sec": tolerance_sec,
         "matching_strategy": "maximum_pairs_then_semantic_consistency_then_timing_error",
         "material_timestamp_change_sec": MATERIAL_TIMESTAMP_CHANGE_SEC,
         "summary": {
-            "v1_shots": len(v1),
-            "v2_shots": len(v2),
+            f"{baseline_label}_shots": len(baseline),
+            f"{canonical_label}_shots": len(canonical),
             "same_action_pairs": len(matches),
             "timestamp_materially_corrected": sum(row["timestamp_materially_corrected"] for row in matches),
             "team_corrected": sum(row["team_changed"] for row in matches),
             "outcome_corrected": sum(row["outcome_changed"] for row in matches),
             "player_attribution_changed": sum(row["player_changed"] for row in matches),
-            "v1_only": len(v1_only),
-            "v2_only": len(v2_only),
+            f"{baseline_label}_only": len(baseline_only),
+            f"{canonical_label}_only": len(canonical_only),
         },
         "same_action_matches": matches,
-        "v1_only": v1_only,
-        "v2_only": v2_only,
+        f"{baseline_label}_only": baseline_only,
+        f"{canonical_label}_only": canonical_only,
     }
 
 
@@ -101,26 +107,31 @@ def _ordered_maximum_match(
     return solve(0, 0)[3]
 
 
-def _match_row(v1: Mapping[str, Any], v2: Mapping[str, Any]) -> dict[str, Any]:
-    signed_error = round(_time(v2) - _time(v1), 3)
+def _match_row(
+    baseline: Mapping[str, Any],
+    canonical: Mapping[str, Any],
+    baseline_label: str,
+    canonical_label: str,
+) -> dict[str, Any]:
+    signed_error = round(_time(canonical) - _time(baseline), 3)
     return {
-        "v1_id": v1.get("id"),
-        "v2_id": v2.get("id"),
-        "v1_timestamp_sec": _time(v1),
-        "v2_timestamp_sec": _time(v2),
+        f"{baseline_label}_id": baseline.get("id"),
+        f"{canonical_label}_id": canonical.get("id"),
+        f"{baseline_label}_timestamp_sec": _time(baseline),
+        f"{canonical_label}_timestamp_sec": _time(canonical),
         "signed_timing_error_sec": signed_error,
         "timestamp_materially_corrected": abs(signed_error) > MATERIAL_TIMESTAMP_CHANGE_SEC,
-        "v1_team": v1.get("team"),
-        "v2_team": v2.get("team"),
-        "team_changed": v1.get("team") != v2.get("team"),
-        "v1_outcome": v1.get("outcome"),
-        "v2_outcome": v2.get("outcome"),
-        "outcome_changed": v1.get("outcome") != v2.get("outcome"),
-        "v1_player": v1.get("player"),
-        "v2_player": v2.get("player"),
-        "player_changed": v1.get("player") != v2.get("player"),
-        "v2_origin": v2.get("origin"),
-        "semantic_consistency": _semantic_consistency(v1, v2),
+        f"{baseline_label}_team": baseline.get("team"),
+        f"{canonical_label}_team": canonical.get("team"),
+        "team_changed": baseline.get("team") != canonical.get("team"),
+        f"{baseline_label}_outcome": baseline.get("outcome"),
+        f"{canonical_label}_outcome": canonical.get("outcome"),
+        "outcome_changed": baseline.get("outcome") != canonical.get("outcome"),
+        f"{baseline_label}_player": baseline.get("player"),
+        f"{canonical_label}_player": canonical.get("player"),
+        "player_changed": baseline.get("player") != canonical.get("player"),
+        f"{canonical_label}_origin": canonical.get("origin"),
+        "semantic_consistency": _semantic_consistency(baseline, canonical),
     }
 
 
@@ -159,3 +170,7 @@ def _field_consistency(left: Any, right: Any) -> bool | None:
     if left in (None, "") or right in (None, ""):
         return None
     return left == right
+
+
+def _version_label(schema_version: str) -> str:
+    return f"v{schema_version.rsplit(':v', 1)[-1]}"
