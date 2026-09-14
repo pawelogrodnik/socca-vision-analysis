@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 BENCHMARK_SCHEMA_VERSION = "shot-candidate-benchmark:v1"
 DEFAULT_TOLERANCE_SEC = 1.5
-SUPPORTED_GOLDSET_SCHEMAS = frozenset({"shot-goldset:v1", "shot-goldset:v2"})
+SUPPORTED_GOLDSET_SCHEMAS = frozenset({"shot-goldset:v1", "shot-goldset:v2", "shot-goldset:v3"})
 
 
 def benchmark_shot_candidates(
