@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadYouTubeIframeApi, type YouTubeIframePlayer } from '../lib/youtubeIframePlayer';
-import type { CanonicalShot, KeyMomentEditorialMoment, KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, ShotReviewEditorState, ShotReviewShotInput, ShotReviewSuggestion, SuggestedKeyMomentCandidate } from '../types';
+import type { CanonicalShot, KeyMomentEditorialMoment, KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, ShotReviewEditorState, ShotReviewShotInput, ShotReviewSuggestionCluster, SuggestedKeyMomentCandidate } from '../types';
 import { formatReportClock } from '../lib/redesignedPublicReportPresentation';
 import { AcceptedKeyMoments } from './AcceptedKeyMoments';
 import { KeyMomentForm } from './KeyMomentForm';
 import { SuggestedKeyMoments } from './SuggestedKeyMoments';
 import { AcceptedShots } from './AcceptedShots';
 import { ShotForm } from './ShotForm';
-import { SuggestedShots, shotSuggestionTime } from './SuggestedShots';
+import { SuggestedShots, shotClusterPreferredTime } from './SuggestedShots';
 
 type Props = {
   report: PublicMatchReport;
@@ -23,8 +23,8 @@ type Props = {
   onCreateShot?: (draft: { expected_revision: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
   onEditShot?: (shotId: string, draft: { expected_revision: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
   onDeleteShot?: (shotId: string, draft: { expected_revision: string }) => Promise<ShotReviewEditorState>;
-  onAcceptShotSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
-  onRejectShotSuggestion?: (draft: { expected_revision: string; candidate_id: string; candidate_generation_digest: string }) => Promise<ShotReviewEditorState>;
+  onAcceptShotSuggestionCluster?: (draft: { expected_revision: string; cluster_id: string; candidate_generation_digest: string; shot: ShotReviewShotInput }) => Promise<ShotReviewEditorState>;
+  onRejectShotSuggestionCluster?: (draft: { expected_revision: string; cluster_id: string; candidate_generation_digest: string }) => Promise<ShotReviewEditorState>;
 };
 
 type FormState = {
@@ -40,7 +40,7 @@ type ShotFormState = {
   mode: 'create' | 'edit' | 'accept';
   shot: Omit<Pick<CanonicalShot, 'time_sec' | 'team_id' | 'outcome' | 'player_id' | 'location_m' | 'location_source'>, 'outcome'> & { outcome: CanonicalShot['outcome'] | '' };
   expectedRevision: string;
-  candidate?: ShotReviewSuggestion;
+  cluster?: ShotReviewSuggestionCluster;
   candidateGenerationDigest?: string;
   shotId?: string;
 };
@@ -64,8 +64,8 @@ export function RedesignedReportVideoMoments({
   onCreateShot,
   onEditShot,
   onDeleteShot,
-  onAcceptShotSuggestion,
-  onRejectShotSuggestion,
+  onAcceptShotSuggestionCluster,
+  onRejectShotSuggestionCluster,
   editorAllowed = false,
   onEditKeyMoments,
 }: Props) {
@@ -85,7 +85,7 @@ export function RedesignedReportVideoMoments({
   const [error, setError] = useState('');
   const publicMoments = report.key_moments?.moments || [];
   const keyMomentOperatorEnabled = Boolean(editorState?.key_moment_editor_allowed && onSaveEditor && onAcceptSuggestion && onRejectSuggestion);
-  const shotOperatorEnabled = Boolean(shotReviewState && onCreateShot && onEditShot && onDeleteShot && onAcceptShotSuggestion && onRejectShotSuggestion);
+  const shotOperatorEnabled = Boolean(shotReviewState && onCreateShot && onEditShot && onDeleteShot && onAcceptShotSuggestionCluster && onRejectShotSuggestionCluster);
   const operatorEnabled = keyMomentOperatorEnabled || shotOperatorEnabled;
   const operatorMoments: KeyMomentEditorialMoment[] = editorState?.moments || [];
 
@@ -242,16 +242,17 @@ export function RedesignedReportVideoMoments({
     };
   }
 
-  function suggestedTeamId(candidate: ShotReviewSuggestion): string {
+  function suggestedTeamId(cluster: ShotReviewSuggestionCluster): string {
+    const candidate = cluster.preferred_candidate;
     const candidateLabel = candidate.suggested_team_name || candidate.suggested_team_label;
     return report.teams.find((team) => [team.team_id, team.team_name, team.team_label].includes(candidateLabel || ''))?.team_id || '';
   }
 
-  function openShotForm(mode: ShotFormState['mode'], shot: ShotFormState['shot'], candidate?: ShotReviewSuggestion, shotId?: string) {
+  function openShotForm(mode: ShotFormState['mode'], shot: ShotFormState['shot'], cluster?: ShotReviewSuggestionCluster, shotId?: string) {
     setShotForm({
       mode,
       shot,
-      candidate,
+      cluster,
       shotId,
       expectedRevision: shotReviewState?.revision || '',
       candidateGenerationDigest: shotReviewState?.candidate_generation_digest || '',
@@ -259,13 +260,13 @@ export function RedesignedReportVideoMoments({
   }
 
   async function saveShot(next: ShotReviewShotInput) {
-    if (!shotForm || !shotReviewState || !onCreateShot || !onEditShot || !onAcceptShotSuggestion) return;
+    if (!shotForm || !shotReviewState || !onCreateShot || !onEditShot || !onAcceptShotSuggestionCluster) return;
     setBusy(true); setError('');
     try {
-      if (shotForm.mode === 'accept' && shotForm.candidate) {
-        await onAcceptShotSuggestion({
+      if (shotForm.mode === 'accept' && shotForm.cluster) {
+        await onAcceptShotSuggestionCluster({
           expected_revision: shotForm.expectedRevision,
-          candidate_id: shotForm.candidate.candidate_id,
+          cluster_id: shotForm.cluster.cluster_id,
           candidate_generation_digest: shotForm.candidateGenerationDigest || '',
           shot: next,
         });
@@ -296,13 +297,13 @@ export function RedesignedReportVideoMoments({
     }
   }
 
-  async function rejectShotSuggestion(candidate: ShotReviewSuggestion) {
-    if (!shotReviewState || !onRejectShotSuggestion) return;
+  async function rejectShotSuggestion(cluster: ShotReviewSuggestionCluster) {
+    if (!shotReviewState || !onRejectShotSuggestionCluster) return;
     setBusy(true); setError('');
     try {
-      await onRejectShotSuggestion({
+      await onRejectShotSuggestionCluster({
         expected_revision: shotReviewState.revision,
-        candidate_id: candidate.candidate_id,
+        cluster_id: cluster.cluster_id,
         candidate_generation_digest: shotReviewState.candidate_generation_digest || '',
       });
     } catch (reason) {
@@ -320,12 +321,12 @@ export function RedesignedReportVideoMoments({
       </div>
       {operatorEnabled && !form && !shotForm && keyMomentOperatorEnabled && shotOperatorEnabled ? <div className='key-moment-operator-tabs review-domain-tabs' role='tablist' aria-label='Tryb analizy wideo'><button type='button' role='tab' aria-selected={domain === 'moments'} onClick={() => setDomain('moments')}>Moment(y)</button><button type='button' role='tab' aria-selected={domain === 'shots'} onClick={() => setDomain('shots')}>Strzały</button></div> : null}
       {operatorEnabled && !form && !shotForm && domain === 'moments' && keyMomentOperatorEnabled ? <div className='key-moment-operator-tabs' role='tablist' aria-label='Tryb edycji momentów'><button type='button' role='tab' aria-selected={tab === 'accepted'} onClick={() => setTab('accepted')}>Zaakceptowane {operatorMoments.length}</button><button type='button' role='tab' aria-selected={tab === 'suggested'} onClick={() => setTab('suggested')}>Sugestie {editorState?.suggestions?.unreviewed_count ?? 0}</button></div> : null}
-      {operatorEnabled && !form && !shotForm && domain === 'shots' && shotOperatorEnabled ? <div className='key-moment-operator-tabs' role='tablist' aria-label='Tryb edycji strzałów'><button type='button' role='tab' aria-selected={shotTab === 'accepted'} onClick={() => setShotTab('accepted')}>Zaakceptowane {shotReviewState?.canonical_shots.length ?? 0}</button><button type='button' role='tab' aria-selected={shotTab === 'suggested'} onClick={() => setShotTab('suggested')}>Sugestie {shotReviewState?.unreviewed_count ?? 0}</button></div> : null}
+      {operatorEnabled && !form && !shotForm && domain === 'shots' && shotOperatorEnabled ? <div className='key-moment-operator-tabs' role='tablist' aria-label='Tryb edycji strzałów'><button type='button' role='tab' aria-selected={shotTab === 'accepted'} onClick={() => setShotTab('accepted')}>Zaakceptowane {shotReviewState?.canonical_shots.length ?? 0}</button><button type='button' role='tab' aria-selected={shotTab === 'suggested'} onClick={() => setShotTab('suggested')}>Sugestie {shotReviewState?.unreviewed_cluster_count ?? 0}</button></div> : null}
       {externalVideoLoading ? <p className='redesign-video-loading' role='status'><span className='spinner' aria-hidden='true' /> Sprawdzam zapisane wideo YouTube…</p> : null}
       <div className={`redesign-video-layout${configuredEmbedUrl ? '' : ' moments-only'}`}>
         {playerEmbedUrl ? <div className='redesign-youtube-frame'><iframe ref={iframeRef} src={playerEmbedUrl} title='Wideo meczu na YouTube' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share' allowFullScreen /></div> : null}
         <div className='redesign-moments-panel' aria-label={domain === 'shots' ? 'Lista strzałów' : 'Lista najważniejszych momentów'}>
-          {!operatorEnabled ? <PublicMoments moments={publicMoments} teams={report.teams} onPlayAt={seekAndPlay} configuredEmbedUrl={Boolean(configuredEmbedUrl)} /> : form ? <KeyMomentForm mode={form.mode} report={report} initial={form.moment} onCancel={() => setForm(null)} onSave={saveMoment} /> : shotForm ? <ShotForm mode={shotForm.mode} report={report} initial={shotForm.shot} onCancel={() => setShotForm(null)} onSave={saveShot} /> : domain === 'shots' && shotOperatorEnabled ? shotTab === 'accepted' ? <AcceptedShots shots={shotReviewState?.canonical_shots || []} report={report} onPlayAt={seekAndPlay} onAdd={() => openShotForm('create', newShot())} onEdit={(shot) => openShotForm('edit', shot, undefined, shot.shot_id)} onDelete={deleteShot} /> : <SuggestedShots suggestions={shotReviewState?.unreviewed_suggestions || []} unavailable={shotReviewState?.suggestions?.status === 'not_available'} disabled={busy} onPlayAt={seekAndPlay} onAccept={(candidate) => openShotForm('accept', { time_sec: shotSuggestionTime(candidate), team_id: suggestedTeamId(candidate), outcome: '', player_id: null, location_m: null, location_source: 'unavailable' }, candidate)} onReject={rejectShotSuggestion} /> : keyMomentOperatorEnabled ? tab === 'accepted' ? <AcceptedKeyMoments moments={operatorMoments} report={report} onPlayAt={seekAndPlay} onAdd={() => openForm('create', newMoment())} onEdit={(moment) => openForm('edit', moment)} onDelete={deleteMoment} /> : <SuggestedKeyMoments state={editorState?.suggestions} report={report} disabled={busy} onPlayAt={seekAndPlay} onAccept={(candidate) => openForm('accept', { time_sec: candidate.start_time_sec, team_id: candidate.team_id || null, player_id: null, category: 'other', headline: '', note: '', origin: 'manual' }, candidate)} onReject={rejectCandidate} /> : <PublicMoments moments={publicMoments} teams={report.teams} onPlayAt={seekAndPlay} configuredEmbedUrl={Boolean(configuredEmbedUrl)} />}
+          {!operatorEnabled ? <PublicMoments moments={publicMoments} teams={report.teams} onPlayAt={seekAndPlay} configuredEmbedUrl={Boolean(configuredEmbedUrl)} /> : form ? <KeyMomentForm mode={form.mode} report={report} initial={form.moment} onCancel={() => setForm(null)} onSave={saveMoment} /> : shotForm ? <ShotForm mode={shotForm.mode} report={report} initial={shotForm.shot} onCancel={() => setShotForm(null)} onSave={saveShot} onUseCurrentVideoTime={() => playerReadyRef.current ? playerRef.current?.getCurrentTime?.() ?? null : null} /> : domain === 'shots' && shotOperatorEnabled ? shotTab === 'accepted' ? <AcceptedShots shots={shotReviewState?.canonical_shots || []} report={report} onPlayAt={seekAndPlay} onAdd={() => openShotForm('create', newShot())} onEdit={(shot) => openShotForm('edit', shot, undefined, shot.shot_id)} onDelete={deleteShot} /> : <SuggestedShots clusters={shotReviewState?.unreviewed_suggestion_clusters || []} unavailable={shotReviewState?.suggestions?.status === 'not_available'} disabled={busy} onPlayAt={seekAndPlay} onAccept={(cluster) => openShotForm('accept', { time_sec: shotClusterPreferredTime(cluster), team_id: suggestedTeamId(cluster), outcome: '', player_id: null, location_m: null, location_source: 'unavailable' }, cluster)} onReject={rejectShotSuggestion} /> : keyMomentOperatorEnabled ? tab === 'accepted' ? <AcceptedKeyMoments moments={operatorMoments} report={report} onPlayAt={seekAndPlay} onAdd={() => openForm('create', newMoment())} onEdit={(moment) => openForm('edit', moment)} onDelete={deleteMoment} /> : <SuggestedKeyMoments state={editorState?.suggestions} report={report} disabled={busy} onPlayAt={seekAndPlay} onAccept={(candidate) => openForm('accept', { time_sec: candidate.start_time_sec, team_id: candidate.team_id || null, player_id: null, category: 'other', headline: '', note: '', origin: 'manual' }, candidate)} onReject={rejectCandidate} /> : <PublicMoments moments={publicMoments} teams={report.teams} onPlayAt={seekAndPlay} configuredEmbedUrl={Boolean(configuredEmbedUrl)} />}
           {error ? <p className='status'>{error}</p> : null}
         </div>
       </div>

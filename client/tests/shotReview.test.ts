@@ -47,11 +47,14 @@ function keyMomentState(): KeyMomentEditorState {
 }
 
 function shotState(suggestion: Partial<ShotReviewEditorState['unreviewed_suggestions'][number]> = {}): ShotReviewEditorState {
+  const candidate = { candidate_id: 'candidate-1', logical_timestamp_sec: 100, suggested_team_name: 'Verisk', confidence: .74, ...suggestion };
   return {
     published_id: 'published-test', revision: 'shot-r1', has_editorial_sidecar: true,
     canonical_shots: [{ shot_id: 'shot-1', time_sec: 50, team_id: 'corgi', outcome: 'blocked', player_id: 'p-corgi-1', origin: 'manual', location_m: { x: 4, y: 5 }, location_source: 'ball' }],
     candidate_generation_digest: 'candidate-r1', candidate_count: 1, accepted_count: 0, rejected_count: 0, unreviewed_count: 1,
-    unreviewed_suggestions: [{ candidate_id: 'candidate-1', logical_timestamp_sec: 100, suggested_team_name: 'Verisk', confidence: .74, ...suggestion }], suggestions: { status: 'ready' },
+    unreviewed_suggestions: [candidate], cluster_count: 1, unreviewed_cluster_count: 1,
+    unreviewed_suggestion_clusters: [{ cluster_id: 'cluster-1', source_match_id: 'source', review_start_time_sec: 99.5, review_end_time_sec: 100.5, member_count: 1, member_candidate_ids: ['candidate-1'], member_candidates: [candidate], preferred_candidate_id: 'candidate-1', preferred_candidate: candidate, status: 'unreviewed' }],
+    suggestions: { status: 'ready' },
   };
 }
 
@@ -70,7 +73,7 @@ function renderReview(callbacks: Partial<React.ComponentProps<typeof RedesignedR
     report, externalVideo, editorState: keyState, shotReviewState: shots,
     onSaveEditor: async () => keyState, onAcceptSuggestion: async () => keyState, onRejectSuggestion: async () => keyState,
     onCreateShot: async () => shots, onEditShot: async () => shots, onDeleteShot: async () => shots,
-    onAcceptShotSuggestion: async () => shots, onRejectShotSuggestion: async () => shots,
+    onAcceptShotSuggestionCluster: async () => shots, onRejectShotSuggestionCluster: async () => shots,
     ...callbacks,
   }));
 }
@@ -104,34 +107,38 @@ test('prefilled suggested team accepts after the operator chooses only an outcom
   let accepted: unknown;
   let rejected: unknown;
   const view = renderReview({
-    onAcceptShotSuggestion: async (payload) => { accepted = payload; return shotState(); },
-    onRejectShotSuggestion: async (payload) => { rejected = payload; return shotState(); },
+    onAcceptShotSuggestionCluster: async (payload) => { accepted = payload; return shotState(); },
+    onRejectShotSuggestionCluster: async (payload) => { rejected = payload; return shotState(); },
   });
   await waitFor(() => assert.equal(players.length, 1));
   await act(async () => { players[0].ready(); });
   fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
-  assert.ok(view.getByText('Sugerowane strzały (1)'));
+  assert.ok(view.getByText('Potencjalne akcje (1)'));
+  assert.ok(view.getByText('Verisk · 1:40.0 · 0.74'));
   fireEvent.click(view.getByRole('button', { name: 'Odtwórz' }));
-  assert.deepEqual(players[0].seekCalls, [[100, true]]);
+  assert.deepEqual(players[0].seekCalls, [[99.5, true]]);
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));
   assert.ok(view.getByRole('heading', { name: 'Akceptuj sugerowany strzał' }));
   assert.equal((view.getByLabelText('Drużyna strzału') as HTMLSelectElement).value, 'verisk');
+  fireEvent.click(view.getByRole('button', { name: 'Użyj aktualnego czasu filmu' }));
+  assert.equal((view.getByLabelText('Czas strzału') as HTMLInputElement).value, '1:17.5');
   fireEvent.change(view.getByLabelText('Wynik strzału'), { target: { value: 'on_target' } });
   fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
   await waitFor(() => assert.ok(accepted));
-  assert.deepEqual(accepted, { expected_revision: 'shot-r1', candidate_id: 'candidate-1', candidate_generation_digest: 'candidate-r1', shot: { time_sec: 100, team_id: 'verisk', outcome: 'on_target', player_id: null } });
+  assert.deepEqual(accepted, { expected_revision: 'shot-r1', cluster_id: 'cluster-1', candidate_generation_digest: 'candidate-r1', shot: { time_sec: 77.5, team_id: 'verisk', outcome: 'on_target', player_id: null } });
 
+  await waitFor(() => assert.ok(view.getByRole('tab', { name: 'Sugestie 1' })));
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
   fireEvent.click(view.getByRole('button', { name: 'Odrzuć' }));
   await waitFor(() => assert.ok(rejected));
-  assert.deepEqual(rejected, { expected_revision: 'shot-r1', candidate_id: 'candidate-1', candidate_generation_digest: 'candidate-r1' });
+  assert.deepEqual(rejected, { expected_revision: 'shot-r1', cluster_id: 'cluster-1', candidate_generation_digest: 'candidate-r1' });
 });
 
 test('unresolved suggested team still requires a team selection before acceptance', async () => {
   let accepted: unknown;
   const shots = shotState({ suggested_team_name: null, suggested_team_label: null });
-  const view = renderReview({ onAcceptShotSuggestion: async (payload) => { accepted = payload; return shots; } }, shots);
+  const view = renderReview({ onAcceptShotSuggestionCluster: async (payload) => { accepted = payload; return shots; } }, shots);
   fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
   fireEvent.click(view.getByRole('tab', { name: 'Sugestie 1' }));
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj' }));

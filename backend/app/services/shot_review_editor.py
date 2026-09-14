@@ -29,6 +29,9 @@ EDITORIAL_DIRECTORY = config.STORAGE_DIR / "editorial" / "shots"
 OUTCOMES = frozenset({"goal", "on_target", "off_target", "blocked"})
 LOCATION_SOURCES = frozenset({"ball", "player", "manual", "unavailable"})
 LOCATION_TOLERANCE_SEC = 0.5
+CLUSTER_MAX_NEIGHBOR_GAP_SEC = 2.5
+CLUSTER_MAX_SPAN_SEC = 5.0
+CLUSTER_DISPLAY_BUFFER_SEC = 0.5
 
 
 class ShotReviewError(ValueError):
@@ -165,6 +168,145 @@ def _reviews_for_generation(document: Mapping[str, Any], generation_digest: str)
     }
 
 
+def _candidate_time(candidate: Mapping[str, Any]) -> float:
+    for key in ("time_sec", "logical_timestamp_sec", "candidate_timestamp_sec", "source_timestamp_sec"):
+        value = _number(candidate.get(key))
+        if value is not None:
+            return value
+    return 0.0
+
+
+def _cluster_member(candidate: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep compact, already-generated evidence available to the review UI."""
+
+    keys = (
+        "candidate_id", "time_sec", "logical_timestamp_sec", "candidate_timestamp_sec", "source_timestamp_sec",
+        "source_match_id", "suggested_team_label", "suggested_team_name", "suggested_player_id",
+        "confidence", "reasons", "source_event_id", "source_context_start_sec", "source_context_end_sec",
+        "logical_context_start_sec", "logical_context_end_sec",
+    )
+    return {key: copy.deepcopy(candidate.get(key)) for key in keys if key in candidate}
+
+
+def _preferred_candidate(candidates: list[Mapping[str, Any]]) -> Mapping[str, Any]:
+    """Choose the deterministic default signal for a reviewable cluster."""
+
+    return min(
+        candidates,
+        key=lambda row: (-(_number(row.get("confidence")) or 0.0), _candidate_time(row), str(row.get("candidate_id") or "")),
+    )
+
+
+def build_review_clusters(
+    candidates: list[Mapping[str, Any]],
+    *,
+    candidate_generation_digest: str,
+    timeline_span_sec: float | None,
+) -> list[dict[str, Any]]:
+    """Group adjacent raw candidates into bounded, source-local review units.
+
+    Clustering is deliberately presentation/read-model logic. Raw candidates
+    remain intact and the stable ID is derived solely from their immutable
+    generation lineage and member IDs.
+    """
+
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for candidate in candidates:
+        source_id = str(candidate.get("source_match_id") or "")
+        grouped.setdefault(source_id, []).append(candidate)
+
+    clusters: list[dict[str, Any]] = []
+    for source_id, source_candidates in sorted(grouped.items()):
+        current: list[Mapping[str, Any]] = []
+
+        def flush() -> None:
+            if not current:
+                return
+            ordered = sorted(current, key=lambda row: (_candidate_time(row), str(row.get("candidate_id") or "")))
+            first_time, last_time = _candidate_time(ordered[0]), _candidate_time(ordered[-1])
+            members = [_cluster_member(row) for row in ordered]
+            preferred = _preferred_candidate(members)
+            cluster_key = canonical_json_sha256({
+                "schema_version": "shot-review-cluster:v1",
+                "candidate_generation_digest": candidate_generation_digest,
+                "source_match_id": source_id,
+                "member_candidate_ids": [str(row.get("candidate_id") or "") for row in members],
+            })
+            review_start = max(0.0, first_time - CLUSTER_DISPLAY_BUFFER_SEC)
+            review_end = last_time + CLUSTER_DISPLAY_BUFFER_SEC
+            if timeline_span_sec is not None and timeline_span_sec > 0:
+                review_end = min(timeline_span_sec, review_end)
+            clusters.append({
+                "cluster_id": f"shot-cluster-{cluster_key.split(':', 1)[-1][:16]}",
+                "source_match_id": source_id,
+                "review_start_time_sec": round(review_start, 6),
+                "review_end_time_sec": round(review_end, 6),
+                "member_count": len(members),
+                "member_candidate_ids": [str(row.get("candidate_id") or "") for row in members],
+                "member_candidates": members,
+                "preferred_candidate_id": str(preferred.get("candidate_id") or ""),
+                "preferred_candidate": preferred,
+            })
+
+        for candidate in sorted(source_candidates, key=lambda row: (_candidate_time(row), str(row.get("candidate_id") or ""))):
+            if not current:
+                current.append(candidate)
+                continue
+            first_time, prior_time, candidate_time = _candidate_time(current[0]), _candidate_time(current[-1]), _candidate_time(candidate)
+            if candidate_time - prior_time <= CLUSTER_MAX_NEIGHBOR_GAP_SEC and candidate_time - first_time <= CLUSTER_MAX_SPAN_SEC:
+                current.append(candidate)
+            else:
+                flush()
+                current = [candidate]
+        flush()
+    return sorted(clusters, key=lambda row: (float(row["review_start_time_sec"]), str(row["source_match_id"]), str(row["cluster_id"])))
+
+
+def _cluster_status(cluster: Mapping[str, Any], reviews: Mapping[str, Mapping[str, Any]]) -> tuple[str, list[str]]:
+    statuses = [str((reviews.get(candidate_id) or {}).get("review_status") or "unreviewed") for candidate_id in cluster.get("member_candidate_ids") or []]
+    canonical_ids = sorted({
+        str((reviews.get(candidate_id) or {}).get("canonical_shot_id") or "")
+        for candidate_id in cluster.get("member_candidate_ids") or []
+        if (reviews.get(candidate_id) or {}).get("review_status") == "accepted"
+    } - {""})
+    if "accepted" in statuses:
+        return "accepted", canonical_ids
+    if statuses and all(status == "rejected" for status in statuses):
+        return "rejected", canonical_ids
+    if "rejected" in statuses:
+        return "partially_rejected", canonical_ids
+    return "unreviewed", canonical_ids
+
+
+def _cluster_projection(
+    candidates: list[Mapping[str, Any]],
+    *,
+    candidate_generation_digest: str,
+    reviews: Mapping[str, Mapping[str, Any]],
+    timeline_span_sec: float | None,
+) -> list[dict[str, Any]]:
+    rows = build_review_clusters(
+        candidates,
+        candidate_generation_digest=candidate_generation_digest,
+        timeline_span_sec=timeline_span_sec,
+    )
+    for row in rows:
+        row["status"], row["canonical_shot_ids"] = _cluster_status(row, reviews)
+        if row["status"] in {"unreviewed", "partially_rejected"}:
+            unresolved_members = [
+                member
+                for member in row["member_candidates"]
+                if str((reviews.get(str(member.get("candidate_id") or "")) or {}).get("review_status") or "unreviewed") == "unreviewed"
+            ]
+            # Rejected signals remain durable raw evidence, but a new cluster
+            # action must default to the signal the operator can still accept.
+            if unresolved_members:
+                preferred = _preferred_candidate(unresolved_members)
+                row["preferred_candidate_id"] = str(preferred.get("candidate_id") or "")
+                row["preferred_candidate"] = preferred
+    return rows
+
+
 def _canonical_dto(row: Mapping[str, Any]) -> dict[str, Any]:
     return {key: copy.deepcopy(row.get(key)) for key in ("shot_id", "time_sec", "team_id", "outcome", "player_id", "origin", "location_m", "location_source")}
 
@@ -173,7 +315,16 @@ def editor_state(published_id: str) -> dict[str, Any]:
     document = load_shot_review_document(published_id)
     projection = _suggestion_projection(published_id)
     if projection.get("status") != "ready":
-        suggestions = {**projection, "accepted_count": 0, "rejected_count": 0, "unreviewed_count": 0, "unreviewed_suggestions": []}
+        suggestions = {
+            **projection,
+            "accepted_count": 0,
+            "rejected_count": 0,
+            "unreviewed_count": 0,
+            "unreviewed_suggestions": [],
+            "cluster_count": 0,
+            "unreviewed_cluster_count": 0,
+            "unreviewed_clusters": [],
+        }
     else:
         reviews = _reviews_for_generation(document, str(projection["candidate_generation_digest"]))
         unreviewed, accepted, rejected = [], 0, 0
@@ -183,7 +334,28 @@ def editor_state(published_id: str) -> dict[str, Any]:
             rejected += status == "rejected"
             if status == "unreviewed":
                 unreviewed.append(candidate)
-        suggestions = {**projection, "accepted_count": accepted, "rejected_count": rejected, "unreviewed_count": len(unreviewed), "unreviewed_suggestions": unreviewed}
+        report = _record(get_published_match(published_id).get("public_report"))
+        duration = _number(_record(report.get("match")).get("duration_sec"))
+        clusters = _cluster_projection(
+            projection["candidates"],
+            candidate_generation_digest=str(projection["candidate_generation_digest"]),
+            reviews=reviews,
+            timeline_span_sec=duration,
+        )
+        unreviewed_clusters = [
+            row for row in clusters
+            if row.get("status") in {"unreviewed", "partially_rejected"}
+        ]
+        suggestions = {
+            **projection,
+            "accepted_count": accepted,
+            "rejected_count": rejected,
+            "unreviewed_count": len(unreviewed),
+            "unreviewed_suggestions": unreviewed,
+            "cluster_count": len(clusters),
+            "unreviewed_cluster_count": len(unreviewed_clusters),
+            "unreviewed_clusters": unreviewed_clusters,
+        }
     return {
         "published_id": published_id,
         "revision": document["revision"],
@@ -197,6 +369,9 @@ def editor_state(published_id: str) -> dict[str, Any]:
         "rejected_count": int(suggestions.get("rejected_count") or 0),
         "unreviewed_count": int(suggestions.get("unreviewed_count") or 0),
         "unreviewed_suggestions": copy.deepcopy(suggestions.get("unreviewed_suggestions") or []),
+        "cluster_count": int(suggestions.get("cluster_count") or 0),
+        "unreviewed_cluster_count": int(suggestions.get("unreviewed_cluster_count") or 0),
+        "unreviewed_suggestion_clusters": copy.deepcopy(suggestions.get("unreviewed_clusters") or []),
         "suggestions": suggestions,
     }
 
@@ -377,6 +552,25 @@ def _current_suggestion(published_id: str, current: Mapping[str, Any], payload: 
     return candidate
 
 
+def _current_cluster(published_id: str, current: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
+    projection = _suggestion_projection(published_id)
+    digest = str(payload.get("candidate_generation_digest") or "")
+    if projection.get("status") != "ready" or digest != str(projection.get("candidate_generation_digest") or ""):
+        raise ShotReviewError("shot_review_candidate_stale", "Sugestia pochodzi z nieaktualnej generacji. Odśwież edytor.", 409)
+    report = _record(get_published_match(published_id).get("public_report"))
+    clusters = _cluster_projection(
+        projection["candidates"],
+        candidate_generation_digest=digest,
+        reviews=_reviews_for_generation(current, digest),
+        timeline_span_sec=_number(_record(report.get("match")).get("duration_sec")),
+    )
+    cluster_id = str(payload.get("cluster_id") or "")
+    cluster = next((row for row in clusters if str(row.get("cluster_id") or "") == cluster_id), None)
+    if not isinstance(cluster, dict) or cluster.get("status") not in {"unreviewed", "partially_rejected"}:
+        raise ShotReviewError("shot_review_cluster_unavailable", "Klaster sugestii nie jest dostępny do przeglądu.", 409)
+    return cluster
+
+
 def accept_suggestion(published_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     match, current = get_published_match(published_id), load_shot_review_document(published_id)
     _ensure_revision(current, payload)
@@ -397,6 +591,71 @@ def reject_suggestion(published_id: str, payload: Mapping[str, Any]) -> dict[str
     candidate = _current_suggestion(published_id, current, payload)
     review = {"candidate_id": str(candidate.get("candidate_id") or ""), "candidate_generation_digest": str(payload.get("candidate_generation_digest") or ""), "review_status": "rejected", "reviewed_at": _now()}
     _persist(published_id, _next_document(current, published_id, reviews=_replace_review(current.get("suggested_candidate_reviews"), review)))
+    return editor_state(published_id)
+
+
+def accept_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Accept one bounded review action and atomically resolve all its signals."""
+
+    match, current = get_published_match(published_id), load_shot_review_document(published_id)
+    _ensure_revision(current, payload)
+    cluster = _current_cluster(published_id, current, payload)
+    preferred = _record(cluster.get("preferred_candidate"))
+    digest = str(payload.get("candidate_generation_digest") or "")
+    shot = _validate_shot(
+        published_id,
+        _record(match.get("public_report")),
+        _record(payload.get("shot")),
+        origin="accepted_suggestion",
+        fallback_time=_number(preferred.get("time_sec")),
+    )
+    shot["suggested_candidate_id"] = str(preferred.get("candidate_id") or "")
+    shot["suggested_candidate_generation_digest"] = digest
+    shot["suggested_cluster_id"] = str(cluster.get("cluster_id") or "")
+    shot["suggested_cluster_member_candidate_ids"] = list(cluster.get("member_candidate_ids") or [])
+    reviews: list[dict[str, Any]] | Any = current.get("suggested_candidate_reviews") or []
+    existing_reviews = _reviews_for_generation(current, digest)
+    reviewed_at = _now()
+    for candidate_id in cluster.get("member_candidate_ids") or []:
+        # A prior candidate-level rejection is durable operator truth.  A
+        # later cluster can resolve its remaining signals, but must not turn a
+        # known rejection into acceptance merely because both signals are near
+        # each other in time.
+        if (existing_reviews.get(str(candidate_id)) or {}).get("review_status") == "rejected":
+            continue
+        reviews = _replace_review(reviews, {
+            "candidate_id": str(candidate_id),
+            "candidate_generation_digest": digest,
+            "review_status": "accepted",
+            "canonical_shot_id": shot["shot_id"],
+            "cluster_id": shot["suggested_cluster_id"],
+            "reviewed_at": reviewed_at,
+        })
+    _persist(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews))
+    return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
+
+
+def reject_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Reject all raw signals in one bounded review action atomically."""
+
+    current = load_shot_review_document(published_id)
+    _ensure_revision(current, payload)
+    cluster = _current_cluster(published_id, current, payload)
+    digest = str(payload.get("candidate_generation_digest") or "")
+    reviews: list[dict[str, Any]] | Any = current.get("suggested_candidate_reviews") or []
+    existing_reviews = _reviews_for_generation(current, digest)
+    reviewed_at = _now()
+    for candidate_id in cluster.get("member_candidate_ids") or []:
+        if (existing_reviews.get(str(candidate_id)) or {}).get("review_status") == "rejected":
+            continue
+        reviews = _replace_review(reviews, {
+            "candidate_id": str(candidate_id),
+            "candidate_generation_digest": digest,
+            "review_status": "rejected",
+            "cluster_id": str(cluster.get("cluster_id") or ""),
+            "reviewed_at": reviewed_at,
+        })
+    _persist(published_id, _next_document(current, published_id, reviews=reviews))
     return editor_state(published_id)
 
 
@@ -452,13 +711,23 @@ def delete_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str,
         raise ShotReviewError("shot_review_shot_not_found", "Nie znaleziono zapisanego strzału.", 404)
     reviews = current.get("suggested_candidate_reviews") or []
     if isinstance(existing, dict) and existing.get("origin") == "accepted_suggestion":
-        linked = next((row for row in reviews if isinstance(row, dict) and row.get("review_status") == "accepted" and row.get("canonical_shot_id") == shot_id), None)
-        if isinstance(linked, dict):
+        # A cluster acceptance has one canonical shot but several accepted raw
+        # candidate reviews.  Deleting that shot must resolve every linked row
+        # together, otherwise a sibling would retain a dangling reference.
+        linked_rows = [
+            row for row in reviews
+            if isinstance(row, dict)
+            and row.get("review_status") == "accepted"
+            and row.get("canonical_shot_id") == shot_id
+        ]
+        reviewed_at = _now()
+        for linked in linked_rows:
             reviews = _replace_review(reviews, {
                 "candidate_id": linked.get("candidate_id"),
                 "candidate_generation_digest": linked.get("candidate_generation_digest"),
                 "review_status": "rejected",
-                "reviewed_at": _now(),
+                "cluster_id": linked.get("cluster_id"),
+                "reviewed_at": reviewed_at,
             })
     _persist(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
     return editor_state(published_id)

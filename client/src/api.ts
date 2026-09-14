@@ -963,6 +963,24 @@ export async function rejectShotReviewSuggestion(
   });
 }
 
+export async function acceptShotReviewSuggestionCluster(
+  publishedMatchId: string,
+  payload: { expected_revision: string; cluster_id: string; candidate_generation_digest: string; shot: ShotReviewShotInput },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/suggestion-clusters/accept`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function rejectShotReviewSuggestionCluster(
+  publishedMatchId: string,
+  payload: { expected_revision: string; cluster_id: string; candidate_generation_digest: string },
+): Promise<ShotReviewEditorState> {
+  return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/suggestion-clusters/reject`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
 export async function createShotReviewShot(
   publishedMatchId: string,
   payload: { expected_revision: string; shot: ShotReviewShotInput },

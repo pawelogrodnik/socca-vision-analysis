@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import {
   acceptKeyMomentSuggestion,
-  acceptShotReviewSuggestion,
+  acceptShotReviewSuggestionCluster,
   createShotReviewShot,
   deleteShotReviewShot,
   editShotReviewShot,
@@ -13,7 +13,7 @@ import {
   getStaticPublicMatchReport,
   saveKeyMomentEditor,
   rejectKeyMomentSuggestion,
-  rejectShotReviewSuggestion,
+  rejectShotReviewSuggestionCluster,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
 import { ApiRequestError } from '../lib/apiErrors';
@@ -126,17 +126,17 @@ export function RedesignedPublishedMatchReportPage() {
           setShotReviewEditor(saved); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
-      onAcceptShotSuggestion={async (payload) => {
+      onAcceptShotSuggestionCluster={async (payload) => {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
-          const saved = await acceptShotReviewSuggestion(matchId, payload);
+          const saved = await acceptShotReviewSuggestionCluster(matchId, payload);
           setShotReviewEditor(saved); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
-      onRejectShotSuggestion={async (payload) => {
+      onRejectShotSuggestionCluster={async (payload) => {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
-          const saved = await rejectShotReviewSuggestion(matchId, payload);
+          const saved = await rejectShotReviewSuggestionCluster(matchId, payload);
           setShotReviewEditor(saved); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}

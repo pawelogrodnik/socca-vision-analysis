@@ -15,13 +15,14 @@ type Props = {
   initial: ShotFormInitial;
   onCancel: () => void;
   onSave: (shot: ShotReviewShotInput) => Promise<void>;
+  onUseCurrentVideoTime?: () => number | null;
 };
 
 const outcomes: Array<[ShotOutcome, string]> = [
   ['goal', 'Gol'], ['on_target', 'Celny'], ['off_target', 'Niecelny'], ['blocked', 'Zablokowany'],
 ];
 
-export function ShotForm({ mode, report, initial, onCancel, onSave }: Props) {
+export function ShotForm({ mode, report, initial, onCancel, onSave, onUseCurrentVideoTime }: Props) {
   const [shot, setShot] = useState(initial);
   const [timeText, setTimeText] = useState(initial.time_sec >= 0 ? formatKeyMomentTime(initial.time_sec) : '');
   const [error, setError] = useState('');
@@ -68,6 +69,7 @@ export function ShotForm({ mode, report, initial, onCancel, onSave }: Props) {
     <h3 id='shot-focus-title'>{title}</h3>
     {mode === 'accept' ? <p className='muted'>Sprawdź drużynę i wybierz wynik przed zapisem.</p> : null}
     <label>Czas *<input aria-label='Czas strzału' value={timeText} onChange={(event) => setTimeText(event.target.value)} /></label>
+    {mode === 'accept' && onUseCurrentVideoTime ? <button type='button' className='secondary shot-location-toggle' onClick={() => { const time = onUseCurrentVideoTime(); if (typeof time === 'number' && Number.isFinite(time)) setTimeText(formatKeyMomentTime(time)); }}>Użyj aktualnego czasu filmu</button> : null}
     <label>Drużyna *<select aria-label='Drużyna strzału' value={shot.team_id} onChange={(event) => { setShot((value) => ({ ...value, team_id: event.target.value, player_id: null })); setTeamConfirmed(true); }}><option value=''>—</option>{report.teams.map((team) => <option key={team.team_id} value={team.team_id || ''}>{team.team_name || team.team_label}</option>)}</select></label>
     <label>Wynik *<select aria-label='Wynik strzału' value={shot.outcome || ''} onChange={(event) => { setShot((value) => ({ ...value, outcome: event.target.value as ShotOutcome })); setOutcomeConfirmed(true); }}><option value=''>—</option>{outcomes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     <label>Zawodnik<select aria-label='Zawodnik strzału' value={shot.player_id || ''} onChange={(event) => setShot((value) => ({ ...value, player_id: event.target.value || null }))}><option value=''>—</option>{report.players.filter((player) => player.team_id === shot.team_id).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}</option>)}</select></label>
