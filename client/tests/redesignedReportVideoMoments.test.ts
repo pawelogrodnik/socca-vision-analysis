@@ -167,3 +167,43 @@ test('static canonical shots use the existing player and expose two separate rea
   assert.equal(players.length, 1);
   assert.equal(view.container.querySelectorAll('iframe').length, 1);
 });
+
+test('one outcome filter controls both maps without changing the public shot browser or summary', async () => {
+  const players = installPlayer();
+  const publicShotReport: PublicMatchReport = {
+    ...report,
+    teams: [{ team_id: 'corgi', team_name: 'Corgi' }, { team_id: 'verisk', team_name: 'Verisk' }],
+    players: [{ player_id: 'krzysiek', player_name: 'Krzysiek', team_id: 'corgi' }],
+    shots: [
+      { shot_id: 'goal', time_sec: 10, team_id: 'corgi', outcome: 'goal', player_id: 'krzysiek', map_location: { x: .2, y: .2 } },
+      { shot_id: 'on', time_sec: 12, team_id: 'corgi', outcome: 'on_target', map_location: { x: .3, y: .3 } },
+      { shot_id: 'off', time_sec: 30, team_id: 'verisk', outcome: 'off_target', map_location: { x: .4, y: .4 } },
+      { shot_id: 'blocked', time_sec: 32, team_id: 'verisk', outcome: 'blocked', map_location: { x: .5, y: .5 } },
+    ],
+  };
+  const view = render(React.createElement(RedesignedReportVideoMoments, {
+    report: publicShotReport,
+    externalVideo: { group_id: 'group', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1', linked_video: { generation_id: 'g', input_semantic_digest: 'input', output_semantic_digest: 'output', timeline_span_sec: 120 }, updated_at: 'now' } },
+  }));
+  await waitFor(() => assert.equal(players.length, 1));
+  await act(async () => { players[0].ready(); });
+  fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
+  for (const label of ['Wszystkie', 'Celne', 'Niecelne', 'Zablokowane', 'Gole']) assert.ok(view.getByRole('button', { name: new RegExp(label) }));
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 4);
+  assert.match(view.container.textContent || '', /Opublikowane strzały \(4\)/);
+  fireEvent.click(view.getByRole('button', { name: /0:10.*Gol.*Corgi.*Krzysiek/ }));
+  assert.match(view.getByRole('status').textContent || '', /Krzysiek/);
+  fireEvent.click(view.getByRole('button', { name: /Celne/ }));
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 1);
+  assert.equal(view.queryByRole('status'), null);
+  assert.equal(view.getByRole('button', { name: /Celne/ }).getAttribute('aria-pressed'), 'true');
+  assert.match(view.container.textContent || '', /Opublikowane strzały \(4\)/);
+  fireEvent.click(view.getByRole('button', { name: /Niecelne/ }));
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 1);
+  fireEvent.click(view.getByRole('button', { name: /Zablokowane/ }));
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 1);
+  fireEvent.click(view.getByRole('button', { name: /Gole/ }));
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 1);
+  assert.equal(players.length, 1);
+  assert.equal(view.container.querySelectorAll('iframe').length, 1);
+});

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { comparisonBarWidth, RedesignedPublishedReportContent, redesignedPossessionDataKeys } from '../src/components/RedesignedPublishedReportContent.tsx';
+import { comparisonBarWidth, comparisonRows, RedesignedPublishedReportContent, redesignedPossessionDataKeys } from '../src/components/RedesignedPublishedReportContent.tsx';
 import { RedesignedReportVideoMoments } from '../src/components/RedesignedReportVideoMoments.tsx';
 import { MergedSourceDataRebuildPanel } from '../src/components/MergedSourceDataRebuildPanel.tsx';
 import { youtubePlayerEmbedUrl } from '../src/components/RedesignedReportVideoMoments.tsx';
@@ -58,6 +58,22 @@ test('route dispatch only selects the redesigned report for published ids', () =
   assert.equal(isPublishedReportId('published-merged-c33c30c0'), true);
   assert.equal(isPublishedReportId('9c7485e4'), false);
   assert.equal(isPublishedReportId(undefined), false);
+});
+
+test('team comparison uses total, on-target, and accuracy from one canonical shot summary', () => {
+  const withShots: PublicMatchReport = {
+    ...report,
+    shots: [
+      { shot_id: 'goal', time_sec: 1, team_id: 'A', outcome: 'goal' },
+      { shot_id: 'on', time_sec: 2, team_id: 'A', outcome: 'on_target' },
+      { shot_id: 'off', time_sec: 3, team_id: 'A', outcome: 'off_target' },
+      { shot_id: 'blocked', time_sec: 4, team_id: 'A', outcome: 'blocked' },
+    ],
+  };
+  const shotRows = comparisonRows(withShots.teams[0], withShots.teams[1], withShots).filter((row) => row.label.includes('Strzały') || row.label === '% celnych');
+  assert.deepEqual(shotRows.map((row) => row.label), ['Strzały', 'Strzały celne', '% celnych']);
+  assert.deepEqual(shotRows.map((row) => row.leftText), ['4', '2', '50%']);
+  assert.deepEqual(shotRows.map((row) => row.rightText), ['0', '0', '—']);
 });
 
 test('redesigned report removes repeated summaries and uses canonical facts without score, MVP, half, or provenance language', () => {

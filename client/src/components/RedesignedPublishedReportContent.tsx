@@ -83,7 +83,7 @@ function TeamBadge({ team, fallback, color }: { team: PublicReportTeam | undefin
   return <span className='redesign-team-badge' style={{ '--team-color': color } as CSSProperties}>{displayTeamName(team, fallback)}</span>;
 }
 
-function comparisonRows(left: PublicReportTeam, right: PublicReportTeam, report: PublicMatchReport): ComparisonRow[] {
+export function comparisonRows(left: PublicReportTeam, right: PublicReportTeam, report: PublicMatchReport): ComparisonRow[] {
   const possession = balancedPossessionPercentages(left.possession_share_percent, right.possession_share_percent);
   const rows: ComparisonRow[] = [
     {
@@ -106,8 +106,8 @@ function comparisonRows(left: PublicReportTeam, right: PublicReportTeam, report:
     const leftShots = publicShotSummary(publicShotsForTeam(report.shots, left.team_id || left.team_label || ''));
     const rightShots = publicShotSummary(publicShotsForTeam(report.shots, right.team_id || right.team_label || ''));
     rows.push(
-      { label: 'Strzały celne', leftValue: leftShots.onTarget, rightValue: rightShots.onTarget, leftText: String(leftShots.onTarget), rightText: String(rightShots.onTarget), scale: 'pair', startsGroup: true },
-      { label: 'Strzały niecelne', leftValue: leftShots.offTarget, rightValue: rightShots.offTarget, leftText: String(leftShots.offTarget), rightText: String(rightShots.offTarget), scale: 'pair' },
+      { label: 'Strzały', leftValue: leftShots.total, rightValue: rightShots.total, leftText: String(leftShots.total), rightText: String(rightShots.total), scale: 'pair', startsGroup: true },
+      { label: 'Strzały celne', leftValue: leftShots.onTarget, rightValue: rightShots.onTarget, leftText: String(leftShots.onTarget), rightText: String(rightShots.onTarget), scale: 'pair' },
       { label: '% celnych', leftValue: leftShots.accuracyPercent, rightValue: rightShots.accuracyPercent, leftText: leftShots.accuracyPercent == null ? '—' : `${leftShots.accuracyPercent}%`, rightText: rightShots.accuracyPercent == null ? '—' : `${rightShots.accuracyPercent}%`, scale: 'percent' },
     );
   }

@@ -1,5 +1,7 @@
 import type { PublicCanonicalShot, ShotOutcome } from '../types';
 
+export type PublicShotOutcomeFilter = 'all' | ShotOutcome;
+
 export type PublicShotSummary = {
   total: number;
   onTarget: number;
@@ -16,6 +18,10 @@ export const publicShotOutcomeLabels: Record<ShotOutcome, string> = {
 
 export function publicShotsForTeam(shots: PublicCanonicalShot[], teamId: string): PublicCanonicalShot[] {
   return shots.filter((shot) => shot.team_id === teamId);
+}
+
+export function matchesPublicShotOutcomeFilter(shot: PublicCanonicalShot, filter: PublicShotOutcomeFilter): boolean {
+  return filter === 'all' || shot.outcome === filter;
 }
 
 export function publicShotSummary(shots: PublicCanonicalShot[]): PublicShotSummary {
