@@ -3031,6 +3031,8 @@ export type PublicMatchReport = {
   };
   teams: PublicReportTeam[];
   players: PublicReportPlayer[];
+  /** Absent on reports published before the canonical Shot Review projection. */
+  shots?: PublicCanonicalShot[];
   team_shape?: TeamShapeDocument | null;
   key_moments?: CanonicalKeyMoments | null;
   merged_provenance?: {
@@ -3560,6 +3562,18 @@ export type ShotLocationSource = 'ball' | 'player' | 'manual' | 'unavailable';
 export type ShotPitchLocation = {
   x: number;
   y: number;
+};
+
+/** Static, public-safe canonical Shot Review projection. */
+export type PublicCanonicalShot = {
+  shot_id: string;
+  time_sec: number;
+  team_id: string;
+  outcome: ShotOutcome;
+  player_id?: string | null;
+  location_m?: ShotPitchLocation | null;
+  /** Display-only, backend-normalized orientation for a public Shot Map. */
+  map_location?: ShotPitchLocation | null;
 };
 
 export type CanonicalShot = {

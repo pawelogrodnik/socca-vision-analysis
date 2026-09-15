@@ -29,6 +29,7 @@ import { RedesignedReportHeatmaps } from './RedesignedReportHeatmaps';
 import { RedesignedReportPlayers } from './RedesignedReportPlayers';
 import { RedesignedReportVideoMoments } from './RedesignedReportVideoMoments';
 import { TeamShapeSection } from './TeamShapeSection';
+import { publicShotSummary, publicShotsForTeam } from '../lib/publicShotPresentation';
 
 type Props = {
   report: PublicMatchReport;
@@ -82,9 +83,9 @@ function TeamBadge({ team, fallback, color }: { team: PublicReportTeam | undefin
   return <span className='redesign-team-badge' style={{ '--team-color': color } as CSSProperties}>{displayTeamName(team, fallback)}</span>;
 }
 
-function comparisonRows(left: PublicReportTeam, right: PublicReportTeam): ComparisonRow[] {
+export function comparisonRows(left: PublicReportTeam, right: PublicReportTeam, report: PublicMatchReport): ComparisonRow[] {
   const possession = balancedPossessionPercentages(left.possession_share_percent, right.possession_share_percent);
-  return [
+  const rows: ComparisonRow[] = [
     {
       label: 'Posiadanie',
       leftValue: possession?.left,
@@ -101,6 +102,16 @@ function comparisonRows(left: PublicReportTeam, right: PublicReportTeam): Compar
     { label: 'Speed bursts', leftValue: left.sprint_count, rightValue: right.sprint_count, leftText: left.sprint_count == null ? '—' : String(left.sprint_count), rightText: right.sprint_count == null ? '—' : String(right.sprint_count), scale: 'pair' },
     { label: 'Max speed', leftValue: left.peak_speed_kmh, rightValue: right.peak_speed_kmh, leftText: formatReportSpeed(left.peak_speed_kmh), rightText: formatReportSpeed(right.peak_speed_kmh), scale: 'pair' },
   ];
+  if (Array.isArray(report.shots)) {
+    const leftShots = publicShotSummary(publicShotsForTeam(report.shots, left.team_id || left.team_label || ''));
+    const rightShots = publicShotSummary(publicShotsForTeam(report.shots, right.team_id || right.team_label || ''));
+    rows.push(
+      { label: 'Strzały', leftValue: leftShots.total, rightValue: rightShots.total, leftText: String(leftShots.total), rightText: String(rightShots.total), scale: 'pair', startsGroup: true },
+      { label: 'Strzały celne', leftValue: leftShots.onTarget, rightValue: rightShots.onTarget, leftText: String(leftShots.onTarget), rightText: String(rightShots.onTarget), scale: 'pair' },
+      { label: '% celnych', leftValue: leftShots.accuracyPercent, rightValue: rightShots.accuracyPercent, leftText: leftShots.accuracyPercent == null ? '—' : `${leftShots.accuracyPercent}%`, rightText: rightShots.accuracyPercent == null ? '—' : `${rightShots.accuracyPercent}%`, scale: 'percent' },
+    );
+  }
+  return rows;
 }
 
 function Hero({ report }: { report: PublicMatchReport }) {
@@ -201,7 +212,7 @@ function TeamComparison({ report }: { report: PublicMatchReport }) {
         <TeamBadge team={right} fallback='Drużyna B' color={TEAM_B_COLOR} />
       </div>
       <div className='redesign-comparison-rows'>
-        {comparisonRows(left, right).map((row) => {
+        {comparisonRows(left, right, report).map((row) => {
           const scaleMax = row.scale === 'percent' ? 100 : Math.max(Number(row.leftValue) || 0, Number(row.rightValue) || 0, 1);
           const leftWidth = comparisonBarWidth(row.leftValue, scaleMax);
           const rightWidth = comparisonBarWidth(row.rightValue, scaleMax);
