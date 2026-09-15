@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { PublicCanonicalShot, PublicMatchReport, PublicReportTeam } from '../types';
 import { formatReportClock } from '../lib/redesignedPublicReportPresentation';
-import { hasPublicShotMapLocation, matchesPublicShotOutcomeFilter, publicShotOutcomeLabels, publicShotSummary, publicShotsForTeam, type PublicShotOutcomeFilter } from '../lib/publicShotPresentation';
+import { hasPublicShotMapLocation, matchesPublicShotOutcomeFilter, publicShotHalfPitchPosition, publicShotOutcomeLabels, publicShotSummary, publicShotsForTeam, type PublicShotOutcomeFilter } from '../lib/publicShotPresentation';
 
 const shotMapFilters: Array<{ value: PublicShotOutcomeFilter; label: string; icon: string }> = [
   { value: 'all', label: 'Wszystkie', icon: '◉' },
@@ -23,15 +23,29 @@ function markerIcon(outcome: PublicCanonicalShot['outcome']): string {
 
 function Marker({ shot, teamName, playerName, onPlayAt, onSelect }: { shot: PublicCanonicalShot; teamName: string; playerName?: string; onPlayAt: (time: number) => void; onSelect: (shot: PublicCanonicalShot) => void }) {
   if (!hasPublicShotMapLocation(shot)) return null;
+  const position = publicShotHalfPitchPosition(shot.map_location);
+  if (!position) return null;
   const detail = [formatReportClock(shot.time_sec), publicShotOutcomeLabels[shot.outcome], teamName, playerName].filter(Boolean).join(' · ');
   return <button
     type='button'
     className={`public-shot-map-marker outcome-${shot.outcome}`}
-    style={{ left: `${shot.map_location.x * 100}%`, top: `${shot.map_location.y * 100}%` }}
+    style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%` }}
     aria-label={detail}
     title={detail}
     onClick={() => { onSelect(shot); onPlayAt(shot.time_sec); }}
   ><span aria-hidden='true'>{markerIcon(shot.outcome)}</span></button>;
+}
+
+function AttackingHalfPitch() {
+  return <svg className='public-shot-half-pitch' viewBox='0 0 100 77' aria-hidden='true' data-pitch-scope='attacking-half'>
+    <rect className='public-shot-pitch-boundary' x='1' y='1' width='98' height='75' rx='3' />
+    <line className='public-shot-goal-line' x1='1' x2='99' y1='1' y2='1' />
+    <rect className='public-shot-penalty-area' x='21' y='1' width='58' height='30' />
+    <rect className='public-shot-goal-area' x='36' y='1' width='28' height='11' />
+    <circle className='public-shot-penalty-spot' cx='50' cy='22' r='1.4' />
+    <path className='public-shot-penalty-arc' d='M 39 31 A 12 12 0 0 0 61 31' />
+    <line className='public-shot-halfway-line' x1='1' x2='99' y1='76' y2='76' />
+  </svg>;
 }
 
 export function PublicShotMaps({ report, shots, onPlayAt }: { report: PublicMatchReport; shots: PublicCanonicalShot[]; onPlayAt: (time: number) => void }) {
@@ -44,7 +58,7 @@ export function PublicShotMaps({ report, shots, onPlayAt }: { report: PublicMatc
     if (selected && !matchesPublicShotOutcomeFilter(selected, next)) setSelected(null);
   }
   return <section className='redesign-section public-shot-maps' aria-labelledby='public-shot-map-title'>
-    <div className='redesign-section-heading'><div><p className='redesign-kicker'>Strzały</p><h2 id='public-shot-map-title'>Mapa strzałów</h2><p className='redesign-note'>Każda mapa pokazuje wyłącznie strzały jednej drużyny. Kierunek boiska wynika z kanonicznej kalibracji raportu.</p></div></div>
+    <div className='redesign-section-heading'><div><p className='redesign-kicker'>Strzały</p><h2 id='public-shot-map-title'>Mapa strzałów</h2><p className='redesign-note'>Każda mapa pokazuje atakującą połowę boiska dla jednej drużyny. Kierunek boiska wynika z kanonicznej kalibracji raportu.</p></div></div>
     <div className='key-moment-operator-tabs public-shot-map-filters' role='group' aria-label='Filtr wyniku strzału'>
       {shotMapFilters.map((option) => <button key={option.value} type='button' aria-pressed={filter === option.value} onClick={() => selectFilter(option.value)}><span aria-hidden='true'>{option.icon}</span> {option.label}</button>)}
     </div>
@@ -59,7 +73,7 @@ export function PublicShotMaps({ report, shots, onPlayAt }: { report: PublicMatc
           <h3>{teamName(team)}</h3>
           <dl className='public-shot-summary'><div><dt>Strzały</dt><dd>{summary.total}</dd></div><div><dt>Celne</dt><dd>{summary.onTarget}</dd></div><div><dt>Niecelne</dt><dd>{summary.offTarget}</dd></div><div><dt>% celnych</dt><dd>{summary.accuracyPercent == null ? '—' : `${summary.accuracyPercent}%`}</dd></div></dl>
           <div className='public-shot-pitch' aria-label={`Mapa strzałów: ${teamName(team)}`}>
-            <svg viewBox='0 0 100 160' aria-hidden='true'><rect x='1' y='1' width='98' height='158' rx='3' /><line x1='1' x2='99' y1='80' y2='80' /><circle cx='50' cy='80' r='13' /><rect x='28' y='1' width='44' height='22' /><rect x='28' y='137' width='44' height='22' /></svg>
+            <AttackingHalfPitch />
             {visibleMapped.map((shot) => <Marker key={shot.shot_id} shot={shot} teamName={teamName(team)} playerName={shot.player_id ? playerNames.get(shot.player_id) : undefined} onPlayAt={onPlayAt} onSelect={setSelected} />)}
           </div>
           <p className='redesign-note'>{mapped.length} z {summary.total} strzałów na mapie</p>
