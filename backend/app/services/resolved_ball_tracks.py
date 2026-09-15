@@ -56,7 +56,7 @@ def resolve_ball_tracks_document(
          if str(anchor.get("source_match_id") or "") == source_match_id]
     )
     if not source_anchors:
-        return _resolved_copy(automatic, anchor_rows=[], applied=[], skipped=[], positions=None, interpolation_gaps=None)
+        return _resolved_copy(automatic, anchor_rows=[], applied=[], skipped=[], positions=None, interpolation_gaps=None, affected_regions=[])
 
     parameters = _record(automatic.get("parameters"))
     candidate_parameters = _record(candidates.get("parameters"))
@@ -92,7 +92,7 @@ def resolve_ball_tracks_document(
     skipped.extend(_anchor_status(proposal["row"], applied=False, reason="conflict") for proposal in conflicts)
 
     if not accepted:
-        return _resolved_copy(automatic, anchor_rows=anchor_rows, applied=[], skipped=skipped, positions=None, interpolation_gaps=None)
+        return _resolved_copy(automatic, anchor_rows=anchor_rows, applied=[], skipped=skipped, positions=None, interpolation_gaps=None, affected_regions=[])
 
     selected = _automatic_detected_rows(automatic)
     applied: list[dict[str, Any]] = []
@@ -116,13 +116,17 @@ def resolve_ball_tracks_document(
         max_interpolation_speed_mps=float(parameters.get("max_interpolation_speed_mps") or DEFAULT_MAX_INTERPOLATION_SPEED_MPS),
     )
     corrected_frames = {int(candidate["frame"]) for proposal in accepted for candidate in proposal["path"]}
-    local_start, local_end = min(corrected_frames), max(corrected_frames)
+    affected_regions = _affected_local_regions(
+        corrected_frames,
+        automatic.get("interpolation_gaps") or [],
+        rebuilt_interpolation_gaps,
+    )
     positions, interpolation_gaps = _merge_local_rebuild(
         automatic,
         rebuilt_positions,
         rebuilt_interpolation_gaps,
-        start_frame=local_start,
-        end_frame=local_end,
+        regions=affected_regions,
+        corrected_frames=corrected_frames,
     )
     for row in positions:
         if int(row.get("frame") or -1) in corrected_frames and row.get("source") == "detected":
@@ -134,6 +138,7 @@ def resolve_ball_tracks_document(
         skipped=skipped,
         positions=positions,
         interpolation_gaps=interpolation_gaps,
+        affected_regions=affected_regions,
     )
 
 
@@ -156,15 +161,42 @@ def write_resolved_ball_tracks_artifact(match_dir: Path) -> dict[str, Any] | Non
     return resolved
 
 
-def rebuild_resolved_ball_tracks_for_document(document: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """Refresh all physical sources referenced by one saved Shot Review document."""
+def operator_anchor_source_ids(document: Mapping[str, Any]) -> set[str]:
+    """Return only the physical matches whose resolved projection can change."""
+
+    return {str(anchor["source_match_id"]) for anchor in extract_operator_ball_anchors(document)}
+
+
+def rebuild_resolved_ball_tracks_for_source_ids(source_match_ids: set[str] | list[str] | tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """Refresh a bounded set of physical source projections from durable state."""
 
     result: dict[str, dict[str, Any]] = {}
-    for source_match_id in sorted({str(anchor["source_match_id"]) for anchor in extract_operator_ball_anchors(document)}):
+    for source_match_id in sorted({str(source_match_id) for source_match_id in source_match_ids if str(source_match_id)}):
         artifact = write_resolved_ball_tracks_artifact(config.MATCHES_DIR / source_match_id)
         if artifact is not None:
             result[source_match_id] = artifact
     return result
+
+
+def rebuild_resolved_ball_tracks_for_documents(
+    previous_document: Mapping[str, Any],
+    document: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Refresh the union of sources before and after one editorial mutation.
+
+    A removed anchor is as meaningful as a newly added one: rebuilding its
+    old physical source restores the derived projection to automatic evidence.
+    """
+
+    return rebuild_resolved_ball_tracks_for_source_ids(
+        operator_anchor_source_ids(previous_document) | operator_anchor_source_ids(document)
+    )
+
+
+def rebuild_resolved_ball_tracks_for_document(document: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Compatibility wrapper for callers that only have one document."""
+
+    return rebuild_resolved_ball_tracks_for_source_ids(operator_anchor_source_ids(document))
 
 
 def load_durable_operator_ball_anchors() -> list[dict[str, Any]]:
@@ -313,6 +345,7 @@ def _resolved_copy(
     skipped: list[dict[str, Any]],
     positions: list[dict[str, Any]] | None,
     interpolation_gaps: list[dict[str, Any]] | None,
+    affected_regions: list[tuple[int, int]],
 ) -> dict[str, Any]:
     resolved = copy.deepcopy(dict(automatic))
     if positions is not None:
@@ -328,12 +361,16 @@ def _resolved_copy(
         "skipped_anchor_count": len(skipped),
         "applied_corrections": applied,
         "skipped_anchors": skipped,
+        "affected_local_regions": [
+            {"start_frame": start_frame, "end_frame": end_frame}
+            for start_frame, end_frame in affected_regions
+        ],
     }
     return resolved
 
 
 def _unresolved_copy(automatic: Mapping[str, Any], *, reason: str) -> dict[str, Any]:
-    return _resolved_copy(dict(automatic), anchor_rows=[], applied=[], skipped=[{"reason": reason}], positions=None, interpolation_gaps=None)
+    return _resolved_copy(dict(automatic), anchor_rows=[], applied=[], skipped=[{"reason": reason}], positions=None, interpolation_gaps=None, affected_regions=[])
 
 
 def _anchor_status(
@@ -385,34 +422,78 @@ def _merge_local_rebuild(
     rebuilt_positions: list[dict[str, Any]],
     rebuilt_interpolation_gaps: list[dict[str, Any]],
     *,
-    start_frame: int,
-    end_frame: int,
+    regions: list[tuple[int, int]],
+    corrected_frames: set[int],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Regenerate only the bounded correction span; preserve all other rows."""
+    """Regenerate just correction-dependent local regions; preserve all else."""
 
     rebuilt_by_frame = {int(row.get("frame") or 0): row for row in rebuilt_positions}
-    positions = [
-        copy.deepcopy(rebuilt_by_frame.get(int(row.get("frame") or 0), row))
-        if start_frame <= int(row.get("frame") or 0) <= end_frame
-        else copy.deepcopy(dict(row))
-        for row in automatic.get("positions") or []
-        if isinstance(row, Mapping)
-    ]
+    positions = []
+    for row in automatic.get("positions") or []:
+        if not isinstance(row, Mapping):
+            continue
+        frame = int(row.get("frame") or 0)
+        # Stable automatic detections bound interpolation regions but retain
+        # their exact existing refinement metadata. Only a changed detection
+        # or a dependent non-detected row is replaced by rebuilt output.
+        replace = _frame_in_regions(frame, regions) and (
+            frame in corrected_frames or row.get("source") != "detected"
+        )
+        positions.append(copy.deepcopy(rebuilt_by_frame.get(frame, row)) if replace else copy.deepcopy(dict(row)))
     baseline_gaps = [
         copy.deepcopy(dict(gap))
         for gap in automatic.get("interpolation_gaps") or []
-        if isinstance(gap, Mapping) and not _gap_overlaps(gap, start_frame, end_frame)
+        if isinstance(gap, Mapping) and not _gap_overlaps_regions(gap, regions)
     ]
     local_gaps = [
         copy.deepcopy(dict(gap))
         for gap in rebuilt_interpolation_gaps
-        if _gap_overlaps(gap, start_frame, end_frame)
+        if _gap_overlaps_regions(gap, regions)
     ]
     return positions, sorted([*baseline_gaps, *local_gaps], key=lambda gap: (int(gap.get("start_frame") or 0), int(gap.get("end_frame") or 0)))
 
 
-def _gap_overlaps(gap: Mapping[str, Any], start_frame: int, end_frame: int) -> bool:
-    return int(gap.get("end_frame") or -1) >= start_frame and int(gap.get("start_frame") or -1) <= end_frame
+def _affected_local_regions(
+    corrected_frames: set[int],
+    baseline_gaps: list[Any],
+    rebuilt_gaps: list[Any],
+) -> list[tuple[int, int]]:
+    """Return the union of changed detections and their dependent gaps.
+
+    Interpolation geometry is a function of its detected endpoints.  We only
+    replace a gap when a corrected detection is one of those endpoints; this
+    preserves independent automatic refinements between distant corrections.
+    """
+
+    regions = [(frame, frame) for frame in sorted(corrected_frames)]
+    for gap in [*baseline_gaps, *rebuilt_gaps]:
+        if not isinstance(gap, Mapping):
+            continue
+        start_frame, end_frame = int(gap.get("start_frame") or -1), int(gap.get("end_frame") or -1)
+        if start_frame < 0 or end_frame < start_frame:
+            continue
+        if any(start_frame <= frame <= end_frame for frame in corrected_frames):
+            regions.append((start_frame, end_frame))
+    return _merge_regions(regions)
+
+
+def _merge_regions(regions: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start_frame, end_frame in sorted(regions):
+        if not merged or start_frame > merged[-1][1] + 1:
+            merged.append((start_frame, end_frame))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end_frame))
+    return merged
+
+
+def _frame_in_regions(frame: int, regions: list[tuple[int, int]]) -> bool:
+    return any(start_frame <= frame <= end_frame for start_frame, end_frame in regions)
+
+
+def _gap_overlaps_regions(gap: Mapping[str, Any], regions: list[tuple[int, int]]) -> bool:
+    start_frame, end_frame = int(gap.get("start_frame") or -1), int(gap.get("end_frame") or -1)
+    return any(end_frame >= start and start_frame <= end for start, end in regions)
 
 
 def _deduplicate_anchors(anchors: list[Mapping[str, Any]]) -> list[dict[str, Any]]:

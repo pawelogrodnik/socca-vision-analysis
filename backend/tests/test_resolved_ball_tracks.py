@@ -8,8 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import config
+from app.services.ball_tracking import build_ball_positions
+from app.services import resolved_ball_tracks as resolved_tracks
 from app.services.resolved_ball_tracks import (
     RESOLVED_BALL_TRACKS_FILENAME,
+    rebuild_resolved_ball_tracks_for_documents,
     resolve_ball_tracks_document,
     write_resolved_ball_tracks_artifact,
 )
@@ -59,6 +62,19 @@ def _automatic(positions: list[dict]) -> dict:
         "positions": positions,
         "interpolation_gaps": [],
     }
+
+
+def _automatic_with_interpolation(selected: dict[int, dict], processed_frames: list[int]) -> dict:
+    positions, gaps = build_ball_positions(
+        selected,
+        processed_frames=processed_frames,
+        fps=10.0,
+        max_interpolation_gap_sec=.5,
+        max_interpolation_speed_mps=22.0,
+    )
+    automatic = _automatic(positions)
+    automatic["interpolation_gaps"] = gaps
+    return automatic
 
 
 def _candidates(frames: list[dict]) -> dict:
@@ -250,3 +266,175 @@ class ResolvedBallTracksTests(unittest.TestCase):
             self.assertEqual(sidecar.read_bytes(), sidecar_before)
             resolved = json.loads((match_dir / RESOLVED_BALL_TRACKS_FILENAME).read_text(encoding="utf-8"))
             self.assertEqual(resolved["positions"][0]["candidate_id"], "actual")
+
+    def test_right_dependent_interpolation_is_regenerated_without_touching_an_unrelated_gap(self) -> None:
+        start, wrong, corrected, end = (
+            _candidate("start", 100, 100, 100),
+            _candidate("wrong", 101, 700, 100),
+            _candidate("corrected", 101, 110, 100),
+            _candidate("end", 104, 140, 100),
+        )
+        unrelated_start, unrelated_end = _candidate("u-start", 200, 300, 300), _candidate("u-end", 204, 340, 300)
+        processed = [*range(100, 105), *range(200, 205)]
+        automatic = _automatic_with_interpolation({100: start, 101: wrong, 104: end, 200: unrelated_start, 204: unrelated_end}, processed)
+        rebuilt_positions, rebuilt_gaps = build_ball_positions(
+            {100: start, 101: corrected, 104: end, 200: unrelated_start, 204: unrelated_end},
+            processed_frames=processed,
+            fps=10.0,
+            max_interpolation_gap_sec=.5,
+            max_interpolation_speed_mps=22.0,
+        )
+
+        regions = resolved_tracks._affected_local_regions({101}, automatic["interpolation_gaps"], rebuilt_gaps)
+        positions, gaps = resolved_tracks._merge_local_rebuild(automatic, rebuilt_positions, rebuilt_gaps, regions=regions, corrected_frames={101})
+        by_frame = {row["frame"]: row for row in positions}
+        baseline_by_frame = {row["frame"]: row for row in automatic["positions"]}
+
+        self.assertEqual(regions, [(101, 104)])
+        self.assertNotEqual(by_frame[102]["position_m"], baseline_by_frame[102]["position_m"])
+        self.assertEqual(by_frame[102]["interpolated_from"], [101, 104])
+        self.assertEqual(by_frame[104], baseline_by_frame[104])
+        self.assertEqual(by_frame[200], baseline_by_frame[200])
+        self.assertEqual(by_frame[204], baseline_by_frame[204])
+        self.assertEqual([gap for gap in gaps if gap["start_frame"] == 200], [gap for gap in automatic["interpolation_gaps"] if gap["start_frame"] == 200])
+
+    def test_left_dependent_interpolation_is_regenerated_and_respects_existing_limits(self) -> None:
+        start, wrong_end, corrected_end = (
+            _candidate("start", 100, 100, 100),
+            _candidate("wrong-end", 104, 140, 100),
+            _candidate("corrected-end", 104, 110, 100),
+        )
+        processed = list(range(100, 105))
+        automatic = _automatic_with_interpolation({100: start, 104: wrong_end}, processed)
+        rebuilt_positions, rebuilt_gaps = build_ball_positions(
+            {100: start, 104: corrected_end},
+            processed_frames=processed,
+            fps=10.0,
+            max_interpolation_gap_sec=.5,
+            max_interpolation_speed_mps=22.0,
+        )
+
+        regions = resolved_tracks._affected_local_regions({104}, automatic["interpolation_gaps"], rebuilt_gaps)
+        positions, gaps = resolved_tracks._merge_local_rebuild(automatic, rebuilt_positions, rebuilt_gaps, regions=regions, corrected_frames={104})
+
+        self.assertEqual(regions, [(100, 104)])
+        self.assertEqual({row["frame"]: row for row in positions}[103]["interpolated_from"], [100, 104])
+        self.assertEqual({row["frame"]: row for row in positions}[100], {row["frame"]: row for row in automatic["positions"]}[100])
+        self.assertEqual(gaps, rebuilt_gaps)
+        self.assertTrue(all(gap["duration_sec"] <= .5 for gap in gaps))
+        self.assertTrue(all(gap["required_speed_mps"] <= 22.0 for gap in gaps))
+
+    def test_two_distant_corrections_replace_two_local_regions_not_the_between_rows(self) -> None:
+        first_start, first_end, second_start, second_end = (
+            _candidate("first-start", 100, 100, 100), _candidate("first-end", 104, 140, 100),
+            _candidate("second-start", 300, 100, 300), _candidate("second-end", 304, 140, 300),
+        )
+        middle_start, middle_end = _candidate("middle-start", 200, 400, 400), _candidate("middle-end", 204, 440, 400)
+        processed = [*range(100, 105), *range(200, 205), *range(300, 305)]
+        automatic = _automatic_with_interpolation(
+            {100: first_start, 104: first_end, 200: middle_start, 204: middle_end, 300: second_start, 304: second_end}, processed
+        )
+        changed_first, changed_second = _candidate("changed-first", 100, 110, 100), _candidate("changed-second", 304, 130, 300)
+        rebuilt_positions, rebuilt_gaps = build_ball_positions(
+            {100: changed_first, 104: first_end, 200: middle_start, 204: middle_end, 300: second_start, 304: changed_second},
+            processed_frames=processed,
+            fps=10.0,
+            max_interpolation_gap_sec=.5,
+            max_interpolation_speed_mps=22.0,
+        )
+
+        regions = resolved_tracks._affected_local_regions({100, 304}, automatic["interpolation_gaps"], rebuilt_gaps)
+        positions, _ = resolved_tracks._merge_local_rebuild(automatic, rebuilt_positions, rebuilt_gaps, regions=regions, corrected_frames={100, 304})
+        by_frame = {row["frame"]: row for row in positions}
+        baseline_by_frame = {row["frame"]: row for row in automatic["positions"]}
+
+        self.assertEqual(regions, [(100, 104), (300, 304)])
+        self.assertEqual(by_frame[204], baseline_by_frame[204])
+        self.assertEqual(by_frame[200], baseline_by_frame[200])
+        self.assertEqual(by_frame[104]["candidate_id"], "first-end")
+        self.assertEqual(by_frame[300]["candidate_id"], "second-start")
+
+    def test_removing_last_frame_correction_reverts_the_resolved_artifact_immediately(self) -> None:
+        foreign, foreign_next = _candidate("foreign", 100, 700, 700), _candidate("foreign-next", 101, 700, 700)
+        actual, actual_next = _candidate("actual", 100, 100, 100), _candidate("actual-next", 101, 101, 100)
+        automatic = _automatic([_position(foreign, 100), _position(foreign_next, 101)])
+        candidates = _candidates([
+            {"frame": 100, "time_sec": 10, "candidates": [foreign, actual]},
+            {"frame": 101, "time_sec": 10.1, "candidates": [foreign_next, actual_next]},
+        ])
+        old = {"published_id": "published-one", "canonical_shots": [{"shot_id": "shot", "location_correction_provenance": _anchor()}]}
+        new = {"published_id": "published-one", "canonical_shots": []}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            match_dir, editorial = root / "matches" / "source-one", root / "editorial" / "shots"
+            match_dir.mkdir(parents=True)
+            editorial.mkdir(parents=True)
+            _write = lambda path, value: path.write_text(json.dumps(value), encoding="utf-8")
+            _write(match_dir / "match.json", {"video": {"fps": 10.0}})
+            _write(match_dir / "ball_tracks.json", automatic)
+            _write(match_dir / "ball_candidates.json", candidates)
+            _write(editorial / "published-one.json", old)
+            with patch.object(config, "STORAGE_DIR", root), patch.object(config, "MATCHES_DIR", root / "matches"):
+                write_resolved_ball_tracks_artifact(match_dir)
+                self.assertEqual(json.loads((match_dir / RESOLVED_BALL_TRACKS_FILENAME).read_text(encoding="utf-8"))["positions"][0]["candidate_id"], "actual")
+                _write(editorial / "published-one.json", new)
+                rebuilt = rebuild_resolved_ball_tracks_for_documents(old, new)
+
+            self.assertEqual(set(rebuilt), {"source-one"})
+            self.assertEqual(json.loads((match_dir / RESOLVED_BALL_TRACKS_FILENAME).read_text(encoding="utf-8"))["positions"][0]["candidate_id"], "foreign")
+
+    def test_deleting_canonical_shot_rebuilds_its_previous_anchor_source(self) -> None:
+        previous = {"published_id": "published-one", "canonical_shots": [{"shot_id": "shot", "location_correction_provenance": _anchor()}]}
+        deleted = {"published_id": "published-one", "canonical_shots": []}
+        with patch("app.services.resolved_ball_tracks.write_resolved_ball_tracks_artifact", return_value={"ok": True}) as rebuild:
+            rebuild_resolved_ball_tracks_for_documents(previous, deleted)
+
+        self.assertEqual([call.args[0].name for call in rebuild.call_args_list], ["source-one"])
+
+    def test_replacing_frame_correction_with_manual_pitch_rebuilds_its_previous_anchor_source(self) -> None:
+        previous = {"published_id": "published-one", "canonical_shots": [{"shot_id": "shot", "location_correction_provenance": _anchor()}]}
+        manual_pitch = {"published_id": "published-one", "canonical_shots": [{"shot_id": "shot", "location_m": {"x": 4.0, "y": 5.0}, "location_source": "manual"}]}
+        with patch("app.services.resolved_ball_tracks.write_resolved_ball_tracks_artifact", return_value={"ok": True}) as rebuild:
+            rebuild_resolved_ball_tracks_for_documents(previous, manual_pitch)
+
+        self.assertEqual([call.args[0].name for call in rebuild.call_args_list], ["source-one"])
+
+    def test_anchor_move_rebuilds_both_sources_and_no_unrelated_source(self) -> None:
+        foreign, foreign_next = _candidate("foreign", 100, 700, 700), _candidate("foreign-next", 101, 700, 700)
+        actual, actual_next = _candidate("actual", 100, 100, 100), _candidate("actual-next", 101, 101, 100)
+        automatic = _automatic([_position(foreign, 100), _position(foreign_next, 101)])
+        candidates = _candidates([
+            {"frame": 100, "time_sec": 10, "candidates": [foreign, actual]},
+            {"frame": 101, "time_sec": 10.1, "candidates": [foreign_next, actual_next]},
+        ])
+        old = {
+            "published_id": "published-one",
+            "canonical_shots": [{"shot_id": "old", "location_correction_provenance": _anchor(shot_id="old")}],
+        }
+        moved_anchor = {**_anchor(shot_id="new"), "source_match_id": "source-two"}
+        new = {"published_id": "published-one", "canonical_shots": [{"shot_id": "new", "location_correction_provenance": moved_anchor}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root, editorial = Path(temporary), Path(temporary) / "editorial" / "shots"
+            editorial.mkdir(parents=True)
+            for source_match_id in ("source-one", "source-two", "unrelated"):
+                match_dir = root / "matches" / source_match_id
+                match_dir.mkdir(parents=True)
+                for filename, value in {
+                    "match.json": {"video": {"fps": 10.0}},
+                    "ball_tracks.json": automatic,
+                    "ball_candidates.json": candidates,
+                }.items():
+                    (match_dir / filename).write_text(json.dumps(value), encoding="utf-8")
+            sidecar = editorial / "published-one.json"
+            sidecar.write_text(json.dumps(old), encoding="utf-8")
+            with patch.object(config, "STORAGE_DIR", root), patch.object(config, "MATCHES_DIR", root / "matches"):
+                write_resolved_ball_tracks_artifact(root / "matches" / "source-one")
+                sidecar.write_text(json.dumps(new), encoding="utf-8")
+                result = rebuild_resolved_ball_tracks_for_documents(old, new)
+
+            source_one = json.loads((root / "matches" / "source-one" / RESOLVED_BALL_TRACKS_FILENAME).read_text(encoding="utf-8"))
+            source_two = json.loads((root / "matches" / "source-two" / RESOLVED_BALL_TRACKS_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(list(result), ["source-one", "source-two"])
+            self.assertEqual(source_one["positions"][0]["candidate_id"], "foreign")
+            self.assertEqual(source_two["positions"][0]["candidate_id"], "actual")
+            self.assertFalse((root / "matches" / "unrelated" / RESOLVED_BALL_TRACKS_FILENAME).exists())

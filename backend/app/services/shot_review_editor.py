@@ -695,7 +695,12 @@ def _persist(published_id: str, document: Mapping[str, Any]) -> None:
     _write_json_atomic(_authority_path(published_id), {"schema_version": SHOT_REVIEW_SCHEMA_VERSION, "published_id": published_id, "operator_owned": True})
 
 
-def _persist_and_refresh_public_shots(published_id: str, document: Mapping[str, Any]) -> None:
+def _persist_and_refresh_public_shots(
+    published_id: str,
+    document: Mapping[str, Any],
+    *,
+    previous_document: Mapping[str, Any],
+) -> None:
     """Persist canonical operator truth, then atomically refresh its static read model.
 
     Canonical Shot Review remains primary: a publication refresh failure cannot
@@ -704,23 +709,38 @@ def _persist_and_refresh_public_shots(published_id: str, document: Mapping[str, 
     """
 
     _persist(published_id, document)
+    failures: list[str] = []
     try:
         shots = public_canonical_shots_projection(published_id)
         if shots is None:
             raise ValueError("Canonical Shot Review was saved without a public projection")
         refresh_published_public_report_shots(published_id, shots=shots)
+    except Exception:
+        failures.append("public_shot_projection")
+    try:
         # Frame corrections are durable editorial authority.  Rebuild the
-        # separate physical resolved-ball read model now; raw ball tracking
-        # and the public Shot Review projection remain independent.
-        from app.services.resolved_ball_tracks import rebuild_resolved_ball_tracks_for_document
+        # separate physical resolved-ball read model for both the old and new
+        # source sets: removal of the last anchor must restore its old source
+        # immediately to the automatic baseline. Raw tracking remains intact.
+        from app.services.resolved_ball_tracks import rebuild_resolved_ball_tracks_for_documents
 
-        rebuild_resolved_ball_tracks_for_document(document)
-    except Exception as error:
+        rebuild_resolved_ball_tracks_for_documents(previous_document, document)
+    except Exception:
+        failures.append("resolved_ball_tracks")
+    if failures:
+        failed = ", ".join(failures)
+        code = (
+            "shot_review_public_projection_refresh_failed"
+            if failures == ["public_shot_projection"]
+            else "shot_review_resolved_ball_tracks_refresh_failed"
+            if failures == ["resolved_ball_tracks"]
+            else "shot_review_derived_projection_refresh_failed"
+        )
         raise ShotReviewError(
-            "shot_review_public_projection_refresh_failed",
-            "Zapisano kanoniczny Shot Review, ale nie udało się odświeżyć publicznego raportu. Odśwież stronę i ponów publikację projekcji.",
+            code,
+            f"Zapisano kanoniczny Shot Review, ale nie udało się odświeżyć pochodnych projekcji: {failed}. Odśwież stronę i ponów publikację projekcji.",
             500,
-        ) from error
+        )
 
 
 def _current_suggestion(published_id: str, current: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -765,7 +785,7 @@ def accept_suggestion(published_id: str, payload: Mapping[str, Any]) -> dict[str
     shot["suggested_candidate_generation_digest"] = str(payload.get("candidate_generation_digest") or "")
     review = {"candidate_id": shot["suggested_candidate_id"], "candidate_generation_digest": shot["suggested_candidate_generation_digest"], "review_status": "accepted", "canonical_shot_id": shot["shot_id"], "reviewed_at": _now()}
     document = _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=_replace_review(current.get("suggested_candidate_reviews"), review))
-    _persist_and_refresh_public_shots(published_id, document)
+    _persist_and_refresh_public_shots(published_id, document, previous_document=current)
     return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
 
 
@@ -815,7 +835,7 @@ def accept_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
             "cluster_id": shot["suggested_cluster_id"],
             "reviewed_at": reviewed_at,
         })
-    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews), previous_document=current)
     return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
 
 
@@ -847,7 +867,7 @@ def create_manual_shot(published_id: str, payload: Mapping[str, Any]) -> dict[st
     match, current = get_published_match(published_id), load_shot_review_document(published_id)
     _ensure_revision(current, payload)
     shot = _validate_shot(published_id, _record(match.get("public_report")), _record(payload.get("shot")), origin="manual")
-    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot]))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot]), previous_document=current)
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
 
 
@@ -882,7 +902,7 @@ def edit_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, A
         manual_location_override=override,
     )
     shots = [shot if str(row.get("shot_id") or "") == shot_id else row for row in current["canonical_shots"]]
-    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots), previous_document=current)
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
 
 
@@ -913,5 +933,5 @@ def delete_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str,
                 "cluster_id": linked.get("cluster_id"),
                 "reviewed_at": reviewed_at,
             })
-    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots, reviews=reviews), previous_document=current)
     return editor_state(published_id)
