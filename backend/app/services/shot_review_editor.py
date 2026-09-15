@@ -709,6 +709,12 @@ def _persist_and_refresh_public_shots(published_id: str, document: Mapping[str, 
         if shots is None:
             raise ValueError("Canonical Shot Review was saved without a public projection")
         refresh_published_public_report_shots(published_id, shots=shots)
+        # Frame corrections are durable editorial authority.  Rebuild the
+        # separate physical resolved-ball read model now; raw ball tracking
+        # and the public Shot Review projection remain independent.
+        from app.services.resolved_ball_tracks import rebuild_resolved_ball_tracks_for_document
+
+        rebuild_resolved_ball_tracks_for_document(document)
     except Exception as error:
         raise ShotReviewError(
             "shot_review_public_projection_refresh_failed",

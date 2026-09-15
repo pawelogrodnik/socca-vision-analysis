@@ -345,6 +345,9 @@ def _load_or_rebuild_ball_tracking(
     tracks_path.write_text(json.dumps(tracks_doc, indent=2), encoding="utf-8")
     (output_dir / "ball_tracking_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (output_dir / "ball_quality_report.json").write_text(json.dumps(quality_report, indent=2), encoding="utf-8")
+    from app.services.resolved_ball_tracks import write_resolved_ball_tracks_artifact
+
+    write_resolved_ball_tracks_artifact(output_dir)
 
     artifacts = {
         "ball_tracks": "ball_tracks.json",

@@ -449,6 +449,9 @@ def analyze_match_chunked_yolo(
         (match_dir / "ball_tracks.json").write_text(json.dumps(ball_tracks_doc, indent=2), encoding="utf-8")
         (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
         (match_dir / "ball_quality_report.json").write_text(json.dumps(ball_quality_report, indent=2), encoding="utf-8")
+        from app.services.resolved_ball_tracks import write_resolved_ball_tracks_artifact
+
+        write_resolved_ball_tracks_artifact(match_dir)
         ball_artifacts = {
             "ball_candidates": "ball_candidates.json",
             "ball_tracks": "ball_tracks.json",
