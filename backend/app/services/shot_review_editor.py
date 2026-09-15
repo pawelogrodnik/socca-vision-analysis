@@ -17,7 +17,11 @@ from typing import Any, Mapping
 
 from app import config
 from app.services.artifact_lineage import canonical_json_sha256
-from app.services.json_publish_store import MERGED_SOURCE_KIND, get_published_match
+from app.services.json_publish_store import (
+    MERGED_SOURCE_KIND,
+    get_published_match,
+    refresh_published_public_report_shots,
+)
 from app.services.match_groups import get_match_group
 from app.services.match_phase_config import direction_for_team_at_time
 from app.services.merged_public_match import group_id_for_merged_published_id
@@ -691,6 +695,28 @@ def _persist(published_id: str, document: Mapping[str, Any]) -> None:
     _write_json_atomic(_authority_path(published_id), {"schema_version": SHOT_REVIEW_SCHEMA_VERSION, "published_id": published_id, "operator_owned": True})
 
 
+def _persist_and_refresh_public_shots(published_id: str, document: Mapping[str, Any]) -> None:
+    """Persist canonical operator truth, then atomically refresh its static read model.
+
+    Canonical Shot Review remains primary: a publication refresh failure cannot
+    roll back a completed operator decision, but it must be visible to the
+    caller rather than silently leaving the static report stale.
+    """
+
+    _persist(published_id, document)
+    try:
+        shots = public_canonical_shots_projection(published_id)
+        if shots is None:
+            raise ValueError("Canonical Shot Review was saved without a public projection")
+        refresh_published_public_report_shots(published_id, shots=shots)
+    except Exception as error:
+        raise ShotReviewError(
+            "shot_review_public_projection_refresh_failed",
+            "Zapisano kanoniczny Shot Review, ale nie udało się odświeżyć publicznego raportu. Odśwież stronę i ponów publikację projekcji.",
+            500,
+        ) from error
+
+
 def _current_suggestion(published_id: str, current: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
     state = editor_state(published_id)
     suggestions = _record(state.get("suggestions"))
@@ -733,7 +759,7 @@ def accept_suggestion(published_id: str, payload: Mapping[str, Any]) -> dict[str
     shot["suggested_candidate_generation_digest"] = str(payload.get("candidate_generation_digest") or "")
     review = {"candidate_id": shot["suggested_candidate_id"], "candidate_generation_digest": shot["suggested_candidate_generation_digest"], "review_status": "accepted", "canonical_shot_id": shot["shot_id"], "reviewed_at": _now()}
     document = _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=_replace_review(current.get("suggested_candidate_reviews"), review))
-    _persist(published_id, document)
+    _persist_and_refresh_public_shots(published_id, document)
     return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
 
 
@@ -783,7 +809,7 @@ def accept_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
             "cluster_id": shot["suggested_cluster_id"],
             "reviewed_at": reviewed_at,
         })
-    _persist(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews))
     return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
 
 
@@ -815,7 +841,7 @@ def create_manual_shot(published_id: str, payload: Mapping[str, Any]) -> dict[st
     match, current = get_published_match(published_id), load_shot_review_document(published_id)
     _ensure_revision(current, payload)
     shot = _validate_shot(published_id, _record(match.get("public_report")), _record(payload.get("shot")), origin="manual")
-    _persist(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot]))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot]))
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
 
 
@@ -850,7 +876,7 @@ def edit_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, A
         manual_location_override=override,
     )
     shots = [shot if str(row.get("shot_id") or "") == shot_id else row for row in current["canonical_shots"]]
-    _persist(published_id, _next_document(current, published_id, shots=shots))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots))
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
 
 
@@ -881,5 +907,5 @@ def delete_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str,
                 "cluster_id": linked.get("cluster_id"),
                 "reviewed_at": reviewed_at,
             })
-    _persist(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
     return editor_state(published_id)

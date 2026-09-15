@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.main import app
+from app.services.artifact_lineage import canonical_json_sha256
 from app.services import shot_review_editor as editor
 from app.services import shot_frame_location as frame_location
 from app.services.shot_candidates import POLICY_VERSION, V2_POLICY_VERSION
@@ -42,6 +43,9 @@ class ShotReviewEditorTests(unittest.TestCase):
         ]
         for value in self.patches:
             value.start()
+        self.public_projection_refresh = patch("app.services.shot_review_editor.refresh_published_public_report_shots")
+        self.public_projection_refresh_mock = self.public_projection_refresh.start()
+        self.patches.append(self.public_projection_refresh)
 
     def tearDown(self) -> None:
         for value in reversed(self.patches):
@@ -62,6 +66,40 @@ class ShotReviewEditorTests(unittest.TestCase):
 
     def _write_candidates(self, rows: list[dict]) -> None:
         _write(self.matches / "source-one" / "shot_candidates.json", {"policy_version": POLICY_VERSION, "candidates": rows})
+
+    def _install_public_report(self, *, source_kind: str = "physical") -> tuple[Path, Path, dict]:
+        published_root = self.root / "published" / "matches"
+        public_root = self.root / "client-public" / "matches"
+        target = published_root / "published-one"
+        mirror = public_root / "published-one"
+        report = {
+            "id": "published-one",
+            "source_match_id": "source-one",
+            "match": {"duration_sec": 100.0},
+            "teams": [{"team_id": "team-a"}, {"team_id": "team-b"}],
+            "players": [{"player_id": "p-a-1", "team_id": "team-a"}],
+            "key_moments": [{"moment_id": "unchanged"}],
+            "shots": [{"shot_id": "legacy-shot"}],
+            "unrelated_public_field": {"must": "stay"},
+        }
+        _write(target / "summary.json", {"id": "published-one", "source_kind": source_kind})
+        _write(target / "public_report.json", report)
+        _write(mirror / "public_report.json", report)
+        if source_kind == "physical":
+            _write(target / "package.json", {"match": {"id": "one"}})
+            aggregate = {"source": {"public_report_semantic_digest": canonical_json_sha256(report)}}
+            aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
+            _write(target / "aggregate_inputs.json", aggregate)
+        else:
+            _write(target / "provenance.json", {"report_digest": canonical_json_sha256(report), "unchanged": True})
+        return target, mirror, report
+
+    def _enable_real_public_projection_refresh(self):
+        self.public_projection_refresh.stop()
+        return [
+            patch("app.services.json_publish_store.PUBLISHED_MATCHES_DIR", self.root / "published" / "matches"),
+            patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", self.root / "client-public" / "matches"),
+        ]
 
     def test_accept_creates_canonical_shot_hides_suggestion_and_changes_revision(self) -> None:
         initial = self._initial()
@@ -94,6 +132,102 @@ class ShotReviewEditorTests(unittest.TestCase):
         self.assertEqual({row["outcome"] for row in rows or []}, {"goal", "on_target", "off_target", "blocked"})
         self.assertIsNone((rows or [])[1]["location_m"])
         self.assertEqual((rows or [])[3]["location_m"], {"x": 2.0, "y": 3.0})
+
+    def test_manual_create_frame_location_edit_and_delete_refresh_the_static_report(self) -> None:
+        target, mirror, original_report = self._install_public_report()
+        _write(self.matches / "source-one" / "pitch_config.json", {
+            "image_points": [[0, 0], [100, 0], [100, 200], [0, 200]],
+            "width_m": 30,
+            "length_m": 40,
+        })
+        publication_patch, mirror_patch = self._enable_real_public_projection_refresh()
+        with publication_patch, mirror_patch, patch("app.services.shot_frame_location.get_published_match", return_value=_match()), patch("app.services.json_publish_store.build_aggregate_inputs") as rebuild:
+            created = editor.create_manual_shot("published-one", {
+                "expected_revision": self._initial()["revision"],
+                "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "blocked"},
+            })
+            created_report = json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(created_report["shots"][0]["location_m"], None)
+            self.assertEqual(created_report["key_moments"], original_report["key_moments"])
+            self.assertEqual(created_report["unrelated_public_field"], original_report["unrelated_public_field"])
+            self.assertEqual(created["revision"], editor.load_shot_review_document("published-one")["revision"])
+
+            edited = editor.edit_canonical_shot("published-one", created["saved_shot"]["shot_id"], {
+                "expected_revision": created["revision"],
+                "shot": {
+                    "time_sec": 10,
+                    "team_id": "team-a",
+                    "outcome": "on_target",
+                    "frame_location_override": {
+                        "logical_frame_time_sec": 10,
+                        "x_px": 50,
+                        "y_px": 100,
+                        "frame_width": 100,
+                        "frame_height": 200,
+                    },
+                },
+            })
+            projected = json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))["shots"]
+            self.assertEqual((projected[0]["outcome"], projected[0]["location_m"]), ("on_target", {"x": 15.0, "y": 20.0}))
+            self.assertNotIn("location_correction_provenance", projected[0])
+            self.assertEqual(json.loads((target / "public_report.json").read_text(encoding="utf-8")), json.loads((mirror / "public_report.json").read_text(encoding="utf-8")))
+
+            deleted = editor.delete_canonical_shot("published-one", edited["saved_shot"]["shot_id"], {"expected_revision": edited["revision"]})
+            self.assertEqual(json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))["shots"], [])
+            self.assertEqual(deleted["revision"], editor.load_shot_review_document("published-one")["revision"])
+            rebuild.assert_not_called()
+
+    def test_suggestion_acceptance_refreshes_the_static_report(self) -> None:
+        _, mirror, _ = self._install_public_report()
+        publication_patch, mirror_patch = self._enable_real_public_projection_refresh()
+        with publication_patch, mirror_patch:
+            accepted = self._accept()
+            accepted_shots = json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))["shots"]
+            self.assertEqual(accepted_shots[0]["shot_id"], accepted["accepted_shot"]["shot_id"])
+
+    def test_cluster_acceptance_refreshes_the_static_report(self) -> None:
+        self._write_candidates([
+            {"candidate_id": "candidate-1", "candidate_timestamp_sec": 10.0, "confidence": .4},
+            {"candidate_id": "candidate-2", "candidate_timestamp_sec": 11.0, "confidence": .8},
+        ])
+        _, mirror, _ = self._install_public_report()
+        publication_patch, mirror_patch = self._enable_real_public_projection_refresh()
+        with publication_patch, mirror_patch:
+            state = self._initial()
+            cluster = state["unreviewed_suggestion_clusters"][0]
+            accepted = editor.accept_cluster("published-one", {
+                "expected_revision": state["revision"],
+                "candidate_generation_digest": state["candidate_generation_digest"],
+                "cluster_id": cluster["cluster_id"],
+                "shot": {"team_id": "team-a", "outcome": "goal"},
+            })
+        shots = json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))["shots"]
+        self.assertEqual(shots[0]["shot_id"], accepted["accepted_shot"]["shot_id"])
+
+    def test_merged_publication_uses_its_own_report_authority(self) -> None:
+        target, mirror, _ = self._install_public_report(source_kind="merged")
+        publication_patch, mirror_patch = self._enable_real_public_projection_refresh()
+        merged_match = _match(source_kind="merged")
+        with publication_patch, mirror_patch, patch("app.services.shot_review_editor.get_published_match", return_value=merged_match):
+            created = editor.create_manual_shot("published-one", {
+                "expected_revision": self._initial()["revision"],
+                "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"},
+            })
+        self.assertFalse((target / "package.json").exists())
+        report = json.loads((mirror / "public_report.json").read_text(encoding="utf-8"))
+        provenance = json.loads((target / "provenance.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["shots"][0]["shot_id"], created["saved_shot"]["shot_id"])
+        self.assertEqual(provenance["report_digest"], canonical_json_sha256(report))
+
+    def test_public_projection_failure_is_loud_after_canonical_mutation(self) -> None:
+        self.public_projection_refresh_mock.side_effect = OSError("static mirror unavailable")
+        with self.assertRaises(editor.ShotReviewError) as failure:
+            editor.create_manual_shot("published-one", {
+                "expected_revision": self._initial()["revision"],
+                "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"},
+            })
+        self.assertEqual(failure.exception.code, "shot_review_public_projection_refresh_failed")
+        self.assertEqual(len(editor.load_shot_review_document("published-one")["canonical_shots"]), 1)
 
     def test_public_projection_preserves_legacy_absence_and_fails_closed_for_recovery(self) -> None:
         self.assertIsNone(editor.public_canonical_shots_projection("published-one"))

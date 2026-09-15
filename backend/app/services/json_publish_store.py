@@ -522,6 +522,90 @@ def _assert_team_shape_only_aggregate_change(before: dict[str, Any], after: dict
         raise ValueError("Team Shape-only refresh would change unrelated aggregate content")
 
 
+def _rebind_public_report_semantic_digest(
+    before: dict[str, Any],
+    public_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Reuse the established digest-only aggregate refresh for one report patch."""
+
+    return _team_shape_only_aggregate_inputs(before, public_report)
+
+
+def _assert_public_report_digest_only_aggregate_change(before: dict[str, Any], after: dict[str, Any]) -> None:
+    """Check that a generic report patch only changes its digest bindings."""
+
+    _assert_team_shape_only_aggregate_change(before, after)
+
+
+def refresh_published_public_report_shots(
+    published_id: str,
+    *,
+    shots: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Atomically replace only the public Shot Review projection.
+
+    This is deliberately narrower than report generation: it does not read
+    source analysis artifacts or rebuild any derived football analytics.  It
+    only carries an already-public-safe ``shots`` projection into the private
+    publication and the static client mirror, while rebinding the existing
+    report digest metadata required by physical and merged publications.
+    """
+
+    init_publish_store()
+    if not isinstance(shots, list) or not all(isinstance(row, dict) for row in shots):
+        raise ValueError("Public Shot Review projection must be a list of objects")
+
+    target_match_dir = _published_match_dir(published_id)
+    target_public_dir = public_match_report.CLIENT_PUBLIC_MATCHES_DIR / published_id
+    if not target_match_dir.is_dir() or not target_public_dir.is_dir():
+        raise KeyError(published_id)
+
+    summary = _load_json_object(target_match_dir / "summary.json")
+    source_kind = str(summary.get("source_kind") or PHYSICAL_SOURCE_KIND)
+    existing_report = _load_json_object(target_match_dir / "public_report.json")
+    mirror_report = _load_json_object(target_public_dir / "public_report.json")
+    if canonical_json_sha256(existing_report) != canonical_json_sha256(mirror_report):
+        raise ValueError("Published static mirror does not match the canonical report")
+    if str(existing_report.get("id") or "") != published_id:
+        raise ValueError("Published public report identity does not match its publication id")
+
+    report = json.loads(json.dumps(existing_report))
+    report["shots"] = json.loads(json.dumps(shots))
+    staged_match_dir = _staging_directory(PUBLISHED_MATCHES_DIR.parent, name=published_id)
+    staged_public_dir = _staging_directory(public_match_report.CLIENT_PUBLIC_MATCHES_DIR.parent, name=published_id)
+    try:
+        shutil.copytree(target_match_dir, staged_match_dir, dirs_exist_ok=True)
+        shutil.copytree(target_public_dir, staged_public_dir, dirs_exist_ok=True)
+        _atomic_write_json(staged_match_dir / "public_report.json", report)
+        _atomic_write_json(staged_public_dir / "public_report.json", report)
+        if source_kind == PHYSICAL_SOURCE_KIND:
+            package = _load_json_object(target_match_dir / "package.json")
+            if _published_id_from_package(package) != published_id:
+                raise ValueError("Published package source identity does not match its publication id")
+            aggregate_before = _load_json_object(target_match_dir / "aggregate_inputs.json")
+            aggregate_after = _rebind_public_report_semantic_digest(aggregate_before, report)
+            _assert_public_report_digest_only_aggregate_change(aggregate_before, aggregate_after)
+            _atomic_write_json(staged_match_dir / "aggregate_inputs.json", aggregate_after)
+        elif source_kind == MERGED_SOURCE_KIND:
+            provenance = _load_json_object(target_match_dir / "provenance.json")
+            provenance["report_digest"] = canonical_json_sha256(report)
+            _atomic_write_json(staged_match_dir / "provenance.json", provenance)
+        else:
+            raise ValueError("Published match has an unsupported source kind")
+        _commit_publication_generation(
+            staged_match_dir=staged_match_dir,
+            target_match_dir=target_match_dir,
+            staged_public_dir=staged_public_dir,
+            target_public_dir=target_public_dir,
+        )
+    finally:
+        _remove_directory(staged_match_dir)
+        _remove_directory(staged_public_dir)
+        _remove_empty_directory(staged_match_dir.parent)
+        _remove_empty_directory(staged_public_dir.parent)
+    return report
+
+
 def list_published_matches() -> list[dict[str, Any]]:
     init_publish_store()
     rows = []
