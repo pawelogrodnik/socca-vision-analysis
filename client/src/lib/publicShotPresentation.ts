@@ -21,7 +21,10 @@ export function publicShotsForTeam(shots: PublicCanonicalShot[], teamId: string)
 }
 
 export function matchesPublicShotOutcomeFilter(shot: PublicCanonicalShot, filter: PublicShotOutcomeFilter): boolean {
-  return filter === 'all' || shot.outcome === filter;
+  if (filter === 'all') return true;
+  return filter === 'on_target'
+    ? shot.outcome === 'on_target' || shot.outcome === 'goal'
+    : shot.outcome === filter;
 }
 
 export function publicShotSummary(shots: PublicCanonicalShot[]): PublicShotSummary {

@@ -5,14 +5,20 @@ import { hasPublicShotMapLocation, matchesPublicShotOutcomeFilter, publicShotOut
 
 const shotMapFilters: Array<{ value: PublicShotOutcomeFilter; label: string; icon: string }> = [
   { value: 'all', label: 'Wszystkie', icon: '◉' },
-  { value: 'on_target', label: 'Celne', icon: '●' },
+  { value: 'on_target', label: 'Celne', icon: '⚽' },
   { value: 'off_target', label: 'Niecelne', icon: '○' },
   { value: 'blocked', label: 'Zablokowane', icon: '×' },
-  { value: 'goal', label: 'Gole', icon: '◎' },
+  { value: 'goal', label: 'Gole', icon: '⚽' },
 ];
 
 function teamName(team: PublicReportTeam): string {
   return team.team_name || team.team_label || team.team_id || 'Drużyna';
+}
+
+function markerIcon(outcome: PublicCanonicalShot['outcome']): string {
+  if (outcome === 'blocked') return '×';
+  if (outcome === 'off_target') return '○';
+  return '⚽';
 }
 
 function Marker({ shot, teamName, playerName, onPlayAt, onSelect }: { shot: PublicCanonicalShot; teamName: string; playerName?: string; onPlayAt: (time: number) => void; onSelect: (shot: PublicCanonicalShot) => void }) {
@@ -25,7 +31,7 @@ function Marker({ shot, teamName, playerName, onPlayAt, onSelect }: { shot: Publ
     aria-label={detail}
     title={detail}
     onClick={() => { onSelect(shot); onPlayAt(shot.time_sec); }}
-  ><span aria-hidden='true'>{shot.outcome === 'blocked' ? '×' : shot.outcome === 'goal' ? '◎' : '●'}</span></button>;
+  ><span aria-hidden='true'>{markerIcon(shot.outcome)}</span></button>;
 }
 
 export function PublicShotMaps({ report, shots, onPlayAt }: { report: PublicMatchReport; shots: PublicCanonicalShot[]; onPlayAt: (time: number) => void }) {
