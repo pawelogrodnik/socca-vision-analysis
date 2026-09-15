@@ -3622,6 +3622,37 @@ export type ShotReviewShotInput = {
   location_m?: ShotPitchLocation;
   /** Explicit edit-only manual point input. */
   manual_location_override?: ShotPitchLocation;
+  /** Operator-selected source-frame point, projected only by the backend. */
+  frame_location_override?: ShotFrameLocationOverride;
+};
+
+export type ShotFrameLocationOverride = {
+  logical_frame_time_sec: number;
+  x_px: number;
+  y_px: number;
+  frame_width: number;
+  frame_height: number;
+};
+
+export type ShotFrameLocationContext = {
+  logical_frame_time_sec: number;
+  source_match_id: string;
+  source_time_sec: number;
+  projection_available: boolean;
+  projection_error: { code: string; detail: string } | null;
+};
+
+export type ShotFrameLocationProjection = {
+  location_m: ShotPitchLocation;
+  provenance: {
+    source_match_id: string;
+    source_time_sec: number;
+    logical_frame_time_sec: number;
+    x_px: number;
+    y_px: number;
+    frame_width: number;
+    frame_height: number;
+  };
 };
 
 export type ShotReviewEditorState = {

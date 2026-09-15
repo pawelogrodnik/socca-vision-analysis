@@ -17,10 +17,15 @@ from typing import Any, Mapping
 
 from app import config
 from app.services.artifact_lineage import canonical_json_sha256
-from app.services.json_publish_store import MERGED_SOURCE_KIND, get_published_match
+from app.services.json_publish_store import (
+    MERGED_SOURCE_KIND,
+    get_published_match,
+    refresh_published_public_report_shots,
+)
 from app.services.match_groups import get_match_group
 from app.services.match_phase_config import direction_for_team_at_time
 from app.services.merged_public_match import group_id_for_merged_published_id
+from app.services.published_source_context import source_context_for_published_time
 from app.services.resolved_player_timeline import build_resolved_player_timeline_from_files
 from app.services.shot_candidates import MIN_BALL_CONFIDENCE, build_logical_shot_candidates_document
 
@@ -194,21 +199,13 @@ def _read_object(path: Path) -> dict[str, Any]:
 
 
 def _source_context(published_id: str, report: Mapping[str, Any], time_sec: float) -> tuple[str, float] | None:
-    match = get_published_match(published_id)
-    if str(match.get("source_kind") or "physical") != MERGED_SOURCE_KIND:
-        source_id = str(match.get("source_match_id") or "")
-        return (source_id, time_sec) if source_id else None
-    group_id = group_id_for_merged_published_id(published_id)
-    if not group_id:
-        return None
-    for member in get_match_group(group_id).get("members") or []:
-        if not isinstance(member, Mapping):
-            continue
-        start, end = _number(member.get("logical_start_sec")), _number(member.get("logical_end_sec"))
-        source_id = str(member.get("source_match_id") or "")
-        if source_id and start is not None and end is not None and start <= time_sec <= end:
-            return source_id, time_sec - start
-    return None
+    return source_context_for_published_time(
+        get_published_match(published_id),
+        published_id,
+        time_sec,
+        group_id_for_merged_published_id=group_id_for_merged_published_id,
+        get_match_group=get_match_group,
+    )
 
 
 def _suggestion_projection(published_id: str) -> dict[str, Any]:
@@ -632,7 +629,22 @@ def _validate_shot(
         raise ShotReviewError("shot_review_player_invalid", "Wybrany zawodnik nie występuje w raporcie.")
     if player_id is not None and players[player_id] != team_id:
         raise ShotReviewError("shot_review_player_invalid", "Zawodnik nie należy do wybranej drużyny.")
-    if location_mode == "preserve" and existing is not None:
+    frame_location_override = raw.get("frame_location_override")
+    if frame_location_override is not None and manual_location_override is not None:
+        raise ShotReviewError("shot_review_location_intent_conflict", "Wybierz pozycję z klatki albo ręcznie na boisku.")
+    frame_provenance: dict[str, Any] | None = None
+    if frame_location_override is not None:
+        # The saved override contains the original clicked image point rather
+        # than a frontend-calculated pitch point.  Re-projecting here keeps
+        # the backend the sole authority for image-to-pitch geometry.
+        from app.services.shot_frame_location import ShotFrameLocationError, project_frame_location
+        try:
+            projection = project_frame_location(published_id, _record(frame_location_override))
+        except ShotFrameLocationError as error:
+            raise ShotReviewError(error.code, error.detail, error.status_code) from error
+        location, location_source = projection["location_m"], "manual"
+        frame_provenance = _record(projection.get("provenance"))
+    elif location_mode == "preserve" and existing is not None:
         location, location_source = copy.deepcopy(existing.get("location_m")), str(existing.get("location_source") or "unavailable")
         if location_source not in LOCATION_SOURCES:
             raise ShotReviewError("shot_review_location_invalid", "Istniejąca lokalizacja strzału jest nieprawidłowa.", 409)
@@ -645,7 +657,14 @@ def _validate_shot(
         location, location_source = _location_for_shot(published_id, report, time_sec, player_id, None)
     else:
         location, location_source = _location_for_shot(published_id, report, time_sec, player_id, raw.get("location_m"))
-    return {**copy.deepcopy(existing or {}), "shot_id": str((existing or {}).get("shot_id") or f"shot-review-{uuid.uuid4()}"), "time_sec": round(time_sec, 6), "team_id": team_id, "outcome": outcome, "player_id": player_id, "origin": origin, "location_m": location, "location_source": location_source}
+    result = {**copy.deepcopy(existing or {}), "shot_id": str((existing or {}).get("shot_id") or f"shot-review-{uuid.uuid4()}"), "time_sec": round(time_sec, 6), "team_id": team_id, "outcome": outcome, "player_id": player_id, "origin": origin, "location_m": location, "location_source": location_source}
+    if frame_provenance:
+        result["location_correction_provenance"] = frame_provenance
+    elif location_mode != "preserve":
+        # A newly derived or mini-pitch point supersedes historical frame
+        # evidence. Metadata-only edits deliberately preserve it unchanged.
+        result.pop("location_correction_provenance", None)
+    return result
 
 
 def _ensure_revision(current: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
@@ -674,6 +693,28 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
 def _persist(published_id: str, document: Mapping[str, Any]) -> None:
     _write_json_atomic(_sidecar_path(published_id), _content(document))
     _write_json_atomic(_authority_path(published_id), {"schema_version": SHOT_REVIEW_SCHEMA_VERSION, "published_id": published_id, "operator_owned": True})
+
+
+def _persist_and_refresh_public_shots(published_id: str, document: Mapping[str, Any]) -> None:
+    """Persist canonical operator truth, then atomically refresh its static read model.
+
+    Canonical Shot Review remains primary: a publication refresh failure cannot
+    roll back a completed operator decision, but it must be visible to the
+    caller rather than silently leaving the static report stale.
+    """
+
+    _persist(published_id, document)
+    try:
+        shots = public_canonical_shots_projection(published_id)
+        if shots is None:
+            raise ValueError("Canonical Shot Review was saved without a public projection")
+        refresh_published_public_report_shots(published_id, shots=shots)
+    except Exception as error:
+        raise ShotReviewError(
+            "shot_review_public_projection_refresh_failed",
+            "Zapisano kanoniczny Shot Review, ale nie udało się odświeżyć publicznego raportu. Odśwież stronę i ponów publikację projekcji.",
+            500,
+        ) from error
 
 
 def _current_suggestion(published_id: str, current: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -718,7 +759,7 @@ def accept_suggestion(published_id: str, payload: Mapping[str, Any]) -> dict[str
     shot["suggested_candidate_generation_digest"] = str(payload.get("candidate_generation_digest") or "")
     review = {"candidate_id": shot["suggested_candidate_id"], "candidate_generation_digest": shot["suggested_candidate_generation_digest"], "review_status": "accepted", "canonical_shot_id": shot["shot_id"], "reviewed_at": _now()}
     document = _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=_replace_review(current.get("suggested_candidate_reviews"), review))
-    _persist(published_id, document)
+    _persist_and_refresh_public_shots(published_id, document)
     return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
 
 
@@ -768,7 +809,7 @@ def accept_cluster(published_id: str, payload: Mapping[str, Any]) -> dict[str, A
             "cluster_id": shot["suggested_cluster_id"],
             "reviewed_at": reviewed_at,
         })
-    _persist(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot], reviews=reviews))
     return {**editor_state(published_id), "accepted_shot": _canonical_dto(shot)}
 
 
@@ -800,7 +841,7 @@ def create_manual_shot(published_id: str, payload: Mapping[str, Any]) -> dict[st
     match, current = get_published_match(published_id), load_shot_review_document(published_id)
     _ensure_revision(current, payload)
     shot = _validate_shot(published_id, _record(match.get("public_report")), _record(payload.get("shot")), origin="manual")
-    _persist(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot]))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=[*current["canonical_shots"], shot]))
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
 
 
@@ -835,7 +876,7 @@ def edit_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str, A
         manual_location_override=override,
     )
     shots = [shot if str(row.get("shot_id") or "") == shot_id else row for row in current["canonical_shots"]]
-    _persist(published_id, _next_document(current, published_id, shots=shots))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots))
     return {**editor_state(published_id), "saved_shot": _canonical_dto(shot)}
 
 
@@ -866,5 +907,5 @@ def delete_canonical_shot(published_id: str, shot_id: str, payload: Mapping[str,
                 "cluster_id": linked.get("cluster_id"),
                 "reviewed_at": reviewed_at,
             })
-    _persist(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
+    _persist_and_refresh_public_shots(published_id, _next_document(current, published_id, shots=shots, reviews=reviews))
     return editor_state(published_id)

@@ -72,6 +72,9 @@ import type {
   KeyMomentEditorState,
   KeyMomentEditorialMoment,
   ShotReviewEditorState,
+  ShotFrameLocationContext,
+  ShotFrameLocationProjection,
+  ShotFrameLocationOverride,
   ShotReviewShotInput,
 } from './types';
 import type {
@@ -943,6 +946,16 @@ export async function rejectKeyMomentSuggestion(
 
 export async function getShotReviewEditor(publishedMatchId: string): Promise<ShotReviewEditorState> {
   return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor`);
+}
+
+export async function getShotReviewFrameLocationContext(publishedMatchId: string, logicalFrameTimeSec: number): Promise<ShotFrameLocationContext> {
+  return request<ShotFrameLocationContext>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/frame-location?logical_frame_time_sec=${encodeURIComponent(String(logicalFrameTimeSec))}`);
+}
+
+export async function projectShotReviewFrameLocation(publishedMatchId: string, payload: ShotFrameLocationOverride): Promise<ShotFrameLocationProjection> {
+  return request<ShotFrameLocationProjection>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor/frame-location/project`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
 }
 
 export async function acceptShotReviewSuggestion(
