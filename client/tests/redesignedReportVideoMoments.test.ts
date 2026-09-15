@@ -144,7 +144,7 @@ test('static canonical shots use the existing player and expose two separate rea
     shots: [
       { shot_id: 'goal', time_sec: 10, team_id: 'corgi', outcome: 'goal', player_id: 'krzysiek', location_m: { x: 10, y: 12 }, map_location: { x: .25, y: .3 } },
       { shot_id: 'blocked', time_sec: 20, team_id: 'verisk', outcome: 'blocked', location_m: null },
-      { shot_id: 'off', time_sec: 30, team_id: 'verisk', outcome: 'off_target', location_m: { x: 20, y: 30 } },
+      { shot_id: 'off', time_sec: 30, team_id: 'verisk', outcome: 'off_target', location_m: { x: 20, y: 30 }, map_location: { x: .18, y: .75 } },
     ],
   };
   const view = render(React.createElement(RedesignedReportVideoMoments, {
@@ -155,13 +155,24 @@ test('static canonical shots use the existing player and expose two separate rea
   await act(async () => { players[0].ready(); });
   fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
   assert.equal(view.getAllByLabelText(/Mapa strzałów:/).length, 2);
-  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 1);
-  assert.match(view.container.textContent || '', /0 z 2 strzałów na mapie/);
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 2);
+  assert.match(view.container.textContent || '', /1 z 2 strzałów na mapie/);
   assert.match(view.container.textContent || '', /Strzał niecelny/);
   assert.equal(view.queryByText(/Sugestie/), null);
   assert.equal(view.queryByRole('button', { name: 'Dodaj strzał' }), null);
   const marker = view.getByRole('button', { name: /0:10.*Gol.*Corgi.*Krzysiek/ });
   assert.match(marker.getAttribute('title') || '', /0:10.*Gol.*Corgi.*Krzysiek/);
+  assert.match(marker.getAttribute('style') || '', /left: 25%; top: 60%/);
+  const beyondHalfwayMarker = view.getByRole('button', { name: /0:30.*Strzał niecelny.*Verisk/ });
+  assert.match(beyondHalfwayMarker.getAttribute('style') || '', /left: 18%; top: 100%/);
+  const pitch = view.container.querySelector('.public-shot-half-pitch');
+  assert.equal(pitch?.getAttribute('data-pitch-scope'), 'attacking-half');
+  assert.equal(pitch?.getAttribute('viewBox'), '0 0 100 77');
+  assert.equal(view.container.querySelectorAll('.public-shot-goal-line').length, 2);
+  assert.equal(view.container.querySelectorAll('.public-shot-penalty-area').length, 2);
+  assert.equal(view.container.querySelectorAll('.public-shot-halfway-line').length, 2);
+  assert.equal(view.container.querySelector('.public-shot-opposite-goal'), null);
+  assert.equal(view.container.querySelector('.public-shot-centre-circle'), null);
   fireEvent.click(marker);
   assert.deepEqual(players[0].seekCalls, [[10, true]]);
   assert.equal(players.length, 1);

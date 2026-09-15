@@ -1,4 +1,4 @@
-import type { PublicCanonicalShot, ShotOutcome } from '../types';
+import type { PublicCanonicalShot, ShotOutcome, ShotPitchLocation } from '../types';
 
 export type PublicShotOutcomeFilter = 'all' | ShotOutcome;
 
@@ -39,7 +39,24 @@ export function publicShotSummary(shots: PublicCanonicalShot[]): PublicShotSumma
 }
 
 export function hasPublicShotMapLocation(shot: PublicCanonicalShot): shot is PublicCanonicalShot & { map_location: { x: number; y: number } } {
-  const location = shot.map_location;
+  return isValidPublicShotMapLocation(shot.map_location);
+}
+
+/**
+ * Converts the already normalized public location into attacking-half display
+ * coordinates. This is intentionally a view transform: canonical pitch data
+ * remains full-pitch and untouched.
+ */
+export function publicShotHalfPitchPosition(location: ShotPitchLocation | null | undefined): { x: number; y: number; clampedToHalfway: boolean } | null {
+  if (!isValidPublicShotMapLocation(location)) return null;
+  return {
+    x: location.x,
+    y: Math.min(location.y * 2, 1),
+    clampedToHalfway: location.y > .5,
+  };
+}
+
+function isValidPublicShotMapLocation(location: ShotPitchLocation | null | undefined): location is ShotPitchLocation {
   return Number.isFinite(location?.x)
     && Number.isFinite(location?.y)
     && location != null
