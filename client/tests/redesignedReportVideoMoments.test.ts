@@ -142,7 +142,7 @@ test('static canonical shots use the existing player and expose two separate rea
     teams: [{ team_id: 'corgi', team_name: 'Corgi' }, { team_id: 'verisk', team_name: 'Verisk' }],
     players: [{ player_id: 'krzysiek', player_name: 'Krzysiek', team_id: 'corgi' }],
     shots: [
-      { shot_id: 'goal', time_sec: 10, team_id: 'corgi', outcome: 'goal', player_id: 'krzysiek', location_m: { x: 10, y: 12 } },
+      { shot_id: 'goal', time_sec: 10, team_id: 'corgi', outcome: 'goal', player_id: 'krzysiek', location_m: { x: 10, y: 12 }, map_location: { x: .25, y: .3 } },
       { shot_id: 'blocked', time_sec: 20, team_id: 'verisk', outcome: 'blocked', location_m: null },
       { shot_id: 'off', time_sec: 30, team_id: 'verisk', outcome: 'off_target', location_m: { x: 20, y: 30 } },
     ],
@@ -155,10 +155,14 @@ test('static canonical shots use the existing player and expose two separate rea
   await act(async () => { players[0].ready(); });
   fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
   assert.equal(view.getAllByLabelText(/Mapa strzałów:/).length, 2);
-  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 2);
+  assert.equal(view.container.querySelectorAll('.public-shot-map-marker').length, 1);
+  assert.match(view.container.textContent || '', /0 z 2 strzałów na mapie/);
+  assert.match(view.container.textContent || '', /Strzał niecelny/);
   assert.equal(view.queryByText(/Sugestie/), null);
   assert.equal(view.queryByRole('button', { name: 'Dodaj strzał' }), null);
-  fireEvent.click(view.getByRole('button', { name: /Gol, 0:10/ }));
+  const marker = view.getByRole('button', { name: /0:10.*Gol.*Corgi.*Krzysiek/ });
+  assert.match(marker.getAttribute('title') || '', /0:10.*Gol.*Corgi.*Krzysiek/);
+  fireEvent.click(marker);
   assert.deepEqual(players[0].seekCalls, [[10, true]]);
   assert.equal(players.length, 1);
   assert.equal(view.container.querySelectorAll('iframe').length, 1);

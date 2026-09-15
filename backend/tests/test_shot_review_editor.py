@@ -103,6 +103,42 @@ class ShotReviewEditorTests(unittest.TestCase):
             editor.public_canonical_shots_projection("published-one")
         self.assertEqual(error.exception.code, "shot_review_recovery_required")
 
+    def test_public_map_location_uses_saved_phase_direction_without_mutating_canonical_point(self) -> None:
+        _write(self.matches / "source-one" / "pitch_config.json", {"width_m": 30, "length_m": 40})
+        point = {"x": 6, "y": 12}
+        expected = {
+            "towards_y_min": {"x": 0.2, "y": 0.3},
+            "towards_y_max": {"x": 0.8, "y": 0.7},
+            "towards_x_min": {"x": 0.3, "y": 0.2},
+            "towards_x_max": {"x": 0.7, "y": 0.8},
+        }
+        report = {"teams": [{"team_id": "team-a", "team_label": "A"}]}
+        for direction, map_point in expected.items():
+            _write(self.matches / "source-one" / "match_phase_config.json", {"periods": [{"start_time_sec": 0, "end_time_sec": 100, "team_attack_directions": {"A": direction}}]})
+            shot = {"time_sec": 10, "team_id": "team-a", "location_m": dict(point)}
+            self.assertEqual(editor._public_map_location("published-one", report, shot), map_point)
+            self.assertEqual(shot["location_m"], point)
+
+    def test_public_map_location_fails_closed_without_safe_display_context(self) -> None:
+        _write(self.matches / "source-one" / "pitch_config.json", {"width_m": 30, "length_m": 40})
+        report = {"teams": [{"team_id": "team-a", "team_label": "A"}]}
+        shot = {"time_sec": 10, "team_id": "team-a", "location_m": {"x": 6, "y": 12}}
+        _write(self.matches / "source-one" / "match_phase_config.json", {"periods": [{"start_time_sec": 0, "end_time_sec": 100, "team_attack_directions": {"A": "unknown"}}]})
+        self.assertIsNone(editor._public_map_location("published-one", report, shot))
+        with patch("app.services.shot_review_editor._source_context", return_value=None):
+            self.assertIsNone(editor._public_map_location("published-one", report, shot))
+        self.assertIsNone(editor._public_map_location("published-one", report, {**shot, "location_m": {"x": 31, "y": 12}}))
+
+    def test_public_map_location_resolves_merged_logical_time_to_the_member_phase(self) -> None:
+        _write(self.matches / "source-two" / "pitch_config.json", {"width_m": 30, "length_m": 40})
+        _write(self.matches / "source-two" / "match_phase_config.json", {"periods": [{"start_time_sec": 0, "end_time_sec": 100, "team_attack_directions": {"A": "towards_y_max"}}]})
+        merged_match = {"source_kind": "merged", "public_report": {"teams": [{"team_id": "team-a", "team_label": "A"}]}}
+        with patch("app.services.shot_review_editor.get_published_match", return_value=merged_match), patch("app.services.shot_review_editor.group_id_for_merged_published_id", return_value="group-one"), patch("app.services.shot_review_editor.get_match_group", return_value={"members": [{"source_match_id": "source-two", "logical_start_sec": 100, "logical_end_sec": 200}]}):
+            self.assertEqual(
+                editor._public_map_location("published-merged-one", merged_match["public_report"], {"time_sec": 112, "team_id": "team-a", "location_m": {"x": 6, "y": 12}}),
+                {"x": 0.8, "y": 0.7},
+            )
+
     def test_rejection_is_durable_for_same_lineage(self) -> None:
         initial = self._initial()
         rejected = editor.reject_suggestion("published-one", {"expected_revision": initial["revision"], "candidate_id": "candidate-1", "candidate_generation_digest": initial["suggestions"]["candidate_generation_digest"]})

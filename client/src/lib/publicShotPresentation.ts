@@ -29,6 +29,13 @@ export function publicShotSummary(shots: PublicCanonicalShot[]): PublicShotSumma
   };
 }
 
-export function hasPublicShotLocation(shot: PublicCanonicalShot): shot is PublicCanonicalShot & { location_m: { x: number; y: number } } {
-  return Number.isFinite(shot.location_m?.x) && Number.isFinite(shot.location_m?.y);
+export function hasPublicShotMapLocation(shot: PublicCanonicalShot): shot is PublicCanonicalShot & { map_location: { x: number; y: number } } {
+  const location = shot.map_location;
+  return Number.isFinite(location?.x)
+    && Number.isFinite(location?.y)
+    && location != null
+    && location.x >= 0
+    && location.x <= 1
+    && location.y >= 0
+    && location.y <= 1;
 }
