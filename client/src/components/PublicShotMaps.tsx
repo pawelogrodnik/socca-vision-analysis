@@ -5,7 +5,7 @@ import { hasPublicShotMapLocation, matchesPublicShotOutcomeFilter, publicShotOut
 
 const shotMapFilters: Array<{ value: PublicShotOutcomeFilter; label: string; icon: string }> = [
   { value: 'all', label: 'Wszystkie', icon: '◉' },
-  { value: 'on_target', label: 'Celne', icon: '⚽' },
+  { value: 'on_target', label: 'Celne', icon: '●' },
   { value: 'off_target', label: 'Niecelne', icon: '○' },
   { value: 'blocked', label: 'Zablokowane', icon: '×' },
   { value: 'goal', label: 'Gole', icon: '⚽' },
@@ -18,7 +18,7 @@ function teamName(team: PublicReportTeam): string {
 function markerIcon(outcome: PublicCanonicalShot['outcome']): string {
   if (outcome === 'blocked') return '×';
   if (outcome === 'off_target') return '○';
-  return '⚽';
+  return outcome === 'goal' ? '⚽' : '●';
 }
 
 function Marker({ shot, teamName, playerName, onPlayAt, onSelect }: { shot: PublicCanonicalShot; teamName: string; playerName?: string; onPlayAt: (time: number) => void; onSelect: (shot: PublicCanonicalShot) => void }) {

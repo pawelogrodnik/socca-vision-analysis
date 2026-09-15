@@ -196,7 +196,7 @@ test('one outcome filter controls both maps without changing the public shot bro
   const offTargetMarker = view.getByRole('button', { name: /0:30.*Strzał niecelny.*Verisk/ });
   const blockedMarker = view.getByRole('button', { name: /0:32.*Strzał zablokowany.*Verisk/ });
   assert.equal(goalMarker.textContent, '⚽');
-  assert.equal(onTargetMarker.textContent, '⚽');
+  assert.equal(onTargetMarker.textContent, '●');
   assert.equal(offTargetMarker.textContent, '○');
   assert.equal(blockedMarker.textContent, '×');
   assert.match(goalMarker.getAttribute('title') || '', /0:10.*Gol.*Corgi.*Krzysiek/);
