@@ -99786,7 +99786,14 @@
       "time_sec": 654.0
     },
     {
-      "location_m": null,
+      "location_m": {
+        "x": 25.369837,
+        "y": 5.239913
+      },
+      "map_location": {
+        "x": 0.845661,
+        "y": 0.110547
+      },
       "outcome": "off_target",
       "player_id": "team-corgi-1fc405-player-1-pawel",
       "shot_id": "shot-review-9843d938-e70d-4483-90d0-cdb01c095f89",
@@ -99795,12 +99802,12 @@
     },
     {
       "location_m": {
-        "x": 13.473,
-        "y": 41.41
+        "x": 24.338581,
+        "y": 17.339729
       },
       "map_location": {
-        "x": 0.4491,
-        "y": 0.873629
+        "x": 0.811286,
+        "y": 0.365817
       },
       "outcome": "on_target",
       "player_id": "team-corgi-1fc405-player-5-mateusz",
@@ -99929,7 +99936,14 @@
       "time_sec": 1368.5
     },
     {
-      "location_m": null,
+      "location_m": {
+        "x": 10.038842,
+        "y": 26.646416
+      },
+      "map_location": {
+        "x": 0.665372,
+        "y": 0.437839
+      },
       "outcome": "off_target",
       "player_id": null,
       "shot_id": "shot-review-9aa7bbf4-8a90-4be8-97d9-f28fbdd846d7",
@@ -99982,7 +99996,14 @@
       "time_sec": 1563.1
     },
     {
-      "location_m": null,
+      "location_m": {
+        "x": 10.621894,
+        "y": 40.257023
+      },
+      "map_location": {
+        "x": 0.645937,
+        "y": 0.150696
+      },
       "outcome": "goal",
       "player_id": null,
       "shot_id": "shot-review-96de3128-f42e-4838-9a16-f5d5171253b2",
@@ -99990,7 +100011,14 @@
       "time_sec": 1715.5
     },
     {
-      "location_m": null,
+      "location_m": {
+        "x": 21.327848,
+        "y": 38.288296
+      },
+      "map_location": {
+        "x": 0.289072,
+        "y": 0.19223
+      },
       "outcome": "blocked",
       "player_id": null,
       "shot_id": "shot-review-4fa1b416-04ce-4e09-8eff-b53a8b77252f",
@@ -100013,7 +100041,14 @@
       "time_sec": 1786.1
     },
     {
-      "location_m": null,
+      "location_m": {
+        "x": 9.871892,
+        "y": 14.064448
+      },
+      "map_location": {
+        "x": 0.329063,
+        "y": 0.296718
+      },
       "outcome": "off_target",
       "player_id": "team-corgi-1fc405-player-5-mateusz",
       "shot_id": "shot-review-f0b70547-3dbb-4b75-bdd4-12ce05b73abe",
@@ -100021,7 +100056,14 @@
       "time_sec": 1792.0
     },
     {
-      "location_m": null,
+      "location_m": {
+        "x": 12.528438,
+        "y": 7.332172
+      },
+      "map_location": {
+        "x": 0.417615,
+        "y": 0.154687
+      },
       "outcome": "on_target",
       "player_id": "team-corgi-1fc405-player-12-patryk",
       "shot_id": "shot-review-96b0fd71-0dd8-4381-96c1-b7dacf6c2a9c",
