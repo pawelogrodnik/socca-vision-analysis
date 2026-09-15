@@ -22,8 +22,32 @@ def _candidate(candidate_id: str, frame: int, x: float, y: float, *, confidence:
     }
 
 
-def _source(frames: list[dict], positions: list[dict]) -> dict:
-    return {"fps": 10.0, "ball_candidates": {"frames": frames}, "ball_tracks": {"positions": positions}}
+def _source(
+    frames: list[dict],
+    positions: list[dict],
+    *,
+    policy: str = "ball-selection:v1",
+) -> dict:
+    return {
+        "fps": 10.0,
+        "ball_selection_policy": policy,
+        "max_link_speed_mps": 22.0,
+        "min_start_conf": .08,
+        "ball_candidates": {"frames": frames},
+        "ball_tracks": {"positions": positions},
+    }
+
+
+def _track(candidate: dict) -> dict:
+    return {
+        "frame": candidate["frame"],
+        "time_sec": candidate["time_sec"],
+        "candidate_id": candidate["candidate_id"],
+        "position_px": candidate["position_px"],
+        "position_m": candidate["position_m"],
+        "source": "detected",
+        "confidence": candidate["confidence"],
+    }
 
 
 def _anchor(*, source_time_sec: float = 10.0, x: float = 100.0, y: float = 100.0) -> dict:
@@ -123,7 +147,7 @@ class OperatorBallAnchorShadowTests(unittest.TestCase):
         row = first["anchors"][0]
         self.assertEqual(row["classification"], "anchor_without_plausible_path")
         self.assertEqual([point["candidate_id"] for point in row["anchored"]["local_shadow_path"]], ["actual"])
-        self.assertEqual(row["anchored"]["continuity"]["forward_stop_reason"], "no_plausible_candidate")
+        self.assertEqual(row["anchored"]["continuity"]["forward_stop_reason"], "no_policy_compatible_candidate")
         self.assertEqual(source, before)
         self.assertEqual(first, second)
 
@@ -134,3 +158,80 @@ class OperatorBallAnchorShadowTests(unittest.TestCase):
         self.assertEqual(report["summary"]["classification_counts"], {"already_correct": 1, "detector_miss": 1})
         self.assertEqual((report["summary"]["matched_anchor_candidate_count"], report["summary"]["detector_miss_count"]), (1, 1))
 
+    def test_anchor_uses_nearest_persisted_frame_not_a_better_candidate_from_next_frame(self) -> None:
+        exact = _candidate("exact-frame", 100, 105, 100)
+        adjacent = _candidate("adjacent-frame", 101, 101, 100)
+        report = evaluate_operator_ball_anchors([_anchor()], {
+            "source-two": _source([
+                {"frame": 100, "time_sec": 10.0, "candidates": [exact]},
+                {"frame": 101, "time_sec": 10.1, "candidates": [adjacent]},
+            ], [_track(exact)]),
+        })
+        row = report["anchors"][0]
+        self.assertEqual(row["anchored"]["resolved_anchor_frame"]["frame"], 100)
+        self.assertEqual(row["anchored"]["anchor_candidate_id"], "exact-frame")
+
+    def test_empty_resolved_anchor_frame_is_detector_miss_without_borrowing_adjacent_candidate(self) -> None:
+        adjacent = _candidate("adjacent-frame", 101, 100, 100)
+        report = evaluate_operator_ball_anchors([_anchor()], {
+            "source-two": _source([
+                {"frame": 100, "time_sec": 10.0, "candidates": []},
+                {"frame": 101, "time_sec": 10.1, "candidates": [adjacent]},
+            ], []),
+        })
+        row = report["anchors"][0]
+        self.assertEqual(row["classification"], "detector_miss")
+        self.assertEqual(row["reason"], "resolved_anchor_frame_has_no_candidates")
+        self.assertEqual(row["anchored"]["resolved_anchor_frame"]["frame"], 100)
+
+    def test_timestamp_rounding_resolves_the_nearest_persisted_frame(self) -> None:
+        exact = _candidate("rounded-frame", 100, 100, 100)
+        next_frame = _candidate("next-frame", 101, 100, 100)
+        report = evaluate_operator_ball_anchors([_anchor(source_time_sec=10.018)], {
+            "source-two": _source([
+                {"frame": 100, "time_sec": 10.0, "candidates": [exact]},
+                {"frame": 101, "time_sec": 10.1, "candidates": [next_frame]},
+            ], []),
+        })
+        self.assertEqual(report["anchors"][0]["anchored"]["anchor_candidate_id"], "rounded-frame")
+
+    def test_shadow_uses_persisted_v1_policy_and_rejects_an_impossible_jump(self) -> None:
+        seed = _candidate("seed", 100, 100, 100, confidence=.7)
+        valid = _candidate("valid", 101, 101, 100, confidence=.1)
+        impossible_high_confidence = _candidate("impossible", 101, 1000, 1000, confidence=.99)
+        report = evaluate_operator_ball_anchors([_anchor()], {
+            "source-two": _source([
+                {"frame": 100, "time_sec": 10.0, "candidates": [seed]},
+                {"frame": 101, "time_sec": 10.1, "candidates": [valid, impossible_high_confidence]},
+            ], []),
+        }, window_sec=.2)
+        row = report["anchors"][0]
+        self.assertEqual(row["anchored"]["continuity"]["selection_policy"], "ball-selection:v1")
+        self.assertEqual([point["candidate_id"] for point in row["anchored"]["local_shadow_path"]], ["seed", "valid"])
+
+    def test_v2_policy_is_explicitly_used_and_unknown_policy_does_not_fall_back(self) -> None:
+        seed = _candidate("seed", 100, 100, 100)
+        following = _candidate("following", 101, 101, 100)
+        frames = [{"frame": 100, "time_sec": 10.0, "candidates": [seed]}, {"frame": 101, "time_sec": 10.1, "candidates": [following]}]
+        v2 = evaluate_operator_ball_anchors([_anchor()], {"source-two": _source(frames, [], policy="ball-selection:v2")}, window_sec=.2)
+        unsupported = evaluate_operator_ball_anchors([_anchor()], {"source-two": _source(frames, [], policy="ball-selection:unknown")}, window_sec=.2)
+        self.assertEqual(v2["anchors"][0]["anchored"]["continuity"]["selection_policy"], "ball-selection:v2")
+        self.assertEqual((unsupported["anchors"][0]["classification"], unsupported["anchors"][0]["reason"]), ("inconclusive", "source_ball_selection_policy_unsupported"))
+
+    def test_shadow_regression_when_current_path_is_plausible_but_shadow_switches_to_worse_motion(self) -> None:
+        seed = _candidate("seed", 100, 100, 100, confidence=.7)
+        current_one = _candidate("current-one", 101, 101, 100, confidence=0.0)
+        shadow_one = _candidate("shadow-one", 101, 105, 100, confidence=.99)
+        current_two = _candidate("current-two", 102, 102, 100, confidence=0.0)
+        shadow_two = _candidate("shadow-two", 102, 110, 100, confidence=.99)
+        frames = [
+            {"frame": 100, "time_sec": 10.0, "candidates": [seed]},
+            {"frame": 101, "time_sec": 10.1, "candidates": [current_one, shadow_one]},
+            {"frame": 102, "time_sec": 10.2, "candidates": [current_two, shadow_two]},
+        ]
+        report = evaluate_operator_ball_anchors([_anchor()], {
+            "source-two": _source(frames, [_track(seed), _track(current_one), _track(current_two)]),
+        }, window_sec=.3)
+        row = report["anchors"][0]
+        self.assertEqual(row["classification"], "shadow_regression")
+        self.assertEqual(row["reason"], "anchored_path_has_materially_worse_continuity_speed")

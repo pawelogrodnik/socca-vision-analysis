@@ -54,11 +54,16 @@ def _source_artifacts(anchors: list[dict[str, Any]]) -> dict[str, dict[str, Any]
         root = config.MATCHES_DIR / source_match_id
         match = _read(root / "match.json")
         candidates = _read(root / "ball_candidates.json")
+        tracks = _read(root / "ball_tracks.json")
+        candidate_parameters = _record(candidates.get("parameters"))
+        track_parameters = _record(tracks.get("parameters"))
         rows[source_match_id] = {
             "fps": float(_record(match.get("video")).get("fps") or 0.0),
-            "max_link_speed_mps": _record(candidates.get("parameters")).get("max_link_speed_mps"),
+            "max_link_speed_mps": track_parameters.get("max_link_speed_mps") or candidate_parameters.get("max_link_speed_mps"),
+            "min_start_conf": track_parameters.get("min_start_conf") or candidate_parameters.get("min_start_conf"),
+            "ball_selection_policy": track_parameters.get("ball_selection_policy") or candidate_parameters.get("ball_selection_policy"),
             "ball_candidates": candidates,
-            "ball_tracks": _read(root / "ball_tracks.json"),
+            "ball_tracks": tracks,
         }
     return rows
 
