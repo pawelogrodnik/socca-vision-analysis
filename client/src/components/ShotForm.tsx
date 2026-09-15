@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { CanonicalShot, PublicMatchReport, ShotFrameLocationOverride, ShotFrameLocationProjection, ShotOutcome, ShotPitchLocation, ShotReviewShotInput } from '../types';
 import { formatKeyMomentTime, parseKeyMomentTime } from '../lib/keyMomentTime';
 import { ShotPitchPointSelector } from './ShotPitchPointSelector';
@@ -33,6 +33,7 @@ export function ShotForm({ mode, report, initial, onCancel, onSave, onUseCurrent
   const [frameLocationOverride, setFrameLocationOverride] = useState<ShotFrameLocationOverride | null>(null);
   const [frameProjection, setFrameProjection] = useState<ShotFrameLocationProjection | null>(null);
   const [showFrameCorrection, setShowFrameCorrection] = useState(false);
+  const frameCorrectionTriggerRef = useRef<HTMLButtonElement>(null);
   const [showPitchPicker, setShowPitchPicker] = useState(initial.location_source === 'unavailable');
   const hasResolvedSuggestedTeam = mode === 'accept'
     && Boolean(initial.team_id)
@@ -81,7 +82,8 @@ export function ShotForm({ mode, report, initial, onCancel, onSave, onUseCurrent
     <label>Wynik *<select aria-label='Wynik strzału' value={shot.outcome || ''} onChange={(event) => { setShot((value) => ({ ...value, outcome: event.target.value as ShotOutcome })); setOutcomeConfirmed(true); }}><option value=''>—</option>{outcomes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     <label>Zawodnik<select aria-label='Zawodnik strzału' value={shot.player_id || ''} onChange={(event) => setShot((value) => ({ ...value, player_id: event.target.value || null }))}><option value=''>—</option>{report.players.filter((player) => player.team_id === shot.team_id).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}</option>)}</select></label>
     <div className='shot-location-summary'><span>{frameProjection ? 'Pozycja z wybranej klatki' : locationText(shot.location_source)}</span>{frameProjection ? <span>{frameProjection.location_m.x.toFixed(2)} × {frameProjection.location_m.y.toFixed(2)} m</span> : shot.location_m ? <span>Pozycja zapisana automatycznie.</span> : null}</div>
-    {!showFrameCorrection ? <button type='button' className='secondary shot-location-toggle' onClick={() => setShowFrameCorrection(true)}>Ustaw pozycję z klatki</button> : <ShotFrameLocationCorrection publishedMatchId={publishedMatchId} initialFrameTimeSec={parseKeyMomentTime(timeText) ?? initial.time_sec} value={frameLocationOverride} onChange={(value, projection) => { setFrameLocationOverride(value); setFrameProjection(projection); if (value) setManualPoint(null); }} />}
+    <button ref={frameCorrectionTriggerRef} type='button' className='secondary shot-location-toggle' onClick={() => setShowFrameCorrection(true)}>Ustaw pozycję z klatki</button>
+    {showFrameCorrection ? <ShotFrameLocationCorrection publishedMatchId={publishedMatchId} initialFrameTimeSec={parseKeyMomentTime(timeText) ?? initial.time_sec} value={frameLocationOverride} projection={frameProjection} onChange={(value, projection) => { setFrameLocationOverride(value); setFrameProjection(projection); if (value) setManualPoint(null); }} onClose={() => { setShowFrameCorrection(false); window.setTimeout(() => frameCorrectionTriggerRef.current?.focus(), 0); }} /> : null}
     {!showPitchPicker ? <button type='button' className='secondary shot-location-toggle' onClick={() => setShowPitchPicker(true)}>Popraw pozycję ręcznie</button> : <ShotPitchPointSelector value={manualPoint} widthM={dimensions.width_m} lengthM={dimensions.length_m} onChange={(point) => { setManualPoint(point); setFrameLocationOverride(null); setFrameProjection(null); }} />}
     {error ? <p className='status'>{error}</p> : null}
     <div className='row end'><button type='button' className='secondary' disabled={saving} onClick={onCancel}>Anuluj</button><button type='button' disabled={saving} onClick={() => void submit()}>{saving ? 'Zapisuję…' : 'Zapisz strzał'}</button></div>

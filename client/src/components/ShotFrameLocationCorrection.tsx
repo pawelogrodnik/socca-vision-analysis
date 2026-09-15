@@ -7,7 +7,9 @@ type Props = {
   publishedMatchId: string;
   initialFrameTimeSec: number;
   value: ShotFrameLocationOverride | null;
+  projection: ShotFrameLocationProjection | null;
   onChange: (value: ShotFrameLocationOverride | null, projection: ShotFrameLocationProjection | null) => void;
+  onClose: () => void;
 };
 
 const timeSteps = [
@@ -17,17 +19,31 @@ const timeSteps = [
   { label: '+0.5 s', delta: 0.5 },
 ];
 
-export function ShotFrameLocationCorrection({ publishedMatchId, initialFrameTimeSec, value, onChange }: Props) {
-  const [frameTimeSec, setFrameTimeSec] = useState(Math.max(0, initialFrameTimeSec));
+const zoomLevels = [1, 1.5, 2];
+
+export function ShotFrameLocationCorrection({ publishedMatchId, initialFrameTimeSec, value, projection, onChange, onClose }: Props) {
+  const [frameTimeSec, setFrameTimeSec] = useState(Math.max(0, value?.logical_frame_time_sec ?? initialFrameTimeSec));
   const [context, setContext] = useState<ShotFrameLocationContext | null>(null);
   const [loading, setLoading] = useState(true);
+  const [imageLoading, setImageLoading] = useState(true);
   const [projecting, setProjecting] = useState(false);
   const [error, setError] = useState('');
+  const [zoomIndex, setZoomIndex] = useState(0);
   const imageRef = useRef<HTMLImageElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setContext(null); setError('');
+    setLoading(true); setImageLoading(true); setContext(null); setError('');
     void getShotReviewFrameLocationContext(publishedMatchId, frameTimeSec)
       .then((next) => { if (!cancelled) setContext(next); })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Nie udało się pobrać klatki.'); })
@@ -73,21 +89,30 @@ export function ShotFrameLocationCorrection({ publishedMatchId, initialFrameTime
     [context?.source_match_id, context?.source_time_sec],
   );
 
-  return <section className='shot-frame-location-correction' aria-label='Pozycja strzału z klatki'>
-    <div className='shot-frame-location-header'><strong>Pozycja z klatki</strong><span>{formatKeyMomentTime(frameTimeSec)}</span></div>
-    <div className='shot-frame-location-controls' aria-label='Zmiana czasu klatki'>
-      {timeSteps.slice(0, 2).map((step) => <button key={step.label} type='button' className='secondary' disabled={loading || projecting} onClick={() => moveFrame(step.delta)}>{step.label}</button>)}
-      <span aria-label='Czas wybranej klatki'>{formatKeyMomentTime(frameTimeSec)}</span>
-      {timeSteps.slice(2).map((step) => <button key={step.label} type='button' className='secondary' disabled={loading || projecting} onClick={() => moveFrame(step.delta)}>{step.label}</button>)}
-    </div>
-    {loading ? <p className='status' role='status'>Wczytuję klatkę…</p> : null}
-    {context?.projection_error ? <p className='status'>{context.projection_error.detail} Nadal możesz użyć ręcznego boiska lub zapisać strzał bez pozycji.</p> : null}
-    {imageSource ? <div className='shot-frame-image-wrap'>
-      <img ref={imageRef} src={imageSource} alt={`Klatka meczu ${formatKeyMomentTime(frameTimeSec)}. Kliknij środek piłki.`} onClick={(event) => void selectPoint(event)} onError={() => setError('Nie udało się wczytać wybranej klatki. Nadal możesz użyć ręcznego boiska lub zapisać strzał bez pozycji.')} />
-      {marker ? <span className='shot-frame-point' aria-hidden='true' style={marker} /> : null}
-    </div> : null}
-    {projecting ? <p className='status' role='status'>Przeliczam punkt na boisko…</p> : null}
-    {value ? <div className='shot-frame-location-result'><span>Wybrano punkt z klatki.</span><button type='button' className='secondary' onClick={() => onChange(null, null)}>Wyczyść punkt</button></div> : null}
-    {error ? <p className='status'>{error}</p> : null}
-  </section>;
+  const zoom = zoomLevels[zoomIndex];
+  return <div className='shot-frame-location-overlay' role='presentation'>
+    <section className='shot-frame-location-dialog' role='dialog' aria-modal='true' aria-labelledby='shot-frame-location-title'>
+      <header className='shot-frame-location-header'><div><h3 id='shot-frame-location-title'>Pozycja strzału z klatki</h3><p className='muted'>Czas klatki nie zmienia czasu zapisanego strzału.</p></div><button ref={closeRef} type='button' className='secondary' onClick={onClose}>Zamknij</button></header>
+      <div className='shot-frame-location-controls' aria-label='Zmiana czasu klatki'>
+        {timeSteps.slice(0, 2).map((step) => <button key={step.label} type='button' className='secondary' disabled={loading || projecting} onClick={() => moveFrame(step.delta)}>{step.label}</button>)}
+        <span aria-label='Czas wybranej klatki'>{formatKeyMomentTime(frameTimeSec)}</span>
+        {timeSteps.slice(2).map((step) => <button key={step.label} type='button' className='secondary' disabled={loading || projecting} onClick={() => moveFrame(step.delta)}>{step.label}</button>)}
+      </div>
+      {(loading || imageLoading) ? <p className='status' role='status'>Wczytuję klatkę…</p> : null}
+      {context?.projection_error ? <p className='status'>{context.projection_error.detail} Nadal możesz użyć ręcznego boiska lub zapisać strzał bez pozycji.</p> : null}
+      {imageSource ? <div className='shot-frame-image-viewport'>
+        <div className='shot-frame-image-scale' style={{ width: `${zoom * 100}%` }}>
+          <img ref={imageRef} src={imageSource} alt={`Klatka meczu ${formatKeyMomentTime(frameTimeSec)}. Kliknij środek piłki.`} onLoad={() => setImageLoading(false)} onClick={(event) => void selectPoint(event)} onError={() => { setImageLoading(false); setError('Nie udało się wczytać wybranej klatki. Nadal możesz użyć ręcznego boiska lub zapisać strzał bez pozycji.'); }} />
+          {marker ? <span className='shot-frame-point' aria-hidden='true' style={marker} /> : null}
+        </div>
+      </div> : null}
+      <footer className='shot-frame-location-footer'>
+        <div className='shot-frame-location-zoom' aria-label='Powiększenie klatki'><button type='button' className='secondary' disabled={zoomIndex === 0} onClick={() => setZoomIndex((index) => index - 1)}>− Zoom</button><span>{Math.round(zoom * 100)}%</span><button type='button' className='secondary' disabled={zoomIndex === zoomLevels.length - 1} onClick={() => setZoomIndex((index) => index + 1)}>+ Zoom</button></div>
+        {value ? <div className='shot-frame-location-result'><span>Wybrana pozycja: {projection ? `${projection.location_m.x.toFixed(2)} × ${projection.location_m.y.toFixed(2)} m` : `${value.x_px.toFixed(0)} × ${value.y_px.toFixed(0)} px`}</span><button type='button' className='secondary' onClick={() => onChange(null, null)}>Wyczyść punkt</button></div> : null}
+        {projecting ? <p className='status' role='status'>Przeliczam punkt na boisko…</p> : null}
+        {error ? <p className='status'>{error}</p> : null}
+        <button type='button' disabled={!value || projecting} onClick={onClose}>Zastosuj pozycję</button>
+      </footer>
+    </section>
+  </div>;
 }

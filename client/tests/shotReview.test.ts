@@ -211,7 +211,8 @@ test('frame correction is lazy, uses natural image pixels, and keeps the canonic
     if (String(path).includes('/frame-location/project')) {
       return Response.json({ location_m: { x: 7.5, y: 12.5 }, provenance: { source_match_id: 'source', source_time_sec: 20, logical_frame_time_sec: 20, x_px: 25, y_px: 25, frame_width: 100, frame_height: 50 } });
     }
-    return Response.json({ logical_frame_time_sec: 20, source_match_id: 'source', source_time_sec: 20, projection_available: true, projection_error: null });
+    const requestedTime = Number(new URL(String(path), 'http://localhost').searchParams.get('logical_frame_time_sec'));
+    return Response.json({ logical_frame_time_sec: requestedTime, source_match_id: 'source', source_time_sec: requestedTime, projection_available: true, projection_error: null });
   };
   const view = render(React.createElement(ShotForm, {
     mode: 'edit', report,
@@ -221,29 +222,65 @@ test('frame correction is lazy, uses natural image pixels, and keeps the canonic
   assert.equal(calls.length, 0);
   assert.equal(view.container.querySelectorAll('iframe').length, 0);
   fireEvent.click(view.getByRole('button', { name: 'Ustaw pozycję z klatki' }));
+  assert.ok(view.getByRole('dialog', { name: 'Pozycja strzału z klatki' }));
   await waitFor(() => assert.match(calls[0]?.path || '', /frame-location\?logical_frame_time_sec=20/));
   await waitFor(() => assert.ok(view.getByAltText(/Kliknij środek piłki/)));
   const image = view.getByAltText(/Kliknij środek piłki/) as HTMLImageElement;
   Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 100 });
   Object.defineProperty(image, 'naturalHeight', { configurable: true, value: 50 });
-  image.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 100, width: 200, height: 100, toJSON: () => ({}) });
+  let displayedWidth = 200;
+  image.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: displayedWidth, bottom: displayedWidth / 2, width: displayedWidth, height: displayedWidth / 2, toJSON: () => ({}) });
   fireEvent.click(image, { clientX: 50, clientY: 50 });
   await waitFor(() => assert.equal(calls.length, 2));
   assert.deepEqual(JSON.parse(String(calls[1].init?.body)), { logical_frame_time_sec: 20, x_px: 25, y_px: 25, frame_width: 100, frame_height: 50 });
   assert.ok(view.container.querySelector('.shot-frame-point'));
+  assert.equal((view.container.querySelector('.shot-frame-point') as HTMLElement).style.left, '25%');
   assert.match(view.getByText('Pozycja z wybranej klatki').textContent || '', /Pozycja z wybranej klatki/);
   fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
   await waitFor(() => assert.deepEqual(saved, { time_sec: 20, team_id: 'corgi', outcome: 'goal', player_id: null, frame_location_override: { logical_frame_time_sec: 20, x_px: 25, y_px: 25, frame_width: 100, frame_height: 50 } }));
-  fireEvent.click(image, { clientX: 100, clientY: 50 });
+  fireEvent.click(view.getByRole('button', { name: '+ Zoom' }));
+  assert.ok(view.getByText('150%'));
+  displayedWidth = 300;
+  fireEvent.click(image, { clientX: 150, clientY: 75 });
   await waitFor(() => assert.equal(calls.length, 3));
   assert.equal(JSON.parse(String(calls[2].init?.body)).x_px, 50);
+  assert.equal((view.container.querySelector('.shot-frame-point') as HTMLElement).style.left, '50%');
+  fireEvent.click(view.getByRole('button', { name: 'Zastosuj pozycję' }));
+  await waitFor(() => assert.equal(view.queryByRole('dialog', { name: 'Pozycja strzału z klatki' }), null));
+  assert.match(view.getByText('Pozycja z wybranej klatki').textContent || '', /Pozycja z wybranej klatki/);
+  fireEvent.click(view.getByRole('button', { name: 'Ustaw pozycję z klatki' }));
+  await waitFor(() => assert.ok(view.getByRole('dialog', { name: 'Pozycja strzału z klatki' })));
   fireEvent.click(view.getByRole('button', { name: 'Wyczyść punkt' }));
   await waitFor(() => assert.equal(view.container.querySelector('.shot-frame-point'), null));
   fireEvent.click(view.getByRole('button', { name: '+0.1 s' }));
-  await waitFor(() => assert.match(calls[3]?.path || '', /logical_frame_time_sec=20.1/));
+  await waitFor(() => assert.equal((view.getByLabelText('Czas wybranej klatki') as HTMLElement).textContent, '0:20.1'));
   assert.equal((view.getByLabelText('Czas strzału') as HTMLInputElement).value, '0:20.0');
+  fireEvent.click(view.getByRole('button', { name: 'Zamknij' }));
   fireEvent.click(view.getByRole('button', { name: 'Zapisz strzał' }));
   await waitFor(() => assert.deepEqual(saved, { time_sec: 20, team_id: 'corgi', outcome: 'goal', player_id: null }));
+});
+
+test('frame correction dialog keeps the persistent report player and closes without resetting ShotForm', async () => {
+  const players = installPlayer();
+  globalThis.fetch = async () => Response.json({ logical_frame_time_sec: 50, source_match_id: 'source', source_time_sec: 50, projection_available: true, projection_error: null });
+  const view = renderReview();
+  await waitFor(() => assert.equal(players.length, 1));
+  const iframe = view.container.querySelector('iframe');
+  fireEvent.click(view.getByRole('tab', { name: 'Strzały' }));
+  fireEvent.click(view.getByRole('button', { name: 'Edytuj' }));
+  fireEvent.click(view.getByRole('button', { name: 'Ustaw pozycję z klatki' }));
+  await waitFor(() => assert.ok(view.getByRole('dialog', { name: 'Pozycja strzału z klatki' })));
+  assert.equal(view.container.querySelectorAll('iframe').length, 1);
+  assert.equal(view.container.querySelector('iframe'), iframe);
+  assert.equal(players.length, 1);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  await waitFor(() => assert.equal(view.queryByRole('dialog', { name: 'Pozycja strzału z klatki' }), null));
+  assert.ok(view.getByRole('heading', { name: 'Edytuj strzał' }));
+  assert.equal(document.activeElement, view.getByRole('button', { name: 'Ustaw pozycję z klatki' }));
+  fireEvent.click(view.getByRole('button', { name: 'Ustaw pozycję z klatki' }));
+  await waitFor(() => assert.ok(view.getByRole('dialog', { name: 'Pozycja strzału z klatki' })));
+  fireEvent.click(view.getByRole('button', { name: 'Zamknij' }));
+  await waitFor(() => assert.equal(view.queryByRole('dialog', { name: 'Pozycja strzału z klatki' }), null));
 });
 
 test('deleting a canonical shot calls the authoritative delete endpoint', async () => {
