@@ -777,6 +777,58 @@ def select_ball_detections(
     return selected
 
 
+def select_ball_detections_from_trusted_seed(
+    frames: list[dict[str, Any]],
+    *,
+    seed: dict[str, Any],
+    fps: float,
+    max_link_speed_mps: float,
+    min_start_conf: float,
+    policy_version: str = DEFAULT_BALL_SELECTION_POLICY,
+) -> dict[int, dict[str, Any]]:
+    """Apply an existing selector forward from one externally trusted row.
+
+    This is intentionally a narrow evaluation helper.  It reindexes a local,
+    already-persisted frame slice so the production selector can begin from a
+    known physical candidate.  The returned rows are the original persisted
+    candidates; no production artifact is changed.
+    """
+
+    seed_frame = int(seed.get("frame") or 0)
+    ordered = sorted(
+        (frame for frame in frames if isinstance(frame, dict) and int(frame.get("frame") or 0) > seed_frame),
+        key=lambda frame: int(frame.get("frame") or 0),
+    )
+    original_by_candidate_id = {str(seed.get("candidate_id") or ""): dict(seed)}
+    trusted_seed = {**seed, "frame": 0, "time_sec": 0.0, "confidence": max(float(seed.get("confidence") or 0.0), min_start_conf)}
+    synthetic_frames = [{"frame": 0, "time_sec": 0.0, "candidates": [trusted_seed]}]
+    for frame in ordered:
+        source_frame = int(frame.get("frame") or 0)
+        synthetic_frame = max(source_frame - seed_frame, 1)
+        candidates = []
+        for candidate in frame.get("candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = str(candidate.get("candidate_id") or "")
+            if not candidate_id:
+                continue
+            original_by_candidate_id[candidate_id] = dict(candidate)
+            candidates.append({**candidate, "frame": synthetic_frame, "time_sec": synthetic_frame / max(fps, 0.001)})
+        synthetic_frames.append({"frame": synthetic_frame, "time_sec": synthetic_frame / max(fps, 0.001), "candidates": candidates})
+    selected = select_ball_detections(
+        synthetic_frames,
+        fps=fps,
+        max_link_speed_mps=max_link_speed_mps,
+        min_start_conf=min_start_conf,
+        policy_version=policy_version,
+    )
+    return {
+        int(original_by_candidate_id[str(row.get("candidate_id") or "")].get("frame") or 0): original_by_candidate_id[str(row.get("candidate_id") or "")]
+        for index, row in selected.items()
+        if index > 0 and str(row.get("candidate_id") or "") in original_by_candidate_id
+    }
+
+
 def _select_ball_detections_with_diagnostics(
     frames: list[dict[str, Any]],
     *,
