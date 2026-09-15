@@ -242,6 +242,15 @@ class ShotReviewEditorTests(unittest.TestCase):
         self.assertEqual(resolved_refresh.call_count, 1)
         self.assertEqual(len(editor.load_shot_review_document("published-one")["canonical_shots"]), 1)
 
+    def test_shot_review_save_refreshes_only_the_resolved_projection_not_downstream_analytics(self) -> None:
+        with patch("app.services.ball_downstream_rebuild.rebuild_ball_downstream_analytics") as downstream_rebuild:
+            editor.create_manual_shot("published-one", {
+                "expected_revision": self._initial()["revision"],
+                "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"},
+            })
+
+        downstream_rebuild.assert_not_called()
+
     def test_both_derived_refresh_failures_are_attempted_and_reported_deterministically(self) -> None:
         self.public_projection_refresh_mock.side_effect = OSError("public unavailable")
         with patch("app.services.resolved_ball_tracks.rebuild_resolved_ball_tracks_for_documents", side_effect=OSError("resolved unavailable")) as resolved_refresh:

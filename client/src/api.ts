@@ -47,6 +47,7 @@ import type {
   MatchGroupExternalVideoStatus,
   MatchGroupVideoStatus,
   MatchGroupSource,
+  BallAnalysisStatus,
   SourceDataRebuildJob,
   SourceDataRebuildPreflight,
   StablePlayerReviewPayload,
@@ -946,6 +947,16 @@ export async function rejectKeyMomentSuggestion(
 
 export async function getShotReviewEditor(publishedMatchId: string): Promise<ShotReviewEditorState> {
   return request<ShotReviewEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/shot-review/editor`);
+}
+
+export async function getBallAnalysisStatus(publishedMatchId: string): Promise<BallAnalysisStatus> {
+  return request<BallAnalysisStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/ball-analysis/status`);
+}
+
+export async function rebuildBallAnalysis(publishedMatchId: string): Promise<BallAnalysisStatus> {
+  return request<BallAnalysisStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/ball-analysis/rebuild`, {
+    method: 'POST',
+  });
 }
 
 export async function getShotReviewFrameLocationContext(publishedMatchId: string, logicalFrameTimeSec: number): Promise<ShotFrameLocationContext> {

@@ -638,12 +638,18 @@ def _build_ball_possession_artifacts(
     write_overlay_video: bool = True,
 ) -> dict[str, Any]:
     stable_doc = stable_players_doc or _load_stable_players_doc(match_dir)
+    from app.services.effective_ball_tracks import load_effective_ball_tracks
+
+    effective_tracks = load_effective_ball_tracks(
+        match_dir,
+        automatic_tracks=ball_tracking.get("ball_tracks") or {},
+    )
     return build_ball_possession_analysis(
         match_dir,
         video_path,
         pitch,
         metadata,
-        ball_tracking.get("ball_tracks") or {},
+        effective_tracks.document,
         stable_doc,
         write_overlay_video=write_overlay_video,
     )

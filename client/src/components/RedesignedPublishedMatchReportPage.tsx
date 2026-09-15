@@ -19,6 +19,7 @@ import { errorMessage } from '../lib/helpers';
 import { ApiRequestError } from '../lib/apiErrors';
 import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport, PublishedMatchDetail, ShotReviewEditorState } from '../types';
 import { MergedSourceDataRebuildPanel } from './MergedSourceDataRebuildPanel';
+import { BallAnalysisRebuildPanel } from './BallAnalysisRebuildPanel';
 import { RedesignedPublishedReportContent } from './RedesignedPublishedReportContent';
 
 export function RedesignedPublishedMatchReportPage() {
@@ -30,6 +31,7 @@ export function RedesignedPublishedMatchReportPage() {
   const [externalVideoLoading, setExternalVideoLoading] = useState(true);
   const [editor, setEditor] = useState<KeyMomentEditorState | null>(null);
   const [shotReviewEditor, setShotReviewEditor] = useState<ShotReviewEditorState | null>(null);
+  const [ballAnalysisRefresh, setBallAnalysisRefresh] = useState(0);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -109,47 +111,57 @@ export function RedesignedPublishedMatchReportPage() {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
           const saved = await createShotReviewShot(matchId, payload);
-          setShotReviewEditor(saved); return saved;
+          setShotReviewEditor(saved); setBallAnalysisRefresh((value) => value + 1); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
       onEditShot={async (shotId, payload) => {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
           const saved = await editShotReviewShot(matchId, shotId, payload);
-          setShotReviewEditor(saved); return saved;
+          setShotReviewEditor(saved); setBallAnalysisRefresh((value) => value + 1); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
       onDeleteShot={async (shotId, payload) => {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
           const saved = await deleteShotReviewShot(matchId, shotId, payload);
-          setShotReviewEditor(saved); return saved;
+          setShotReviewEditor(saved); setBallAnalysisRefresh((value) => value + 1); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
       onAcceptShotSuggestionCluster={async (payload) => {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
           const saved = await acceptShotReviewSuggestionCluster(matchId, payload);
-          setShotReviewEditor(saved); return saved;
+          setShotReviewEditor(saved); setBallAnalysisRefresh((value) => value + 1); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
       onRejectShotSuggestionCluster={async (payload) => {
         if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         try {
           const saved = await rejectShotReviewSuggestionCluster(matchId, payload);
-          setShotReviewEditor(saved); return saved;
+          setShotReviewEditor(saved); setBallAnalysisRefresh((value) => value + 1); return saved;
         } catch (error) { return reloadShotReviewAfterConflict(error); }
       }}
       sourceDataRebuildPanel={
-        devPresentation && report.merged_provenance && matchId
-          ? <MergedSourceDataRebuildPanel
-              mergedId={matchId}
-              devAllowed
-              onReportUpdated={(updated: PublishedMatchDetail) => {
+        devPresentation && matchId ? <>
+          <BallAnalysisRebuildPanel
+            publishedMatchId={matchId}
+            devAllowed
+            refreshKey={ballAnalysisRefresh}
+            onRebuilt={() => {
+              void getPublishedMatch(matchId).then((updated) => {
                 if (updated.public_report) setReport(updated.public_report);
-              }}
-            />
-          : null
+              }).catch(() => undefined);
+            }}
+          />
+          {report.merged_provenance ? <MergedSourceDataRebuildPanel
+            mergedId={matchId}
+            devAllowed
+            onReportUpdated={(updated: PublishedMatchDetail) => {
+              if (updated.public_report) setReport(updated.public_report);
+            }}
+          /> : null}
+        </> : null
       }
     /> : null}
   </main>;

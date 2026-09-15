@@ -16,6 +16,7 @@ from app.services.candidate_keys import (
 from app.services.ball_tracking import _BallOverlayWriter, _draw_ball_position, _draw_frame_stamp
 from app.services.contact_auto_review import apply_auto_contact_review
 from app.services.event_candidates import build_event_candidate_artifacts
+from app.services.effective_ball_tracks import effective_ball_track_digest
 from app.services.match_phase_config import load_match_phase_config
 from app.services.pass_candidates import build_pass_review_report, update_pass_candidate_summary
 
@@ -62,6 +63,7 @@ def build_ball_possession_analysis(
     stable_players_doc: dict[str, Any] | None,
     *,
     write_overlay_video: bool = True,
+    persist_artifacts: bool = True,
 ) -> dict[str, Any]:
     fps = float(video_metadata.get("fps") or 0.0)
     width = int(video_metadata.get("width") or 0)
@@ -134,15 +136,17 @@ def build_ball_possession_analysis(
         match_duration_sec=video_metadata.get("duration_sec"),
     )
     report_doc = build_possession_report(candidates_doc, segments_doc, contact_doc, restart_doc)
-    _write_possession_artifacts(
-        match_dir,
-        candidates_doc,
-        segments_doc,
-        contact_doc,
-        event_docs,
-        momentum_doc,
-        report_doc,
-    )
+    if persist_artifacts:
+        _write_possession_artifacts(
+            match_dir,
+            candidates_doc,
+            segments_doc,
+            contact_doc,
+            event_docs,
+            momentum_doc,
+            report_doc,
+        )
+        _write_downstream_generation_marker(match_dir, ball_tracks_doc, write_overlay_video=write_overlay_video)
     artifacts = {
         "possession_candidates": "possession_candidates.json",
         "possession_segments": "possession_segments.json",
@@ -153,6 +157,8 @@ def build_ball_possession_analysis(
         "possession_report": "possession_report.json",
     }
     if write_overlay_video:
+        if not persist_artifacts:
+            raise ValueError("Overlay rendering requires persisted possession artifacts.")
         write_possession_overlay(
             video_path,
             match_dir,
@@ -1783,6 +1789,33 @@ def _write_possession_artifacts(
             (match_dir / filename).write_text(json.dumps(event_docs[doc_key], indent=2), encoding="utf-8")
     (match_dir / "attacking_momentum.json").write_text(json.dumps(momentum_doc, indent=2), encoding="utf-8")
     (match_dir / "possession_report.json").write_text(json.dumps(report_doc, indent=2), encoding="utf-8")
+
+
+def _write_downstream_generation_marker(
+    match_dir: Path,
+    ball_tracks_doc: dict[str, Any],
+    *,
+    write_overlay_video: bool,
+) -> None:
+    """Record normal full-pipeline input without triggering any extra work.
+
+    Explicit Shot Review maintenance uses the stronger transactional writer in
+    ``ball_downstream_rebuild``.  The normal full pipeline has already written
+    its artifacts as part of its established job, and this marker makes that
+    effective input visible to the same stale/current contract.
+    """
+
+    marker = {
+        "schema_version": "ball-downstream-generation:v1",
+        "generated_at": now_iso(),
+        "trigger": "analysis_pipeline",
+        "ball_track_input_digest": effective_ball_track_digest(ball_tracks_doc),
+        "write_overlay_video": write_overlay_video,
+    }
+    target = match_dir / "ball_downstream_generation.json"
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(marker, indent=2), encoding="utf-8")
+    temporary.replace(target)
 
 
 def _valid_pair(value: Any) -> bool:
