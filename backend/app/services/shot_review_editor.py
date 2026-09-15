@@ -21,6 +21,7 @@ from app.services.json_publish_store import MERGED_SOURCE_KIND, get_published_ma
 from app.services.match_groups import get_match_group
 from app.services.match_phase_config import direction_for_team_at_time
 from app.services.merged_public_match import group_id_for_merged_published_id
+from app.services.published_source_context import source_context_for_published_time
 from app.services.resolved_player_timeline import build_resolved_player_timeline_from_files
 from app.services.shot_candidates import MIN_BALL_CONFIDENCE, build_logical_shot_candidates_document
 
@@ -194,21 +195,13 @@ def _read_object(path: Path) -> dict[str, Any]:
 
 
 def _source_context(published_id: str, report: Mapping[str, Any], time_sec: float) -> tuple[str, float] | None:
-    match = get_published_match(published_id)
-    if str(match.get("source_kind") or "physical") != MERGED_SOURCE_KIND:
-        source_id = str(match.get("source_match_id") or "")
-        return (source_id, time_sec) if source_id else None
-    group_id = group_id_for_merged_published_id(published_id)
-    if not group_id:
-        return None
-    for member in get_match_group(group_id).get("members") or []:
-        if not isinstance(member, Mapping):
-            continue
-        start, end = _number(member.get("logical_start_sec")), _number(member.get("logical_end_sec"))
-        source_id = str(member.get("source_match_id") or "")
-        if source_id and start is not None and end is not None and start <= time_sec <= end:
-            return source_id, time_sec - start
-    return None
+    return source_context_for_published_time(
+        get_published_match(published_id),
+        published_id,
+        time_sec,
+        group_id_for_merged_published_id=group_id_for_merged_published_id,
+        get_match_group=get_match_group,
+    )
 
 
 def _suggestion_projection(published_id: str) -> dict[str, Any]:
@@ -632,7 +625,22 @@ def _validate_shot(
         raise ShotReviewError("shot_review_player_invalid", "Wybrany zawodnik nie występuje w raporcie.")
     if player_id is not None and players[player_id] != team_id:
         raise ShotReviewError("shot_review_player_invalid", "Zawodnik nie należy do wybranej drużyny.")
-    if location_mode == "preserve" and existing is not None:
+    frame_location_override = raw.get("frame_location_override")
+    if frame_location_override is not None and manual_location_override is not None:
+        raise ShotReviewError("shot_review_location_intent_conflict", "Wybierz pozycję z klatki albo ręcznie na boisku.")
+    frame_provenance: dict[str, Any] | None = None
+    if frame_location_override is not None:
+        # The saved override contains the original clicked image point rather
+        # than a frontend-calculated pitch point.  Re-projecting here keeps
+        # the backend the sole authority for image-to-pitch geometry.
+        from app.services.shot_frame_location import ShotFrameLocationError, project_frame_location
+        try:
+            projection = project_frame_location(published_id, _record(frame_location_override))
+        except ShotFrameLocationError as error:
+            raise ShotReviewError(error.code, error.detail, error.status_code) from error
+        location, location_source = projection["location_m"], "manual"
+        frame_provenance = _record(projection.get("provenance"))
+    elif location_mode == "preserve" and existing is not None:
         location, location_source = copy.deepcopy(existing.get("location_m")), str(existing.get("location_source") or "unavailable")
         if location_source not in LOCATION_SOURCES:
             raise ShotReviewError("shot_review_location_invalid", "Istniejąca lokalizacja strzału jest nieprawidłowa.", 409)
@@ -645,7 +653,14 @@ def _validate_shot(
         location, location_source = _location_for_shot(published_id, report, time_sec, player_id, None)
     else:
         location, location_source = _location_for_shot(published_id, report, time_sec, player_id, raw.get("location_m"))
-    return {**copy.deepcopy(existing or {}), "shot_id": str((existing or {}).get("shot_id") or f"shot-review-{uuid.uuid4()}"), "time_sec": round(time_sec, 6), "team_id": team_id, "outcome": outcome, "player_id": player_id, "origin": origin, "location_m": location, "location_source": location_source}
+    result = {**copy.deepcopy(existing or {}), "shot_id": str((existing or {}).get("shot_id") or f"shot-review-{uuid.uuid4()}"), "time_sec": round(time_sec, 6), "team_id": team_id, "outcome": outcome, "player_id": player_id, "origin": origin, "location_m": location, "location_source": location_source}
+    if frame_provenance:
+        result["location_correction_provenance"] = frame_provenance
+    elif location_mode != "preserve":
+        # A newly derived or mini-pitch point supersedes historical frame
+        # evidence. Metadata-only edits deliberately preserve it unchanged.
+        result.pop("location_correction_provenance", None)
+    return result
 
 
 def _ensure_revision(current: Mapping[str, Any], payload: Mapping[str, Any]) -> None:

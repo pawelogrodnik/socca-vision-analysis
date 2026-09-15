@@ -162,6 +162,14 @@ a { color: #93c5fd; }
 .public-shot-map-marker:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
 .public-shot-detail { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: #d8f5ff; font-size: .86rem; }
 .public-shot-detail span + span::before { margin-right: 8px; color: #5f8ba1; content: '·'; }
+.shot-frame-location-correction { display: grid; gap: 9px; margin-top: 10px; padding: 11px; border: 1px solid #28617d; border-radius: 10px; background: rgba(5, 34, 57, .62); }
+.shot-frame-location-header, .shot-frame-location-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #dff8ff; font-size: .84rem; }
+.shot-frame-location-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.shot-frame-location-controls span { min-width: 58px; color: #b8d6e5; font-size: .8rem; text-align: center; }
+.shot-frame-location-controls .secondary, .shot-frame-location-result .secondary { padding: 5px 7px; font-size: .74rem; }
+.shot-frame-image-wrap { position: relative; overflow: hidden; border: 1px solid #3b7490; border-radius: 7px; background: #011525; line-height: 0; }
+.shot-frame-image-wrap img { display: block; width: 100%; height: auto; cursor: crosshair; }
+.shot-frame-point { position: absolute; width: 16px; height: 16px; border: 3px solid #f8fafc; border-radius: 50%; background: rgba(15, 207, 174, .5); box-shadow: 0 0 0 2px rgba(1, 19, 34, .78); pointer-events: none; transform: translate(-50%, -50%); }
 .redesign-flow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .redesign-flow-grid article { padding: 14px; border: 1px solid #1c4965; border-radius: 12px; background: rgba(2, 24, 45, .54); }
 .redesign-flow-grid h3 { margin: 0 0 10px; color: #effaff; font-size: .95rem; }

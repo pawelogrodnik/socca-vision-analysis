@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.main import app
 from app.services import shot_review_editor as editor
+from app.services import shot_frame_location as frame_location
 from app.services.shot_candidates import POLICY_VERSION, V2_POLICY_VERSION
 
 
@@ -138,6 +139,98 @@ class ShotReviewEditorTests(unittest.TestCase):
                 editor._public_map_location("published-merged-one", merged_match["public_report"], {"time_sec": 112, "team_id": "team-a", "location_m": {"x": 6, "y": 12}}),
                 {"x": 0.8, "y": 0.7},
             )
+
+    def test_frame_location_context_and_projection_use_the_physical_source_pitch(self) -> None:
+        _write(self.matches / "source-one" / "pitch_config.json", {
+            "image_points": [[0, 0], [100, 0], [100, 200], [0, 200]],
+            "width_m": 30, "length_m": 40,
+        })
+        with patch("app.services.shot_frame_location.get_published_match", return_value=_match()):
+            context = frame_location.frame_location_context("published-one", 10.5)
+            projected = frame_location.project_frame_location("published-one", {
+                "logical_frame_time_sec": 10.5,
+                "x_px": 50,
+                "y_px": 100,
+                "frame_width": 100,
+                "frame_height": 200,
+            })
+        self.assertEqual(context, {
+            "logical_frame_time_sec": 10.5,
+            "source_match_id": "source-one",
+            "source_time_sec": 10.5,
+            "projection_available": True,
+            "projection_error": None,
+        })
+        self.assertEqual(projected["location_m"], {"x": 15.0, "y": 20.0})
+        self.assertEqual(projected["provenance"]["source_time_sec"], 10.5)
+
+    def test_frame_location_resolves_merged_logical_time_to_the_correct_member_and_local_time(self) -> None:
+        _write(self.matches / "source-two" / "pitch_config.json", {
+            "image_points": [[0, 0], [100, 0], [100, 200], [0, 200]],
+            "width_m": 30, "length_m": 40,
+        })
+        merged = {"source_kind": "merged", "public_report": _report()}
+        with patch("app.services.shot_frame_location.get_published_match", return_value=merged), patch("app.services.shot_frame_location.group_id_for_merged_published_id", return_value="group-one"), patch("app.services.shot_frame_location.get_match_group", return_value={"members": [
+            {"source_match_id": "source-one", "logical_start_sec": 0, "logical_end_sec": 100},
+            {"source_match_id": "source-two", "logical_start_sec": 100.1, "logical_end_sec": 200},
+        ]}):
+            context = frame_location.frame_location_context("published-merged-one", 112.1)
+            projected = frame_location.project_frame_location("published-merged-one", {
+                "logical_frame_time_sec": 112.1,
+                "x_px": 100,
+                "y_px": 200,
+                "frame_width": 100,
+                "frame_height": 200,
+            })
+        self.assertEqual((context["source_match_id"], context["source_time_sec"]), ("source-two", 12.0))
+        self.assertEqual((projected["location_m"], projected["provenance"]["source_match_id"]), ({"x": 30.0, "y": 40.0}, "source-two"))
+
+    def test_frame_location_fails_closed_for_missing_calibration_invalid_pixel_and_out_of_pitch_projection(self) -> None:
+        with patch("app.services.shot_frame_location.get_published_match", return_value=_match()):
+            unavailable = frame_location.frame_location_context("published-one", 10)
+            self.assertFalse(unavailable["projection_available"])
+            self.assertEqual(unavailable["projection_error"]["code"], "shot_review_frame_calibration_unavailable")
+            with self.assertRaises(frame_location.ShotFrameLocationError) as invalid_point:
+                frame_location.project_frame_location("published-one", {"logical_frame_time_sec": 10, "x_px": 101, "y_px": 50, "frame_width": 100, "frame_height": 100})
+        self.assertEqual(invalid_point.exception.code, "shot_review_frame_point_invalid")
+        _write(self.matches / "source-one" / "pitch_config.json", {
+            "image_points": [[20, 20], [80, 20], [80, 80], [20, 80]],
+            "width_m": 30, "length_m": 40,
+        })
+        with patch("app.services.shot_frame_location.get_published_match", return_value=_match()):
+            with self.assertRaises(frame_location.ShotFrameLocationError) as out_of_pitch:
+                frame_location.project_frame_location("published-one", {"logical_frame_time_sec": 10, "x_px": 0, "y_px": 0, "frame_width": 100, "frame_height": 100})
+        self.assertEqual(out_of_pitch.exception.code, "shot_review_frame_projection_out_of_pitch")
+
+    def test_frame_location_override_reprojects_on_save_preserves_shot_anchor_and_stays_internal(self) -> None:
+        _write(self.matches / "source-one" / "pitch_config.json", {
+            "image_points": [[0, 0], [100, 0], [100, 200], [0, 200]],
+            "width_m": 30, "length_m": 40,
+        })
+        with patch("app.services.shot_frame_location.get_published_match", return_value=_match()):
+            initial = self._initial()
+            saved = editor.create_manual_shot("published-one", {
+                "expected_revision": initial["revision"],
+                "shot": {
+                    "time_sec": 10,
+                    "team_id": "team-a",
+                    "outcome": "goal",
+                    "frame_location_override": {
+                        "logical_frame_time_sec": 12,
+                        "x_px": 50,
+                        "y_px": 100,
+                        "frame_width": 100,
+                        "frame_height": 200,
+                    },
+                },
+            })
+        shot = saved["canonical_shots"][0]
+        self.assertEqual((shot["time_sec"], shot["location_m"], shot["location_source"]), (10.0, {"x": 15.0, "y": 20.0}, "manual"))
+        persisted = editor.load_shot_review_document("published-one")["canonical_shots"][0]
+        self.assertEqual(persisted["location_correction_provenance"]["source_time_sec"], 12.0)
+        with patch("app.services.shot_review_editor.get_published_match", return_value=_match()):
+            public = editor.public_canonical_shots_projection("published-one")
+        self.assertEqual(public, [{"shot_id": shot["shot_id"], "time_sec": 10.0, "team_id": "team-a", "outcome": "goal", "player_id": None, "location_m": {"x": 15.0, "y": 20.0}}])
 
     def test_rejection_is_durable_for_same_lineage(self) -> None:
         initial = self._initial()
@@ -428,4 +521,4 @@ class ShotReviewEditorTests(unittest.TestCase):
     def test_editor_endpoints_are_registered_without_frontend_routes(self) -> None:
         paths = {getattr(route, "path", "") for route in app.routes}
         base = "/api/published/matches/{published_match_id}/shot-review/editor"
-        self.assertTrue({base, f"{base}/suggestions/accept", f"{base}/suggestions/reject", f"{base}/suggestion-clusters/accept", f"{base}/suggestion-clusters/reject", f"{base}/shots", f"{base}/shots/{{shot_id}}"}.issubset(paths))
+        self.assertTrue({base, f"{base}/frame-location", f"{base}/frame-location/project", f"{base}/suggestions/accept", f"{base}/suggestions/reject", f"{base}/suggestion-clusters/accept", f"{base}/suggestion-clusters/reject", f"{base}/shots", f"{base}/shots/{{shot_id}}"}.issubset(paths))

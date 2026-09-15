@@ -97,6 +97,11 @@ from app.services.shot_review_editor import (
     reject_cluster as reject_shot_suggestion_cluster,
     reject_suggestion as reject_shot_suggestion,
 )
+from app.services.shot_frame_location import (
+    ShotFrameLocationError,
+    frame_location_context,
+    project_frame_location,
+)
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
@@ -4179,6 +4184,10 @@ def _shot_review_error_response(error: ShotReviewError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail={"code": error.code, "detail": error.detail})
 
 
+def _shot_frame_location_error_response(error: ShotFrameLocationError) -> HTTPException:
+    return HTTPException(status_code=error.status_code, detail={"code": error.code, "detail": error.detail})
+
+
 @app.get("/api/published/matches/{published_match_id}/shot-review/editor")
 def api_get_shot_review_editor(published_match_id: str) -> dict[str, Any]:
     try:
@@ -4187,6 +4196,26 @@ def api_get_shot_review_editor(published_match_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
     except ShotReviewError as error:
         raise _shot_review_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/shot-review/editor/frame-location")
+def api_get_shot_frame_location_context(published_match_id: str, logical_frame_time_sec: float) -> dict[str, Any]:
+    try:
+        return frame_location_context(published_match_id, logical_frame_time_sec)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotFrameLocationError as error:
+        raise _shot_frame_location_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/shot-review/editor/frame-location/project")
+def api_project_shot_frame_location(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return project_frame_location(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except ShotFrameLocationError as error:
+        raise _shot_frame_location_error_response(error) from error
 
 
 @app.post("/api/published/matches/{published_match_id}/shot-review/editor/suggestions/accept")
