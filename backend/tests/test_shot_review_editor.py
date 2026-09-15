@@ -229,6 +229,32 @@ class ShotReviewEditorTests(unittest.TestCase):
         self.assertEqual(failure.exception.code, "shot_review_public_projection_refresh_failed")
         self.assertEqual(len(editor.load_shot_review_document("published-one")["canonical_shots"]), 1)
 
+    def test_derived_refreshes_are_attempted_independently_and_name_the_resolved_failure(self) -> None:
+        with patch("app.services.resolved_ball_tracks.rebuild_resolved_ball_tracks_for_documents", side_effect=OSError("resolved unavailable")) as resolved_refresh:
+            with self.assertRaises(editor.ShotReviewError) as failure:
+                editor.create_manual_shot("published-one", {
+                    "expected_revision": self._initial()["revision"],
+                    "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"},
+                })
+
+        self.assertEqual(failure.exception.code, "shot_review_resolved_ball_tracks_refresh_failed")
+        self.public_projection_refresh_mock.assert_called_once()
+        self.assertEqual(resolved_refresh.call_count, 1)
+        self.assertEqual(len(editor.load_shot_review_document("published-one")["canonical_shots"]), 1)
+
+    def test_both_derived_refresh_failures_are_attempted_and_reported_deterministically(self) -> None:
+        self.public_projection_refresh_mock.side_effect = OSError("public unavailable")
+        with patch("app.services.resolved_ball_tracks.rebuild_resolved_ball_tracks_for_documents", side_effect=OSError("resolved unavailable")) as resolved_refresh:
+            with self.assertRaises(editor.ShotReviewError) as failure:
+                editor.create_manual_shot("published-one", {
+                    "expected_revision": self._initial()["revision"],
+                    "shot": {"time_sec": 10, "team_id": "team-a", "outcome": "goal"},
+                })
+
+        self.assertEqual(failure.exception.code, "shot_review_derived_projection_refresh_failed")
+        self.assertIn("public_shot_projection, resolved_ball_tracks", failure.exception.detail)
+        self.assertEqual(resolved_refresh.call_count, 1)
+
     def test_public_projection_preserves_legacy_absence_and_fails_closed_for_recovery(self) -> None:
         self.assertIsNone(editor.public_canonical_shots_projection("published-one"))
         editorial = self.root / "editorial"

@@ -4634,6 +4634,9 @@ def stabilize_match(
     )
     if refined_ball_tracks_doc is not None and ball_tracks_doc is not None:
         (match_dir / "ball_tracks.json").write_text(json.dumps(refined_ball_tracks_doc, indent=2), encoding="utf-8")
+        from app.services.resolved_ball_tracks import write_resolved_ball_tracks_artifact
+
+        write_resolved_ball_tracks_artifact(match_dir)
     frame_detection_counts = build_frame_detection_counts_from_global_identity(
         global_identity,
         fps=float(video_metadata.get("fps") or 25.0),

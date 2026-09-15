@@ -822,11 +822,23 @@ def select_ball_detections_from_trusted_seed(
         min_start_conf=min_start_conf,
         policy_version=policy_version,
     )
-    return {
-        int(original_by_candidate_id[str(row.get("candidate_id") or "")].get("frame") or 0): original_by_candidate_id[str(row.get("candidate_id") or "")]
-        for index, row in selected.items()
-        if index > 0 and str(row.get("candidate_id") or "") in original_by_candidate_id
-    }
+    result: dict[int, dict[str, Any]] = {}
+    for index, row in selected.items():
+        candidate_id = str(row.get("candidate_id") or "")
+        if index <= 0 or candidate_id not in original_by_candidate_id:
+            continue
+        # Preserve production selector boundary metadata for consumers that
+        # must stop a bounded reassociation at a real segment restart.
+        original = original_by_candidate_id[candidate_id]
+        result[int(original.get("frame") or 0)] = {
+            **original,
+            **{
+                key: row[key]
+                for key in ("selection_reason", "selection_details", "segment_start_reason")
+                if key in row
+            },
+        }
+    return result
 
 
 def _select_ball_detections_with_diagnostics(
@@ -1684,6 +1696,11 @@ def _write_ball_artifacts(
     (match_dir / "ball_tracks.json").write_text(json.dumps(tracks_doc, indent=2), encoding="utf-8")
     (match_dir / "ball_tracking_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (match_dir / "ball_quality_report.json").write_text(json.dumps(quality_report, indent=2), encoding="utf-8")
+    # Raw tracking remains generated baseline evidence.  The optional durable
+    # operator layer is always emitted separately and never writes it back.
+    from app.services.resolved_ball_tracks import write_resolved_ball_tracks_artifact
+
+    write_resolved_ball_tracks_artifact(match_dir)
 
 
 def _ball_result(
