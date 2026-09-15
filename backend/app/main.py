@@ -22,6 +22,11 @@ from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, ma
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
 from app.services.chunked_analysis import analyze_match_chunked_yolo
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
+from app.services.ball_downstream_rebuild import (
+    BallDownstreamRebuildError,
+    ball_downstream_status,
+    rebuild_ball_downstream_analytics,
+)
 from app.services.identity import build_identity_review, save_identity_assignments
 from app.services.identity_crop_review import (
     build_identity_crop_review,
@@ -4389,6 +4394,25 @@ def api_refresh_merged_published_match_to_latest(published_match_id: str) -> dic
         raise HTTPException(status_code=404, detail="Published match not found") from exc
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/ball-analysis/status")
+def api_get_ball_analysis_status(published_match_id: str) -> dict[str, Any]:
+    try:
+        return ball_downstream_status(published_match_id)
+    except BallDownstreamRebuildError as error:
+        raise HTTPException(status_code=409, detail={"code": "ball_analysis_status_unavailable", "detail": str(error)}) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/ball-analysis/rebuild")
+def api_rebuild_ball_analysis(published_match_id: str) -> dict[str, Any]:
+    try:
+        return rebuild_ball_downstream_analytics(
+            published_match_id,
+            package_builder=build_match_package,
+        )
+    except BallDownstreamRebuildError as error:
+        raise HTTPException(status_code=409, detail={"code": "ball_analysis_rebuild_failed", "detail": str(error)}) from error
 
 
 @app.get("/api/published/matches/{published_match_id}/rebuild-source-data/preview")

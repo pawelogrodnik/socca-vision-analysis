@@ -549,12 +549,15 @@ def analyze_match_chunked_yolo(
                     "Building possession, pass and attacking momentum candidate layers.",
                     None,
                 )
+            from app.services.effective_ball_tracks import load_effective_ball_tracks
+
+            effective_tracks = load_effective_ball_tracks(match_dir, automatic_tracks=ball_tracks_doc)
             possession = build_ball_possession_analysis(
                 match_dir,
                 video_path,
                 pitch,
                 metadata,
-                ball_tracks_doc,
+                effective_tracks.document,
                 stabilization.get("stable_players_overlay_doc") or stabilization["stable_players"],
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,6 +15,7 @@ from app.services.ball_possession import (
     build_restart_candidates_document,
     build_possession_segments_document,
 )
+from app.services.effective_ball_tracks import effective_ball_track_digest
 
 
 def ball(frame: int, x: float, y: float, source: str = "detected") -> dict:
@@ -168,6 +170,8 @@ class BallPossessionTests(unittest.TestCase):
             self.assertIn("attacking_momentum", result)
             self.assertEqual(result["artifacts"]["attacking_momentum"], "attacking_momentum.json")
             self.assertTrue((match_dir / "attacking_momentum.json").exists())
+            generation = json.loads((match_dir / "ball_downstream_generation.json").read_text(encoding="utf-8"))
+            self.assertEqual(generation["ball_track_input_digest"], effective_ball_track_digest({"positions": [ball(0, 15.0, 20.0)]}))
 
     def test_possession_marks_controlled_when_one_player_is_close(self) -> None:
         doc = build_possession_candidates_document(

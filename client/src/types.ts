@@ -3284,6 +3284,24 @@ export type SourceDataRebuildJob = {
   merged?: { status: 'refreshed' | 'current'; merged_published_match_id: string; group_id: string };
 };
 
+export type BallAnalysisSourceStatus = {
+  published_id: string;
+  source_match_id: string;
+  status: 'current' | 'stale';
+  current_effective_ball_track_digest: string;
+  ball_track_input_digest: string | null;
+  provenance: 'resolved_operator_projection' | 'automatic_legacy_fallback';
+};
+
+export type BallAnalysisStatus = {
+  published_match_id: string;
+  status: 'current' | 'stale';
+  source_count: number;
+  sources: BallAnalysisSourceStatus[];
+  result?: 'already_current' | 'rebuilt';
+  rebuilt_sources?: BallAnalysisSourceStatus[];
+};
+
 export type MatchGroupReportResponse = {
   report: AggregatePublicMatchReport;
   validation: MatchGroupCompatibility;
