@@ -99847,12 +99847,12 @@
     },
     {
       "location_m": {
-        "x": 0.907,
-        "y": 5.932
+        "x": 2.869328,
+        "y": 17.334581
       },
       "map_location": {
-        "x": 0.030233,
-        "y": 0.125148
+        "x": 0.095644,
+        "y": 0.365708
       },
       "outcome": "off_target",
       "player_id": "team-corgi-1fc405-player-3-przemek",
