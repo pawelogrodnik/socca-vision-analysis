@@ -312,6 +312,14 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
 
     result = get_published_match(published_id)
     result["public_report"] = public_report
+    # A normal analysis has already generated its ball-derived artifacts.  A
+    # successful physical publication completes that lifecycle; acknowledge it
+    # only when its marker still proves the exact ball and player inputs.
+    # Import lazily to keep the publication store independent of maintenance
+    # orchestration during module initialization.
+    from app.services.ball_downstream_rebuild import acknowledge_ball_downstream_physical_publication
+
+    acknowledge_ball_downstream_physical_publication(source_match_id, published_id)
     return result
 
 

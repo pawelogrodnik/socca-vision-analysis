@@ -550,16 +550,22 @@ def analyze_match_chunked_yolo(
                     None,
                 )
             from app.services.effective_ball_tracks import load_effective_ball_tracks
+            from app.services.player_event_timeline import load_player_event_timeline
 
             effective_tracks = load_effective_ball_tracks(match_dir, automatic_tracks=ball_tracks_doc)
+            player_timeline = load_player_event_timeline(match_dir)
             possession = build_ball_possession_analysis(
                 match_dir,
                 video_path,
                 pitch,
                 metadata,
                 effective_tracks.document,
-                stabilization.get("stable_players_overlay_doc") or stabilization["stable_players"],
+                player_timeline.document,
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
+                ball_track_input_provenance=effective_tracks.provenance,
+                ball_track_input_artifact=effective_tracks.artifact,
+                player_event_timeline_provenance=player_timeline.provenance,
+                player_event_timeline_artifact=player_timeline.artifact,
             )
             artifacts.update(possession["artifacts"])
         except Exception as exc:

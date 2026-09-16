@@ -110,7 +110,10 @@ def rebuild_ball_downstream_analytics(
     # A physical page may be a member of one or more merged reports.  Refresh
     # by dependency, never by the page that happened to start the operation.
     for group in affected_groups:
-        _mark_group_publication_pending(group["group_id"], initial["sources"])
+        # A merged read model depends on every physical member, not just the
+        # source whose page started this maintenance request.  Snapshot the
+        # complete effective input set before it is refreshed.
+        _mark_group_publication_pending(group["group_id"])
     for group in affected_groups:
         refresh_merged_match_to_latest(group["group_id"])
         _mark_group_publication_current(group["group_id"])
@@ -202,8 +205,7 @@ def _affected_groups(
     if explicit_group_id:
         by_group[str(explicit_group_id)] = {"group_id": str(explicit_group_id)}
     for group_id, group in by_group.items():
-        state = _read_optional_object(_group_publication_state_path(group_id))
-        group["status"] = "current" if isinstance(state, dict) and state.get("status") == "current" else "pending"
+        group["status"] = _group_publication_status(group_id)["status"]
     return [by_group[group_id] for group_id in sorted(by_group)]
 
 
@@ -225,18 +227,13 @@ def _groups_for_source(source: dict[str, Any]) -> list[dict[str, Any]]:
     return [group for group in groups if group["group_id"]]
 
 
-def _group_statuses_for_source(source: dict[str, str], effective_digest: str) -> list[dict[str, Any]]:
+def _group_statuses_for_source(source: dict[str, str]) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     for group in _groups_for_source(source):
         group_id = group["group_id"]
-        state = _read_optional_object(_group_publication_state_path(group_id))
-        source_digests = state.get("source_digests") if isinstance(state, dict) else None
-        status = "current"
-        if not isinstance(state, dict) or state.get("status") != "current":
-            status = "pending"
-        elif not isinstance(source_digests, dict) or source_digests.get(source["published_id"]) != effective_digest:
-            status = "pending"
-        statuses.append({"group_id": group_id, "status": status})
+        # Do not infer freshness from the initiating source alone: another
+        # group member can have changed while this source stayed untouched.
+        statuses.append({"group_id": group_id, "status": _group_publication_status(group_id)["status"]})
     return statuses
 
 
@@ -250,19 +247,71 @@ def _mark_physical_publication_current(match_path: Path, published_id: str) -> N
     _write_json_atomic(match_path / GENERATION_FILENAME, generation)
 
 
-def _mark_group_publication_pending(group_id: str, sources: list[dict[str, Any]]) -> None:
-    current = _read_optional_object(_group_publication_state_path(group_id)) or {}
-    digests = current.get("source_digests") if isinstance(current.get("source_digests"), dict) else {}
-    members = get_match_group(group_id).get("members") or []
-    member_published_ids = {
-        str(member.get("published_id") or "")
-        for member in members
-        if isinstance(member, dict)
-    }
-    for source in sources:
-        published_id = str(source.get("published_id") or "")
-        if published_id in member_published_ids:
-            digests[published_id] = str(source.get("current_effective_ball_track_digest") or "")
+def acknowledge_ball_downstream_physical_publication(source_match_id: str, published_id: str) -> bool:
+    """Acknowledge a successful normal physical publish when it is fresh.
+
+    Normal analysis has already generated the downstream family.  Publishing
+    that same physical package is the final lifecycle step; it must not force
+    an operator to run the explicit maintenance action again.  Legacy or
+    incomplete markers deliberately remain unacknowledged and therefore stale.
+    """
+
+    match_path = config.MATCHES_DIR / source_match_id
+    generation = _read_optional_object(match_path / GENERATION_FILENAME)
+    if not isinstance(generation, dict):
+        return False
+    try:
+        effective = load_effective_ball_tracks(match_path)
+        players = load_player_event_timeline(match_path)
+    except (EffectiveBallTracksError, PlayerEventTimelineError):
+        return False
+    analytics = generation.get("analytics_generation")
+    if (
+        generation.get("ball_track_input_digest") != effective.input_digest
+        or generation.get("player_event_timeline_digest") != players.input_digest
+        or not isinstance(analytics, dict)
+        or analytics.get("status") != "current"
+    ):
+        return False
+    _mark_physical_publication_current(match_path, published_id)
+    return True
+
+
+def _current_group_source_digests(group_id: str) -> dict[str, str]:
+    group = get_match_group(group_id)
+    members = group.get("members") if isinstance(group.get("members"), list) else []
+    digests: dict[str, str] = {}
+    for member in members:
+        if not isinstance(member, dict):
+            continue
+        published_id = str(member.get("published_id") or "")
+        source_match_id = str(member.get("source_match_id") or "")
+        if not published_id or not source_match_id or published_id in digests:
+            raise BallDownstreamRebuildError(f"Merged group {group_id} has invalid physical source bindings.")
+        try:
+            digests[published_id] = load_effective_ball_tracks(config.MATCHES_DIR / source_match_id).input_digest
+        except EffectiveBallTracksError as error:
+            raise BallDownstreamRebuildError(f"{source_match_id}: {error}") from error
+    if not digests:
+        raise BallDownstreamRebuildError(f"Merged group {group_id} has no physical source bindings.")
+    return digests
+
+
+def _group_publication_status(group_id: str) -> dict[str, Any]:
+    state = _read_optional_object(_group_publication_state_path(group_id))
+    current_digests = _current_group_source_digests(group_id)
+    stored_digests = state.get("source_digests") if isinstance(state, dict) else None
+    current = (
+        isinstance(state, dict)
+        and state.get("status") == "current"
+        and isinstance(stored_digests, dict)
+        and {str(key): str(value) for key, value in stored_digests.items()} == current_digests
+    )
+    return {"status": "current" if current else "pending", "source_digests": current_digests}
+
+
+def _mark_group_publication_pending(group_id: str) -> None:
+    digests = _current_group_source_digests(group_id)
     _write_json_atomic(_group_publication_state_path(group_id), {
         "schema_version": "ball-downstream-publication-state:v1",
         "group_id": group_id,
@@ -275,6 +324,9 @@ def _mark_group_publication_pending(group_id: str, sources: list[dict[str, Any]]
 def _mark_group_publication_current(group_id: str) -> None:
     path = _group_publication_state_path(group_id)
     current = _read_object(path, "ball analytics group publication state")
+    # Capture every member again after a successful refresh.  The state is a
+    # content snapshot, never merely a success flag for the initiating source.
+    current["source_digests"] = _current_group_source_digests(group_id)
     current["status"] = "current"
     current["completed_at"] = _now_iso()
     _write_json_atomic(path, current)
@@ -293,7 +345,13 @@ def _source_status(source: dict[str, str]) -> dict[str, Any]:
         raise BallDownstreamRebuildError(f"{source['source_match_id']}: {error}") from error
     generation = _read_optional_object(match_path / GENERATION_FILENAME)
     recorded_digest = generation.get("ball_track_input_digest") if generation else None
-    analytics_current = recorded_digest == effective.input_digest and bool((generation or {}).get("analytics_generation", {"status": "current"}).get("status") == "current")
+    recorded_player_digest = generation.get("player_event_timeline_digest") if generation else None
+    analytics_current = (
+        recorded_digest == effective.input_digest
+        and recorded_player_digest == players.input_digest
+        and isinstance((generation or {}).get("analytics_generation"), dict)
+        and (generation or {})["analytics_generation"].get("status") == "current"
+    )
     physical = (generation or {}).get("physical_publication")
     physical_current = (
         analytics_current
@@ -301,7 +359,7 @@ def _source_status(source: dict[str, str]) -> dict[str, Any]:
         and physical.get("status") == "current"
         and str(physical.get("published_id") or "") == source["published_id"]
     )
-    groups = _group_statuses_for_source(source, effective.input_digest)
+    groups = _group_statuses_for_source(source)
     groups_current = all(group["status"] == "current" for group in groups)
     return {
         **source,
@@ -310,6 +368,7 @@ def _source_status(source: dict[str, str]) -> dict[str, Any]:
         "ball_track_input_digest": recorded_digest,
         "provenance": effective.provenance,
         "player_event_timeline_digest": players.input_digest,
+        "recorded_player_event_timeline_digest": recorded_player_digest,
         "player_event_timeline_provenance": players.provenance,
         "analytics_generation_current": analytics_current,
         "physical_publication_current": physical_current,

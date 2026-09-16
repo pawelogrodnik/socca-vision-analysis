@@ -19,6 +19,11 @@ from app.services.event_candidates import build_event_candidate_artifacts
 from app.services.effective_ball_tracks import effective_ball_track_digest
 from app.services.match_phase_config import load_match_phase_config
 from app.services.pass_candidates import build_pass_review_report, update_pass_candidate_summary
+from app.services.player_event_timeline import (
+    PlayerEventTimelineError,
+    load_player_event_timeline,
+    player_event_timeline_digest,
+)
 
 POSSESSION_SOURCE = "ball_possession_candidates_v1"
 RESTART_SOURCE = "ground_restart_candidates_v1"
@@ -64,6 +69,10 @@ def build_ball_possession_analysis(
     *,
     write_overlay_video: bool = True,
     persist_artifacts: bool = True,
+    ball_track_input_provenance: str | None = None,
+    ball_track_input_artifact: str | None = None,
+    player_event_timeline_provenance: str | None = None,
+    player_event_timeline_artifact: str | None = None,
 ) -> dict[str, Any]:
     fps = float(video_metadata.get("fps") or 0.0)
     width = int(video_metadata.get("width") or 0)
@@ -146,7 +155,16 @@ def build_ball_possession_analysis(
             momentum_doc,
             report_doc,
         )
-        _write_downstream_generation_marker(match_dir, ball_tracks_doc, write_overlay_video=write_overlay_video)
+        _write_downstream_generation_marker(
+            match_dir,
+            ball_tracks_doc,
+            stable_players_doc or {},
+            write_overlay_video=write_overlay_video,
+            ball_track_input_provenance=ball_track_input_provenance,
+            ball_track_input_artifact=ball_track_input_artifact,
+            player_event_timeline_provenance=player_event_timeline_provenance,
+            player_event_timeline_artifact=player_event_timeline_artifact,
+        )
     artifacts = {
         "possession_candidates": "possession_candidates.json",
         "possession_segments": "possession_segments.json",
@@ -1794,8 +1812,13 @@ def _write_possession_artifacts(
 def _write_downstream_generation_marker(
     match_dir: Path,
     ball_tracks_doc: dict[str, Any],
+    stable_players_doc: dict[str, Any],
     *,
     write_overlay_video: bool,
+    ball_track_input_provenance: str | None = None,
+    ball_track_input_artifact: str | None = None,
+    player_event_timeline_provenance: str | None = None,
+    player_event_timeline_artifact: str | None = None,
 ) -> None:
     """Record normal full-pipeline input without triggering any extra work.
 
@@ -1805,11 +1828,38 @@ def _write_downstream_generation_marker(
     effective input visible to the same stale/current contract.
     """
 
+    # Full pipelines normally have the private timeline artifact written by
+    # stabilization.  The fallback keeps standalone legacy callers explicit
+    # rather than omitting the second semantic input from the marker.
+    player_input_digest: str | None = None
+    try:
+        player_input_digest = player_event_timeline_digest(stable_players_doc)
+    except PlayerEventTimelineError:
+        # The persisted production timeline remains authoritative when a
+        # caller supplied no compatible in-memory player document.
+        pass
+    if player_event_timeline_provenance is None or player_event_timeline_artifact is None:
+        try:
+            player_input = load_player_event_timeline(match_dir)
+            player_input_digest = player_input.input_digest
+            player_event_timeline_provenance = player_input.provenance
+            player_event_timeline_artifact = player_input.artifact
+        except PlayerEventTimelineError:
+            player_event_timeline_provenance = player_event_timeline_provenance or "analysis_input"
+    if player_input_digest is None:
+        raise PlayerEventTimelineError("ball possession generation requires a production player event timeline")
     marker = {
         "schema_version": "ball-downstream-generation:v1",
         "generated_at": now_iso(),
         "trigger": "analysis_pipeline",
         "ball_track_input_digest": effective_ball_track_digest(ball_tracks_doc),
+        "ball_track_input_provenance": ball_track_input_provenance or "analysis_input",
+        "ball_track_input_artifact": ball_track_input_artifact,
+        "player_event_timeline_digest": player_input_digest,
+        "player_event_timeline_provenance": player_event_timeline_provenance or "analysis_input",
+        "player_event_timeline_artifact": player_event_timeline_artifact,
+        "analytics_generation": {"status": "current"},
+        "physical_publication": {"status": "pending", "published_id": None},
         "write_overlay_video": write_overlay_video,
     }
     target = match_dir / "ball_downstream_generation.json"
