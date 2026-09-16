@@ -7,12 +7,15 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app import config
+from app.services.analysis import load_pitch_config
 from app.services.ball_downstream_rebuild import (
     GENERATION_FILENAME,
+    _mark_physical_publication_current,
     ball_downstream_status,
     rebuild_ball_downstream_analytics,
     rebuild_ball_downstream_for_match,
 )
+from app.services.ball_possession import build_ball_possession_analysis
 from app.services.effective_ball_tracks import EffectiveBallTracksError, effective_ball_track_digest, load_effective_ball_tracks
 from app.services.resolved_ball_tracks import RESOLUTION_SCHEMA_VERSION, RESOLVED_BALL_TRACKS_FILENAME
 
@@ -45,10 +48,20 @@ def _match_fixture(root: Path, match_id: str = "source-one") -> Path:
     match_path.mkdir()
     _write(match_path, "match.json", {"id": match_id, "video": {"fps": 30.0, "width": 1920, "height": 1080, "duration_sec": 1.0}})
     _write(match_path, "pitch_config.json", {"image_points": [[0, 0], [100, 0], [100, 100], [0, 100]], "width_m": 30.0, "length_m": 47.4})
-    _write(match_path, "stable_players.json", {"players": [{
+    # Public stable players deliberately keep only a sparse report trajectory.
+    # The production possession input remains private global-identity overlay
+    # rows, matching the real stabilization lifecycle.
+    stable_player = {
         "stable_player_id": "A01", "team_label": "A", "team_id": "team-a", "team_name": "A",
-        "trajectory_m": [{"frame": 1, "time_sec": 1 / 30, "pitch_m": [5.2, 8.0], "source": "detected", "status": "detected"}],
-    }]})
+        "stable_subject_id": "slot-a01",
+        "trajectory_m": [{"frame": 1, "time_sec": 1 / 30, "pitch_m": [1.0, 1.0], "source": "detected", "status": "detected"}],
+    }
+    private_slot = {
+        **stable_player,
+        "overlay_positions": [{"frame": 1, "time_sec": 1 / 30, "pitch_m": [5.2, 8.0], "source": "detected", "status": "detected"}],
+    }
+    _write(match_path, "stable_players.json", {"players": [stable_player]})
+    _write(match_path, "global_identity.json", {"slots": [private_slot]})
     _write(match_path, "ball_tracks.json", _tracks("automatic", x=5.0))
     return match_path
 
@@ -101,6 +114,37 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             ):
                 self.assertTrue((match_path / filename).exists(), filename)
 
+    def test_explicit_rebuild_uses_private_dense_player_timeline_not_public_trajectory(self) -> None:
+        with TemporaryDirectory() as temporary:
+            match_path = _match_fixture(Path(temporary))
+            private = json.loads((match_path / "global_identity.json").read_text(encoding="utf-8"))
+            with patch(
+                "app.services.ball_downstream_rebuild.build_ball_possession_analysis",
+                wraps=build_ball_possession_analysis,
+            ) as build:
+                rebuild_ball_downstream_for_match(match_path)
+
+            production_players = build.call_args.args[5]
+            self.assertEqual(production_players["players"][0]["overlay_positions"][0]["pitch_m"], [5.2, 8.0])
+            self.assertEqual(production_players["players"][0]["trajectory_m"][0]["pitch_m"], [1.0, 1.0])
+            self.assertEqual(production_players["players"][0]["overlay_positions"], private["slots"][0]["overlay_positions"])
+
+            # A normal pipeline receives that same private stabilization row,
+            # so unchanged ball evidence cannot alter possession globally just
+            # because the explicit path chose a lower-resolution player source.
+            normal = build_ball_possession_analysis(
+                match_path,
+                match_path / "video.mp4",
+                load_pitch_config(match_path),
+                json.loads((match_path / "match.json").read_text(encoding="utf-8"))["video"],
+                _tracks("automatic"),
+                {"players": private["slots"]},
+                write_overlay_video=False,
+                persist_artifacts=False,
+            )
+            explicit = json.loads((match_path / "possession_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(explicit["frames"], normal["possession_candidates"]["frames"])
+
     def test_changed_or_removed_resolved_projection_is_stale_without_mutating_automatic_tracks(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -109,6 +153,7 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             resolved["resolution"] = {"schema_version": RESOLUTION_SCHEMA_VERSION}
             _write(match_path, RESOLVED_BALL_TRACKS_FILENAME, resolved)
             rebuild_ball_downstream_for_match(match_path)
+            _mark_physical_publication_current(match_path, "published-source-one")
             automatic_before = (match_path / "ball_tracks.json").read_bytes()
 
             with patch.object(config, "MATCHES_DIR", root), patch(
@@ -126,6 +171,7 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             root = Path(temporary)
             match_path = _match_fixture(root)
             rebuild_ball_downstream_for_match(match_path)
+            _mark_physical_publication_current(match_path, "published-source-one")
             with patch.object(config, "MATCHES_DIR", root), patch(
                 "app.services.ball_downstream_rebuild.get_published_match",
                 return_value={"id": "published-source-one", "source_match_id": "source-one"},
@@ -141,9 +187,13 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             root = Path(temporary)
             first = _match_fixture(root, "one")
             second = _match_fixture(root, "two")
+            groups_root = root / "groups"
+            (groups_root / "group-one").mkdir(parents=True)
             merged_id = "published-merged-00000000-0000-4000-8000-000000000001"
             packages: list[str] = []
             with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.MATCH_GROUPS_DIR", groups_root,
+            ), patch(
                 "app.services.ball_downstream_rebuild.get_published_match",
                 return_value={"id": merged_id, "source_kind": "merged"},
             ), patch(
@@ -155,6 +205,12 @@ class BallDownstreamRebuildTests(unittest.TestCase):
                     {"published_id": "published-one", "source_match_id": "one"},
                     {"published_id": "published-two", "source_match_id": "two"},
                 ]},
+            ), patch(
+                "app.services.ball_downstream_rebuild.list_match_groups",
+                return_value=[{"group_id": "group-one", "members": [
+                    {"published_id": "published-one", "source_match_id": "one"},
+                    {"published_id": "published-two", "source_match_id": "two"},
+                ]}],
             ), patch(
                 "app.services.ball_downstream_rebuild.import_match_package",
                 side_effect=lambda package, replace: {"id": package["published_id"]},
@@ -169,3 +225,80 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             refresh.assert_called_once_with("group-one")
             self.assertEqual(result["result"], "rebuilt")
             self.assertEqual([row["source_match_id"] for row in result["rebuilt_sources"]], ["one", "two"])
+
+    def test_failed_physical_publish_resumes_without_rebuilding_valid_analytics(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _match_fixture(root)
+            published = {"id": "published-source-one", "source_match_id": "source-one"}
+            with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.get_published_match", return_value=published,
+            ), patch(
+                "app.services.ball_downstream_rebuild.import_match_package", side_effect=OSError("publish unavailable"),
+            ):
+                with self.assertRaisesRegex(Exception, "publish unavailable"):
+                    rebuild_ball_downstream_analytics("published-source-one", package_builder=lambda _: {"published_id": "published-source-one"})
+                status = ball_downstream_status("published-source-one")["sources"][0]
+                self.assertTrue(status["analytics_generation_current"])
+                self.assertFalse(status["physical_publication_current"])
+
+            with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.get_published_match", return_value=published,
+            ), patch(
+                "app.services.ball_downstream_rebuild.rebuild_ball_downstream_for_match",
+                wraps=rebuild_ball_downstream_for_match,
+            ) as rebuild, patch(
+                "app.services.ball_downstream_rebuild.import_match_package", return_value=published,
+            ):
+                result = rebuild_ball_downstream_analytics("published-source-one", package_builder=lambda _: {"published_id": "published-source-one"})
+
+            self.assertEqual(rebuild.call_count, 0)
+            self.assertEqual(result["status"], "current")
+
+    def test_physical_request_refreshes_only_dependent_merged_group_and_resumes_failed_refresh(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            groups_root = root / "groups"
+            for group_id in ("group-main", "group-unrelated"):
+                (groups_root / group_id).mkdir(parents=True)
+            _match_fixture(root)
+            members = [{"published_id": "published-source-one", "source_match_id": "source-one"}]
+            groups = [
+                {"group_id": "group-main", "members": members},
+                {"group_id": "group-unrelated", "members": [{"published_id": "published-other", "source_match_id": "other"}]},
+            ]
+            published = {"id": "published-source-one", "source_match_id": "source-one"}
+            with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.MATCH_GROUPS_DIR", groups_root,
+            ), patch(
+                "app.services.ball_downstream_rebuild.get_published_match", return_value=published,
+            ), patch(
+                "app.services.ball_downstream_rebuild.list_match_groups", return_value=groups,
+            ), patch(
+                "app.services.ball_downstream_rebuild.get_match_group", return_value={"members": members},
+            ), patch(
+                "app.services.ball_downstream_rebuild.import_match_package", return_value=published,
+            ), patch(
+                "app.services.ball_downstream_rebuild.refresh_merged_match_to_latest", side_effect=OSError("merged unavailable"),
+            ):
+                with self.assertRaisesRegex(Exception, "merged unavailable"):
+                    rebuild_ball_downstream_analytics("published-source-one", package_builder=lambda _: {"published_id": "published-source-one"})
+                self.assertEqual(ball_downstream_status("published-source-one")["status"], "stale")
+
+            with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.MATCH_GROUPS_DIR", groups_root,
+            ), patch(
+                "app.services.ball_downstream_rebuild.get_published_match", return_value=published,
+            ), patch(
+                "app.services.ball_downstream_rebuild.list_match_groups", return_value=groups,
+            ), patch(
+                "app.services.ball_downstream_rebuild.get_match_group", return_value={"members": members},
+            ), patch(
+                "app.services.ball_downstream_rebuild.import_match_package") as publish, patch(
+                "app.services.ball_downstream_rebuild.refresh_merged_match_to_latest",
+            ) as refresh:
+                result = rebuild_ball_downstream_analytics("published-source-one", package_builder=lambda _: self.fail("publish must already be current"))
+
+            publish.assert_not_called()
+            refresh.assert_called_once_with("group-main")
+            self.assertEqual(result["status"], "current")

@@ -22,12 +22,14 @@ from app.services.ball_event_rebuild import build_analytics_readiness
 from app.services.ball_possession import build_ball_possession_analysis
 from app.services.effective_ball_tracks import EffectiveBallTracksError, load_effective_ball_tracks
 from app.services.json_publish_store import get_published_match, import_match_package
-from app.services.match_groups import get_match_group
+from app.services.match_groups import MATCH_GROUPS_DIR, get_match_group, list_match_groups
 from app.services.merged_public_match import group_id_for_merged_published_id, is_merged_published_id, refresh_merged_match_to_latest
+from app.services.player_event_timeline import PlayerEventTimelineError, load_player_event_timeline
 
 
 GENERATION_FILENAME = "ball_downstream_generation.json"
 GENERATION_SCHEMA_VERSION = "ball-downstream-generation:v1"
+GROUP_PUBLICATION_STATE_FILENAME = "ball_downstream_publication_state.json"
 DOWNSTREAM_FILENAMES = (
     "possession_candidates.json",
     "possession_segments.json",
@@ -73,33 +75,45 @@ def rebuild_ball_downstream_analytics(
     recorded, it is a complete no-op.
     """
 
-    published = _published(published_match_id)
     initial = ball_downstream_status(published_match_id)
-    stale_sources = [row for row in initial["sources"] if row["status"] == "stale"]
-    if not stale_sources:
+    pending_sources = [row for row in initial["sources"] if not row["analytics_generation_current"] or not row["physical_publication_current"]]
+    requested_group_id = group_id_for_merged_published_id(published_match_id) if is_merged_published_id(published_match_id) else None
+    affected_groups = _affected_groups(initial["sources"], explicit_group_id=requested_group_id)
+    pending_groups = [group for group in affected_groups if group["status"] != "current"]
+    if not pending_sources and not pending_groups:
         return {**initial, "result": "already_current", "rebuilt_sources": []}
 
     rebuilt: list[dict[str, Any]] = []
     try:
-        for source in stale_sources:
+        for source in pending_sources:
             match_path = config.MATCHES_DIR / source["source_match_id"]
-            result = rebuild_ball_downstream_for_match(match_path)
-            package = package_builder(match_path)
-            imported = import_match_package(package, replace=True)
-            if str(imported.get("id") or "") != source["published_id"]:
-                raise BallDownstreamRebuildError("The physical publication ID changed during ball analytics rebuild.")
-            rebuilt.append({**source, "result": "rebuilt", "ball_track_input_digest": result["ball_track_input_digest"]})
+            result: dict[str, Any] | None = None
+            if not source["analytics_generation_current"]:
+                result = rebuild_ball_downstream_for_match(match_path)
+            if not source["physical_publication_current"]:
+                package = package_builder(match_path)
+                imported = import_match_package(package, replace=True)
+                if str(imported.get("id") or "") != source["published_id"]:
+                    raise BallDownstreamRebuildError("The physical publication ID changed during ball analytics rebuild.")
+                _mark_physical_publication_current(match_path, source["published_id"])
+            rebuilt.append({
+                **source,
+                "result": "rebuilt" if result is not None else "republished",
+                "ball_track_input_digest": (result or source)["ball_track_input_digest"],
+            })
     except Exception as error:
         # The generation marker is written in the same atomic family as its
         # artifacts. A failure therefore leaves the failed source visibly stale
         # instead of claiming that its old output used the new effective track.
         raise BallDownstreamRebuildError(str(error)) from error
 
-    if is_merged_published_id(published_match_id):
-        group_id = group_id_for_merged_published_id(published_match_id)
-        if not group_id:
-            raise BallDownstreamRebuildError("Merged publication has no backing group.")
-        refresh_merged_match_to_latest(group_id)
+    # A physical page may be a member of one or more merged reports.  Refresh
+    # by dependency, never by the page that happened to start the operation.
+    for group in affected_groups:
+        _mark_group_publication_pending(group["group_id"], initial["sources"])
+    for group in affected_groups:
+        refresh_merged_match_to_latest(group["group_id"])
+        _mark_group_publication_current(group["group_id"])
     return {**ball_downstream_status(published_match_id), "result": "rebuilt", "rebuilt_sources": rebuilt}
 
 
@@ -107,8 +121,8 @@ def rebuild_ball_downstream_for_match(match_path: Path) -> dict[str, Any]:
     """Build the complete downstream family from the current effective track."""
 
     metadata = _read_object(match_path / "match.json", "match metadata")
-    stable_players = _read_optional_object(match_path / "stable_players.json") or {"players": []}
     effective = load_effective_ball_tracks(match_path)
+    players = load_player_event_timeline(match_path)
     pitch = load_pitch_config(match_path)
     result = build_ball_possession_analysis(
         match_path,
@@ -116,7 +130,7 @@ def rebuild_ball_downstream_for_match(match_path: Path) -> dict[str, Any]:
         pitch,
         metadata.get("video") if isinstance(metadata.get("video"), dict) else {},
         effective.document,
-        stable_players,
+        players.document,
         write_overlay_video=False,
         persist_artifacts=False,
     )
@@ -143,6 +157,11 @@ def rebuild_ball_downstream_for_match(match_path: Path) -> dict[str, Any]:
         "ball_track_input_digest": effective.input_digest,
         "ball_track_input_provenance": effective.provenance,
         "ball_track_input_artifact": effective.artifact,
+        "player_event_timeline_digest": players.input_digest,
+        "player_event_timeline_provenance": players.provenance,
+        "player_event_timeline_artifact": players.artifact,
+        "analytics_generation": {"status": "current"},
+        "physical_publication": {"status": "pending", "published_id": None},
         "artifacts": sorted(documents),
         "write_overlay_video": False,
     }
@@ -169,20 +188,132 @@ def _sources_for_published(published_match_id: str, published: dict[str, Any]) -
     return sources
 
 
+def _affected_groups(
+    sources: list[dict[str, Any]],
+    *,
+    explicit_group_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return deduplicated merged dependencies for the supplied physical rows."""
+
+    by_group: dict[str, dict[str, Any]] = {}
+    for source in sources:
+        for group in _groups_for_source(source):
+            by_group[str(group["group_id"])] = group
+    if explicit_group_id:
+        by_group[str(explicit_group_id)] = {"group_id": str(explicit_group_id)}
+    for group_id, group in by_group.items():
+        state = _read_optional_object(_group_publication_state_path(group_id))
+        group["status"] = "current" if isinstance(state, dict) and state.get("status") == "current" else "pending"
+    return [by_group[group_id] for group_id in sorted(by_group)]
+
+
+def _groups_for_source(source: dict[str, Any]) -> list[dict[str, Any]]:
+    published_id = str(source["published_id"])
+    source_match_id = str(source["source_match_id"])
+    groups: list[dict[str, Any]] = []
+    for group in list_match_groups():
+        if not isinstance(group, dict):
+            continue
+        members = group.get("members") if isinstance(group.get("members"), list) else []
+        if any(
+            isinstance(member, dict)
+            and str(member.get("published_id") or "") == published_id
+            and str(member.get("source_match_id") or "") == source_match_id
+            for member in members
+        ):
+            groups.append({"group_id": str(group.get("group_id") or "")})
+    return [group for group in groups if group["group_id"]]
+
+
+def _group_statuses_for_source(source: dict[str, str], effective_digest: str) -> list[dict[str, Any]]:
+    statuses: list[dict[str, Any]] = []
+    for group in _groups_for_source(source):
+        group_id = group["group_id"]
+        state = _read_optional_object(_group_publication_state_path(group_id))
+        source_digests = state.get("source_digests") if isinstance(state, dict) else None
+        status = "current"
+        if not isinstance(state, dict) or state.get("status") != "current":
+            status = "pending"
+        elif not isinstance(source_digests, dict) or source_digests.get(source["published_id"]) != effective_digest:
+            status = "pending"
+        statuses.append({"group_id": group_id, "status": status})
+    return statuses
+
+
+def _mark_physical_publication_current(match_path: Path, published_id: str) -> None:
+    generation = _read_object(match_path / GENERATION_FILENAME, "ball analytics generation")
+    generation["physical_publication"] = {
+        "status": "current",
+        "published_id": published_id,
+        "completed_at": _now_iso(),
+    }
+    _write_json_atomic(match_path / GENERATION_FILENAME, generation)
+
+
+def _mark_group_publication_pending(group_id: str, sources: list[dict[str, Any]]) -> None:
+    current = _read_optional_object(_group_publication_state_path(group_id)) or {}
+    digests = current.get("source_digests") if isinstance(current.get("source_digests"), dict) else {}
+    members = get_match_group(group_id).get("members") or []
+    member_published_ids = {
+        str(member.get("published_id") or "")
+        for member in members
+        if isinstance(member, dict)
+    }
+    for source in sources:
+        published_id = str(source.get("published_id") or "")
+        if published_id in member_published_ids:
+            digests[published_id] = str(source.get("current_effective_ball_track_digest") or "")
+    _write_json_atomic(_group_publication_state_path(group_id), {
+        "schema_version": "ball-downstream-publication-state:v1",
+        "group_id": group_id,
+        "status": "pending",
+        "source_digests": digests,
+        "updated_at": _now_iso(),
+    })
+
+
+def _mark_group_publication_current(group_id: str) -> None:
+    path = _group_publication_state_path(group_id)
+    current = _read_object(path, "ball analytics group publication state")
+    current["status"] = "current"
+    current["completed_at"] = _now_iso()
+    _write_json_atomic(path, current)
+
+
+def _group_publication_state_path(group_id: str) -> Path:
+    return MATCH_GROUPS_DIR / group_id / GROUP_PUBLICATION_STATE_FILENAME
+
+
 def _source_status(source: dict[str, str]) -> dict[str, Any]:
     match_path = config.MATCHES_DIR / source["source_match_id"]
     try:
         effective = load_effective_ball_tracks(match_path)
-    except EffectiveBallTracksError as error:
+        players = load_player_event_timeline(match_path)
+    except (EffectiveBallTracksError, PlayerEventTimelineError) as error:
         raise BallDownstreamRebuildError(f"{source['source_match_id']}: {error}") from error
     generation = _read_optional_object(match_path / GENERATION_FILENAME)
     recorded_digest = generation.get("ball_track_input_digest") if generation else None
+    analytics_current = recorded_digest == effective.input_digest and bool((generation or {}).get("analytics_generation", {"status": "current"}).get("status") == "current")
+    physical = (generation or {}).get("physical_publication")
+    physical_current = (
+        analytics_current
+        and isinstance(physical, dict)
+        and physical.get("status") == "current"
+        and str(physical.get("published_id") or "") == source["published_id"]
+    )
+    groups = _group_statuses_for_source(source, effective.input_digest)
+    groups_current = all(group["status"] == "current" for group in groups)
     return {
         **source,
-        "status": "current" if recorded_digest == effective.input_digest else "stale",
+        "status": "current" if analytics_current and physical_current and groups_current else "stale",
         "current_effective_ball_track_digest": effective.input_digest,
         "ball_track_input_digest": recorded_digest,
         "provenance": effective.provenance,
+        "player_event_timeline_digest": players.input_digest,
+        "player_event_timeline_provenance": players.provenance,
+        "analytics_generation_current": analytics_current,
+        "physical_publication_current": physical_current,
+        "merged_publications": groups,
     }
 
 
@@ -260,6 +391,13 @@ def _read_optional_object(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _write_json_atomic(path: Path, document: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _now_iso() -> str:
