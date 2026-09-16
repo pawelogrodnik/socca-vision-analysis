@@ -138,6 +138,19 @@ class JsonPublishStoreTests(unittest.TestCase):
                 self.assertIn("T", second["updated_at"])
                 self.assertEqual(second["title"], "Updated match")
 
+    def test_successful_physical_publish_acknowledges_downstream_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            published_dir = Path(tmp) / "published" / "matches"
+            with (
+                patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", published_dir),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", Path(tmp) / "public-mirror"),
+                patch.object(json_publish_store, "write_public_match_report_bundle", side_effect=self._public_report_stub),
+                patch("app.services.ball_downstream_rebuild.acknowledge_ball_downstream_physical_publication", return_value=True) as acknowledge,
+            ):
+                json_publish_store.import_match_package(package_fixture("source-one"), replace=False)
+
+            acknowledge.assert_called_once_with("source-one", "published-source-one")
+
     def test_eligible_group_sources_use_current_compact_summary_without_package_reads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             published_dir = Path(tmp) / "published" / "matches"

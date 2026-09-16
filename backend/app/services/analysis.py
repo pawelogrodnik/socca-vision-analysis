@@ -619,14 +619,6 @@ def _resolve_yolo_model_name(model_name: str) -> str:
     return raw
 
 
-def _load_stable_players_doc(match_dir: Path) -> dict[str, Any]:
-    stable_path = match_dir / "stable_players.json"
-    if not stable_path.exists():
-        return {"schema_version": "0.1.0", "players": []}
-    loaded = json.loads(stable_path.read_text(encoding="utf-8"))
-    return loaded if isinstance(loaded, dict) else {"schema_version": "0.1.0", "players": []}
-
-
 def _build_ball_possession_artifacts(
     match_dir: Path,
     video_path: Path,
@@ -637,15 +629,26 @@ def _build_ball_possession_artifacts(
     stable_players_doc: dict[str, Any] | None = None,
     write_overlay_video: bool = True,
 ) -> dict[str, Any]:
-    stable_doc = stable_players_doc or _load_stable_players_doc(match_dir)
+    from app.services.effective_ball_tracks import load_effective_ball_tracks
+    from app.services.player_event_timeline import load_player_event_timeline
+
+    effective_tracks = load_effective_ball_tracks(
+        match_dir,
+        automatic_tracks=ball_tracking.get("ball_tracks") or {},
+    )
+    player_timeline = load_player_event_timeline(match_dir)
     return build_ball_possession_analysis(
         match_dir,
         video_path,
         pitch,
         metadata,
-        ball_tracking.get("ball_tracks") or {},
-        stable_doc,
+        effective_tracks.document,
+        player_timeline.document,
         write_overlay_video=write_overlay_video,
+        ball_track_input_provenance=effective_tracks.provenance,
+        ball_track_input_artifact=effective_tracks.artifact,
+        player_event_timeline_provenance=player_timeline.provenance,
+        player_event_timeline_artifact=player_timeline.artifact,
     )
 
 

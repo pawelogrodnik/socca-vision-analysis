@@ -34,6 +34,7 @@ from app.services.identity_unresolved_overlay import (
     is_unresolved_overlay_row,
 )
 from app.services.artifact_lineage import generated_from_entry
+from app.services.player_event_timeline import write_player_event_timeline
 from app.services.team_assignment import (
     TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE,
     TEAM_COLOR_UNKNOWN_CONFIDENCE,
@@ -4796,6 +4797,9 @@ def stabilize_match(
     )
 
     (match_dir / "stable_players.json").write_text(json.dumps(public_stable_doc, indent=2), encoding="utf-8")
+    # Ball-derived analytics require the dense private rows that are removed
+    # from the compact report/public stable-player document.
+    write_player_event_timeline(match_dir, stable_doc)
     (match_dir / "global_identity.json").write_text(json.dumps(global_identity, indent=2), encoding="utf-8")
     (match_dir / "global_identity_report.json").write_text(json.dumps(global_identity_report, indent=2), encoding="utf-8")
     (match_dir / "analysis_quality_report.json").write_text(json.dumps(analysis_quality_report, indent=2), encoding="utf-8")
