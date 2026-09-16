@@ -14,16 +14,6 @@ from app.services.ball_downstream_impact_audit import (
 )
 
 
-PROTECTED_FILENAMES = {
-    "ball_tracks.json", "resolved_ball_tracks.json", "ball_candidates.json",
-    "stable_players_event_timeline.json", "global_identity.json",
-    "possession_candidates.json", "possession_segments.json", "contact_candidates.json",
-    "event_candidates.json", "restart_candidates.json", "pass_candidates.json",
-    "pass_review_report.json", "attacking_momentum.json", "possession_report.json",
-    "analytics_readiness.json", "ball_downstream_generation.json",
-}
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only automatic-versus-resolved ball downstream impact audit.")
     parser.add_argument("--match-root", action="append", required=True, type=Path, help="Physical match directory; repeat for multiple sources.")
@@ -56,10 +46,17 @@ def main() -> int:
 
 
 def _guard_outputs(match_roots: list[Path], *outputs: Path | None, parser: argparse.ArgumentParser) -> None:
-    protected = {(root / filename).resolve() for root in match_roots for filename in PROTECTED_FILENAMES}
     for output in outputs:
-        if output is not None and output.resolve() in protected:
-            parser.error("Diagnostic output must not overwrite a production match artifact.")
+        if output is None:
+            continue
+        target = output.resolve()
+        for root in match_roots:
+            try:
+                target.relative_to(root.resolve())
+            except ValueError:
+                continue
+            if target.exists():
+                parser.error("Diagnostic output must not overwrite an existing file inside a match root.")
 
 
 def _write(path: Path, text: str) -> None:

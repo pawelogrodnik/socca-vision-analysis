@@ -73,6 +73,7 @@ def build_ball_possession_analysis(
     ball_track_input_artifact: str | None = None,
     player_event_timeline_provenance: str | None = None,
     player_event_timeline_artifact: str | None = None,
+    match_phase_config_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     fps = float(video_metadata.get("fps") or 0.0)
     width = int(video_metadata.get("width") or 0)
@@ -121,7 +122,11 @@ def build_ball_possession_analysis(
     )
     segments_doc = build_possession_segments_document(candidates_doc, fps=fps)
     contact_doc = build_contact_candidates_document(candidates_doc, segments_doc)
-    match_phase_config = load_match_phase_config(match_dir, {"video": video_metadata})
+    match_phase_config = (
+        dict(match_phase_config_doc)
+        if match_phase_config_doc is not None
+        else load_match_phase_config(match_dir, {"video": video_metadata})
+    )
     event_docs = build_event_candidate_artifacts(contact_doc, match_phase_config, candidates_doc)
     restart_doc = build_restart_candidates_document(
         ball_tracks_doc,

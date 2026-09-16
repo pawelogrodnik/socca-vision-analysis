@@ -126,13 +126,26 @@ def build_two_half_match_phase_config(
 def load_match_phase_config(match_path: Path, meta: dict[str, Any]) -> dict[str, Any]:
     path = match_path / "match_phase_config.json"
     if path.exists():
-        document = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(document, dict):
-            raise ValueError("match_phase_config.json must be a JSON object")
-        return normalize_match_phase_config(document, meta)
-    document = build_default_match_phase_config(meta)
+        return load_match_phase_config_read_only(match_path, meta)
+    document = load_match_phase_config_read_only(match_path, meta)
     path.write_text(json.dumps(document, indent=2), encoding="utf-8")
     return document
+
+
+def load_match_phase_config_read_only(match_path: Path, meta: dict[str, Any]) -> dict[str, Any]:
+    """Load the normalized configuration without ever materializing a default.
+
+    Diagnostics and previews need the exact default semantics used by the
+    production loader, but must not create a match artifact simply by looking.
+    """
+
+    path = match_path / "match_phase_config.json"
+    if not path.exists():
+        return build_default_match_phase_config(meta)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError("match_phase_config.json must be a JSON object")
+    return normalize_match_phase_config(document, meta)
 
 
 def save_match_phase_config(match_path: Path, meta: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
