@@ -97,6 +97,14 @@ def load_player_event_timeline(match_dir: Path) -> PlayerEventTimeline:
 
 
 def player_event_timeline_digest(document: Mapping[str, Any]) -> str:
+    """Hash exactly the player fields consumed by ball-derived analytics.
+
+    Possession does not only depend on player geometry.  It persists the
+    resolved player and team identity into possession, contact, restart and
+    pass artifacts, so identity-only corrections must invalidate that family.
+    Visual/report metadata remains deliberately outside this semantic input.
+    """
+
     _validate(document, label="player event timeline", require_dense=False)
     rows: list[dict[str, Any]] = []
     for player in document.get("players") or []:
@@ -116,13 +124,25 @@ def player_event_timeline_digest(document: Mapping[str, Any]) -> str:
                 "status": str(position.get("status") or "unknown"),
             })
         rows.append({
-            "stable_subject_id": str(player.get("stable_subject_id") or player.get("slot_id") or ""),
-            "team_id": str(player.get("team_id") or ""),
-            "positions": sorted(positions, key=lambda row: row["frame"] if row["frame"] is not None else -1),
+            # Keep this aligned with _event_players_by_frame() and all of its
+            # downstream consumers.  In particular, stable_player_id has a
+            # slot fallback there and team_label has an unknown fallback.
+            "stable_player_id": str(player.get("stable_player_id") or player.get("slot_id") or ""),
+            "stable_subject_id": str(player.get("stable_subject_id") or ""),
+            "slot_id": str(player.get("slot_id") or ""),
+            "team_label": str(player.get("team_label") or "unknown"),
+            "team_id": _semantic_text(player.get("team_id")),
+            "team_name": _semantic_text(player.get("team_name")),
+            "positions": sorted(
+                positions,
+                key=lambda row: (row["frame"] if row["frame"] is not None else -1, canonical_json_sha256(row)),
+            ),
         })
     return canonical_json_sha256({
         "schema_version": PLAYER_EVENT_TIMELINE_SCHEMA_VERSION,
-        "players": sorted(rows, key=lambda row: row["stable_subject_id"]),
+        # The player list is a set of independently resolved subjects.  Its
+        # storage ordering must not alter a semantic generation fingerprint.
+        "players": sorted(rows, key=canonical_json_sha256),
     })
 
 
@@ -168,3 +188,7 @@ def _number(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _semantic_text(value: Any) -> str | None:
+    return None if value is None else str(value)

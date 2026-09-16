@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -20,6 +21,7 @@ from app.services.ball_downstream_rebuild import (
 from app.services.ball_possession import build_ball_possession_analysis
 from app.services.effective_ball_tracks import EffectiveBallTracksError, effective_ball_track_digest, load_effective_ball_tracks
 from app.services.resolved_ball_tracks import RESOLUTION_SCHEMA_VERSION, RESOLVED_BALL_TRACKS_FILENAME
+from app.services.player_event_timeline import load_player_event_timeline, player_event_timeline_digest
 
 
 def _tracks(candidate_id: str, *, x: float = 5.0) -> dict:
@@ -91,6 +93,39 @@ class EffectiveBallTracksTests(unittest.TestCase):
             _write(match_path, RESOLVED_BALL_TRACKS_FILENAME, {"positions": []})
             with self.assertRaises(EffectiveBallTracksError):
                 load_effective_ball_tracks(match_path)
+
+
+class PlayerEventTimelineDigestTests(unittest.TestCase):
+    def test_identity_and_team_fields_invalidate_but_visual_metadata_does_not(self) -> None:
+        with TemporaryDirectory() as temporary:
+            document = load_player_event_timeline(_match_fixture(Path(temporary))).document
+            baseline = player_event_timeline_digest(document)
+
+            changed_player = deepcopy(document)
+            changed_player["players"][0]["stable_player_id"] = "A99"
+            self.assertNotEqual(baseline, player_event_timeline_digest(changed_player))
+
+            changed_label = deepcopy(document)
+            changed_label["players"][0]["team_label"] = "B"
+            self.assertNotEqual(baseline, player_event_timeline_digest(changed_label))
+
+            changed_name = deepcopy(document)
+            changed_name["players"][0]["team_name"] = "Renamed Team"
+            self.assertNotEqual(baseline, player_event_timeline_digest(changed_name))
+
+            visual_only = deepcopy(document)
+            visual_only["players"][0]["confidence"] = 0.1
+            visual_only["players"][0]["display_color"] = "#ff00ff"
+            self.assertEqual(baseline, player_event_timeline_digest(visual_only))
+
+    def test_digest_is_independent_of_player_storage_order(self) -> None:
+        with TemporaryDirectory() as temporary:
+            document = load_player_event_timeline(_match_fixture(Path(temporary))).document
+            second = deepcopy(document["players"][0])
+            second.update({"stable_player_id": "B01", "stable_subject_id": "slot-b01", "slot_id": "slot-b01"})
+            ordered = {"players": [document["players"][0], second]}
+            reversed_order = {"players": [second, document["players"][0]]}
+            self.assertEqual(player_event_timeline_digest(ordered), player_event_timeline_digest(reversed_order))
 
 
 class BallDownstreamRebuildTests(unittest.TestCase):
@@ -187,6 +222,29 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             self.assertFalse(status["analytics_generation_current"])
             self.assertEqual(status["current_effective_ball_track_digest"], status["ball_track_input_digest"])
             self.assertNotEqual(status["player_event_timeline_digest"], status["recorded_player_event_timeline_digest"])
+
+    def test_identity_only_player_timeline_changes_are_stale(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            match_path = _match_fixture(root)
+            rebuild_ball_downstream_for_match(match_path)
+            _mark_physical_publication_current(match_path, "published-source-one")
+            published = {"id": "published-source-one", "source_match_id": "source-one"}
+            with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.get_published_match", return_value=published,
+            ):
+                identity = json.loads((match_path / "global_identity.json").read_text(encoding="utf-8"))
+                identity["slots"][0]["stable_player_id"] = "A99"
+                _write(match_path, "global_identity.json", identity)
+                stable_player_status = ball_downstream_status("published-source-one")["sources"][0]
+
+                identity["slots"][0]["stable_player_id"] = "A01"
+                identity["slots"][0]["team_label"] = "B"
+                _write(match_path, "global_identity.json", identity)
+                team_status = ball_downstream_status("published-source-one")["sources"][0]
+
+            self.assertFalse(stable_player_status["analytics_generation_current"])
+            self.assertFalse(team_status["analytics_generation_current"])
 
     def test_legacy_marker_without_player_digest_is_not_current(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -400,13 +458,13 @@ class BallDownstreamRebuildTests(unittest.TestCase):
             ), patch("app.services.ball_downstream_rebuild.refresh_merged_match_to_latest") as refresh:
                 result = rebuild_ball_downstream_analytics("published-one", package_builder=lambda _: {"published_id": "published-one"})
                 state = json.loads((groups_root / "group-main" / GROUP_PUBLICATION_STATE_FILENAME).read_text(encoding="utf-8"))
-                self.assertEqual(set(state["source_digests"]), {"published-one", "published-two", "published-three"})
+                self.assertEqual(set(state["source_input_digests"]), {"published-one", "published-two", "published-three"})
                 self.assertEqual(result["status"], "current")
                 refresh.assert_called_once_with("group-main")
 
                 # A stale success flag is not enough: a changed stored digest
                 # requires a merged-only retry, without physical recomputation.
-                state["source_digests"]["published-one"] = "sha256:outdated"
+                state["source_input_digests"]["published-one"] = "sha256:outdated"
                 _write(groups_root / "group-main", GROUP_PUBLICATION_STATE_FILENAME, state)
                 with patch(
                     "app.services.ball_downstream_rebuild.rebuild_ball_downstream_for_match",
@@ -426,3 +484,67 @@ class BallDownstreamRebuildTests(unittest.TestCase):
                 members.append({"published_id": "published-four", "source_match_id": "four"})
                 _match_fixture(root, "four")
                 self.assertEqual(ball_downstream_status("published-one")["status"], "stale")
+
+    def test_player_only_member_change_requires_a_merged_only_refresh(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            groups_root = root / "groups"
+            (groups_root / "group-main").mkdir(parents=True)
+            matches = {name: _match_fixture(root, name) for name in ("one", "two", "three")}
+            members = [
+                {"published_id": "published-one", "source_match_id": "one"},
+                {"published_id": "published-two", "source_match_id": "two"},
+                {"published_id": "published-three", "source_match_id": "three"},
+            ]
+            groups = [{"group_id": "group-main", "members": members}]
+            for source_match_id, match_path in matches.items():
+                rebuild_ball_downstream_for_match(match_path)
+                _mark_physical_publication_current(match_path, f"published-{source_match_id}")
+
+            def published_for(published_id: str) -> dict[str, str]:
+                source_match_id = published_id.removeprefix("published-")
+                return {"id": published_id, "source_match_id": source_match_id}
+
+            with patch.object(config, "MATCHES_DIR", root), patch(
+                "app.services.ball_downstream_rebuild.MATCH_GROUPS_DIR", groups_root,
+            ), patch(
+                "app.services.ball_downstream_rebuild.get_published_match", side_effect=published_for,
+            ), patch(
+                "app.services.ball_downstream_rebuild.list_match_groups", return_value=groups,
+            ), patch(
+                "app.services.ball_downstream_rebuild.get_match_group", return_value={"members": members},
+            ), patch("app.services.ball_downstream_rebuild.refresh_merged_match_to_latest") as initial_refresh:
+                # Initial group-only publication records a complete combined
+                # input snapshot; no physical source needs recomputation.
+                initial = rebuild_ball_downstream_analytics("published-one", package_builder=lambda _: self.fail("no publish expected"))
+                self.assertEqual(initial["status"], "current")
+                initial_refresh.assert_called_once_with("group-main")
+
+                # B's player identity changes while its ball trajectory stays
+                # byte-for-byte identical.  The source is stale before its
+                # downstream artifacts are rebuilt and the group stays stale
+                # after source publication until its own refresh.
+                original_ball = (matches["two"] / "ball_tracks.json").read_bytes()
+                identity = json.loads((matches["two"] / "global_identity.json").read_text(encoding="utf-8"))
+                identity["slots"][0]["team_label"] = "B"
+                _write(matches["two"], "global_identity.json", identity)
+                stale_b = ball_downstream_status("published-two")["sources"][0]
+                self.assertFalse(stale_b["analytics_generation_current"])
+                self.assertEqual(original_ball, (matches["two"] / "ball_tracks.json").read_bytes())
+
+                rebuild_ball_downstream_for_match(matches["two"])
+                _mark_physical_publication_current(matches["two"], "published-two")
+                self.assertEqual(ball_downstream_status("published-two")["status"], "stale")
+
+                with patch(
+                    "app.services.ball_downstream_rebuild.rebuild_ball_downstream_for_match",
+                ) as rebuild, patch(
+                    "app.services.ball_downstream_rebuild.import_match_package",
+                ) as publish, patch("app.services.ball_downstream_rebuild.refresh_merged_match_to_latest") as refresh:
+                    result = rebuild_ball_downstream_analytics("published-two", package_builder=lambda _: self.fail("no source publish expected"))
+                rebuild.assert_not_called()
+                publish.assert_not_called()
+                refresh.assert_called_once_with("group-main")
+                self.assertEqual(result["status"], "current")
+                state = json.loads((groups_root / "group-main" / GROUP_PUBLICATION_STATE_FILENAME).read_text(encoding="utf-8"))
+                self.assertEqual(set(state["source_input_digests"]), {"published-one", "published-two", "published-three"})

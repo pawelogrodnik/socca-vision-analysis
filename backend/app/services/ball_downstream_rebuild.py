@@ -20,6 +20,7 @@ from app import config
 from app.services.analysis import load_pitch_config
 from app.services.ball_event_rebuild import build_analytics_readiness
 from app.services.ball_possession import build_ball_possession_analysis
+from app.services.artifact_lineage import canonical_json_sha256
 from app.services.effective_ball_tracks import EffectiveBallTracksError, load_effective_ball_tracks
 from app.services.json_publish_store import get_published_match, import_match_package
 from app.services.match_groups import MATCH_GROUPS_DIR, get_match_group, list_match_groups
@@ -30,6 +31,7 @@ from app.services.player_event_timeline import PlayerEventTimelineError, load_pl
 GENERATION_FILENAME = "ball_downstream_generation.json"
 GENERATION_SCHEMA_VERSION = "ball-downstream-generation:v1"
 GROUP_PUBLICATION_STATE_FILENAME = "ball_downstream_publication_state.json"
+SOURCE_DOWNSTREAM_INPUT_SCHEMA_VERSION = "ball-downstream-source-input:v1"
 DOWNSTREAM_FILENAMES = (
     "possession_candidates.json",
     "possession_segments.json",
@@ -49,6 +51,24 @@ PackageBuilder = Callable[[Path], dict[str, Any]]
 
 class BallDownstreamRebuildError(ValueError):
     pass
+
+
+def source_downstream_input_digest(
+    ball_track_input_digest: str,
+    player_event_timeline_digest: str,
+) -> str:
+    """Fingerprint every semantic source input consumed downstream.
+
+    Physical freshness diagnostics and merged-publication snapshots call this
+    same helper so a group cannot accidentally treat a player-only correction
+    as current merely because its ball trajectory did not move.
+    """
+
+    return canonical_json_sha256({
+        "schema_version": SOURCE_DOWNSTREAM_INPUT_SCHEMA_VERSION,
+        "ball_track_input_digest": ball_track_input_digest,
+        "player_event_timeline_digest": player_event_timeline_digest,
+    })
 
 
 def ball_downstream_status(published_match_id: str) -> dict[str, Any]:
@@ -277,7 +297,7 @@ def acknowledge_ball_downstream_physical_publication(source_match_id: str, publi
     return True
 
 
-def _current_group_source_digests(group_id: str) -> dict[str, str]:
+def _current_group_source_input_digests(group_id: str) -> dict[str, str]:
     group = get_match_group(group_id)
     members = group.get("members") if isinstance(group.get("members"), list) else []
     digests: dict[str, str] = {}
@@ -289,8 +309,11 @@ def _current_group_source_digests(group_id: str) -> dict[str, str]:
         if not published_id or not source_match_id or published_id in digests:
             raise BallDownstreamRebuildError(f"Merged group {group_id} has invalid physical source bindings.")
         try:
-            digests[published_id] = load_effective_ball_tracks(config.MATCHES_DIR / source_match_id).input_digest
-        except EffectiveBallTracksError as error:
+            match_path = config.MATCHES_DIR / source_match_id
+            effective = load_effective_ball_tracks(match_path)
+            players = load_player_event_timeline(match_path)
+            digests[published_id] = source_downstream_input_digest(effective.input_digest, players.input_digest)
+        except (EffectiveBallTracksError, PlayerEventTimelineError) as error:
             raise BallDownstreamRebuildError(f"{source_match_id}: {error}") from error
     if not digests:
         raise BallDownstreamRebuildError(f"Merged group {group_id} has no physical source bindings.")
@@ -299,24 +322,24 @@ def _current_group_source_digests(group_id: str) -> dict[str, str]:
 
 def _group_publication_status(group_id: str) -> dict[str, Any]:
     state = _read_optional_object(_group_publication_state_path(group_id))
-    current_digests = _current_group_source_digests(group_id)
-    stored_digests = state.get("source_digests") if isinstance(state, dict) else None
+    current_digests = _current_group_source_input_digests(group_id)
+    stored_digests = state.get("source_input_digests") if isinstance(state, dict) else None
     current = (
         isinstance(state, dict)
         and state.get("status") == "current"
         and isinstance(stored_digests, dict)
         and {str(key): str(value) for key, value in stored_digests.items()} == current_digests
     )
-    return {"status": "current" if current else "pending", "source_digests": current_digests}
+    return {"status": "current" if current else "pending", "source_input_digests": current_digests}
 
 
 def _mark_group_publication_pending(group_id: str) -> None:
-    digests = _current_group_source_digests(group_id)
+    digests = _current_group_source_input_digests(group_id)
     _write_json_atomic(_group_publication_state_path(group_id), {
         "schema_version": "ball-downstream-publication-state:v1",
         "group_id": group_id,
         "status": "pending",
-        "source_digests": digests,
+        "source_input_digests": digests,
         "updated_at": _now_iso(),
     })
 
@@ -326,7 +349,7 @@ def _mark_group_publication_current(group_id: str) -> None:
     current = _read_object(path, "ball analytics group publication state")
     # Capture every member again after a successful refresh.  The state is a
     # content snapshot, never merely a success flag for the initiating source.
-    current["source_digests"] = _current_group_source_digests(group_id)
+    current["source_input_digests"] = _current_group_source_input_digests(group_id)
     current["status"] = "current"
     current["completed_at"] = _now_iso()
     _write_json_atomic(path, current)
@@ -346,9 +369,14 @@ def _source_status(source: dict[str, str]) -> dict[str, Any]:
     generation = _read_optional_object(match_path / GENERATION_FILENAME)
     recorded_digest = generation.get("ball_track_input_digest") if generation else None
     recorded_player_digest = generation.get("player_event_timeline_digest") if generation else None
+    current_source_input_digest = source_downstream_input_digest(effective.input_digest, players.input_digest)
+    recorded_source_input_digest = (
+        source_downstream_input_digest(str(recorded_digest), str(recorded_player_digest))
+        if isinstance(recorded_digest, str) and isinstance(recorded_player_digest, str)
+        else None
+    )
     analytics_current = (
-        recorded_digest == effective.input_digest
-        and recorded_player_digest == players.input_digest
+        recorded_source_input_digest == current_source_input_digest
         and isinstance((generation or {}).get("analytics_generation"), dict)
         and (generation or {})["analytics_generation"].get("status") == "current"
     )
@@ -366,6 +394,8 @@ def _source_status(source: dict[str, str]) -> dict[str, Any]:
         "status": "current" if analytics_current and physical_current and groups_current else "stale",
         "current_effective_ball_track_digest": effective.input_digest,
         "ball_track_input_digest": recorded_digest,
+        "current_source_downstream_input_digest": current_source_input_digest,
+        "recorded_source_downstream_input_digest": recorded_source_input_digest,
         "provenance": effective.provenance,
         "player_event_timeline_digest": players.input_digest,
         "recorded_player_event_timeline_digest": recorded_player_digest,
