@@ -32,6 +32,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.window_sec <= 0:
         raise ValueError("window_sec must be positive")
+    if args.all and any((args.output, args.compact_output, args.markdown_output)):
+        raise ValueError("all_mode_requires_stdout_or_a_future_directory_output_contract")
     reports = []
     for published_id in _published_ids(args.published_id, args.all):
         anchors = extract_operator_ball_anchors(load_shot_review_document(published_id))
@@ -66,7 +68,8 @@ def _source_artifacts(anchors: list[dict[str, Any]]) -> dict[str, dict[str, Any]
         candidate_parameters, track_parameters = _record(candidates.get("parameters")), _record(tracks.get("parameters"))
         rows[source_match_id] = {
             "fps": float(_record(match.get("video")).get("fps") or 0.0),
-            "video_path": _record(match.get("video")).get("path"),
+            "match_root": str(root),
+            "video_filename": match.get("video_filename"),
             "max_link_speed_mps": track_parameters.get("max_link_speed_mps") or candidate_parameters.get("max_link_speed_mps"),
             "min_start_conf": track_parameters.get("min_start_conf") or candidate_parameters.get("min_start_conf"),
             "ball_selection_policy": track_parameters.get("ball_selection_policy") or candidate_parameters.get("ball_selection_policy"),

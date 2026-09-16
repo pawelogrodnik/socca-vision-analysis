@@ -12,6 +12,8 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+from app.services.video import resolve_match_video_path
+
 from evaluation.operator_ball_anchor_shadow import (
     DEFAULT_WINDOW_SEC,
     anchor_distance_threshold_px,
@@ -58,9 +60,15 @@ def analyze_operator_ball_detector_misses(
     categories = Counter(row["primary_category"] for row in rows)
     rejection_reasons = Counter(reason for row in rows for reason in row["exact_frame"]["rejection_reasons"])
     configurations: dict[str, Counter[str]] = defaultdict(Counter)
+    dimensions: dict[str, Counter[str]] = defaultdict(Counter)
+    near_rejected_count = 0
     for row in rows:
         config = row["detector_configuration"]
         configurations[str(config.get("detector") or "unknown")][row["primary_category"]] += 1
+        for field in ("detector", "ball_conf", "imgsz", "frame_stride"):
+            dimensions[field][str(config.get(field) if config.get(field) is not None else "unknown")] += 1
+        if _mapping(row["exact_frame"].get("nearest_rejected_candidate")).get("within_anchor_distance"):
+            near_rejected_count += 1
     return {
         "schema_version": SCHEMA_VERSION,
         "evaluation_only": True,
@@ -68,6 +76,7 @@ def analyze_operator_ball_detector_misses(
         "canonical_artifacts_mutated": False,
         "window_sec": round(window_sec, 3),
         "upstream_anchor_count": upstream["anchor_count"],
+        "upstream_classification_counts": upstream["summary"]["classification_counts"],
         "detector_miss_count": len(rows),
         "misses": rows,
         "summary": {
@@ -76,6 +85,15 @@ def analyze_operator_ball_detector_misses(
                 detector: dict(sorted(counts.items())) for detector, counts in sorted(configurations.items())
             },
             "rejection_reason_counts": dict(sorted(rejection_reasons.items())),
+            "rejected_reason_counts_near_anchor": dict(sorted(Counter(
+                reason for row in rows for reason in row["exact_frame"].get("near_rejection_reasons", [])
+            ).items())),
+            "by_detector_source": dict(sorted(dimensions["detector"].items())),
+            "by_ball_conf": dict(sorted(dimensions["ball_conf"].items())),
+            "by_imgsz": dict(sorted(dimensions["imgsz"].items())),
+            "by_frame_stride": dict(sorted(dimensions["frame_stride"].items())),
+            "anchors_with_any_near_raw_or_rejected_evidence": near_rejected_count,
+            "anchors_with_no_near_evidence_at_all": len(rows) - near_rejected_count,
         },
     }
 
@@ -91,6 +109,7 @@ def compact_operator_ball_detector_miss_analysis(report: Mapping[str, Any]) -> d
             "published_id": _mapping(row.get("anchor")).get("published_id"),
             "source_match_id": _mapping(row.get("anchor")).get("source_match_id"),
             "source_time_sec": _mapping(row.get("anchor")).get("source_time_sec"),
+            "frame_resolution": _mapping(row.get("frame_resolution")),
             "resolved_detector_frame": _mapping(exact.get("resolved_detector_frame")),
             "primary_category": row.get("primary_category"),
             "reason": row.get("reason"),
@@ -140,7 +159,7 @@ def export_detector_miss_evidence(
         anchor = _mapping(_mapping(row).get("anchor"))
         exact = _mapping(_mapping(row).get("exact_frame"))
         source = _mapping(sources.get(str(anchor.get("source_match_id") or "")))
-        video_path = Path(str(source.get("video_path") or ""))
+        video_path = _canonical_video_path(source)
         frame = _mapping(exact.get("resolved_detector_frame"))
         base = {
             "canonical_shot_id": anchor.get("canonical_shot_id"),
@@ -164,6 +183,13 @@ def export_detector_miss_evidence(
         point = [anchor.get("x_px"), anchor.get("y_px")]
         if all(isinstance(value, (int, float)) for value in point):
             cv2.drawMarker(image, (round(point[0]), round(point[1])), (0, 255, 255), cv2.MARKER_CROSS, 24, 2)
+        for candidate in exact.get("accepted_candidates") or []:
+            _draw_candidate(image, _mapping(candidate), color=(0, 220, 0), label="accepted")
+        for candidate in exact.get("rejected_candidates") or []:
+            candidate = _mapping(candidate)
+            _draw_candidate(image, candidate, color=(0, 80, 255), label=f"rejected {candidate.get('rejection_reason')}")
+        text = f"{anchor.get('canonical_shot_id')} t={anchor.get('source_time_sec')} f={frame.get('frame')} {row.get('primary_category')}"
+        cv2.putText(image, text[:150], (16, 28), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1, cv2.LINE_AA)
         filename = f"{anchor.get('source_match_id')}-{anchor.get('canonical_shot_id')}-f{frame['frame']}.png"
         output = evidence_dir / filename
         cv2.imwrite(str(output), image)
@@ -174,24 +200,40 @@ def export_detector_miss_evidence(
 def _analyze_miss(anchor: Mapping[str, Any], source: Mapping[str, Any], upstream: Mapping[str, Any], *, window_sec: float) -> dict[str, Any]:
     fps = _number(source.get("fps"))
     raw_frames = _raw_frames(source.get("ball_candidates"))
-    resolved = (
-        resolve_operator_anchor_frame(raw_frames, source_time_sec=float(anchor["source_time_sec"]), fps=fps)
-        if fps and fps > 0
-        else None
-    )
+    expected_frame = _expected_frame(anchor, fps)
+    processed_frames = _processed_frames(source.get("ball_candidates"))
+    exact_rows = {int(frame["frame"]): frame for frame in raw_frames}
+    fuzzy = resolve_operator_anchor_frame(raw_frames, source_time_sec=float(anchor["source_time_sec"]), fps=fps) if fps and fps > 0 else None
     tracks = _tracks_by_frame(source.get("ball_tracks"))
-    if resolved is None:
+    if processed_frames is not None and expected_frame not in processed_frames:
         exact = _empty_exact_frame()
-        category, reason = FRAME_NOT_PROCESSED, "no_persisted_frame_within_anchor_rounding_tolerance"
+        category, reason = FRAME_NOT_PROCESSED, "expected_physical_frame_not_processed"
+        resolution = _frame_resolution(expected_frame, False, fuzzy, "rounding_tolerance" if fuzzy else "unavailable")
+    elif processed_frames is not None and expected_frame not in exact_rows:
+        exact = _empty_exact_frame()
+        category, reason = INCONSISTENT_EVIDENCE, "processed_frame_record_missing"
+        resolution = _frame_resolution(expected_frame, True, fuzzy, "rounding_tolerance" if fuzzy else "unavailable")
     else:
+        resolved = exact_rows.get(expected_frame) or fuzzy
+        if resolved is None:
+            exact = _empty_exact_frame()
+            category, reason = INCONSISTENT_EVIDENCE, "persisted_frame_evidence_unavailable"
+            resolution = _frame_resolution(expected_frame, None, None, "unavailable")
+            return _miss_row(anchor, upstream, source, exact, resolution, category, reason, raw_frames, window_sec)
         exact = _exact_frame(resolved, anchor, tracks)
         category, reason = _classify_exact_frame(exact)
+        resolution = _frame_resolution(expected_frame, True if processed_frames is not None else None, resolved, "exact_frame" if int(resolved["frame"]) == expected_frame else "rounding_tolerance")
+    return _miss_row(anchor, upstream, source, exact, resolution, category, reason, raw_frames, window_sec)
+
+
+def _miss_row(anchor: Mapping[str, Any], upstream: Mapping[str, Any], source: Mapping[str, Any], exact: Mapping[str, Any], resolution: Mapping[str, Any], category: str, reason: str, raw_frames: list[Mapping[str, Any]], window_sec: float) -> dict[str, Any]:
     return {
         "anchor": dict(anchor),
         "upstream_shadow": {"classification": upstream.get("classification"), "reason": upstream.get("reason")},
         "primary_category": category,
         "reason": reason,
         "detector_configuration": _detector_configuration(source),
+        "frame_resolution": dict(resolution),
         "exact_frame": exact,
         "local_context": _local_context(raw_frames, anchor, window_sec=window_sec),
     }
@@ -248,6 +290,9 @@ def _exact_frame(frame: Mapping[str, Any], anchor: Mapping[str, Any], tracks: Ma
         "rejection_reasons": sorted(str(row.get("rejection_reason") or "unknown") for row in rejected),
         "nearest_accepted_candidate": accepted[0] if accepted else None,
         "nearest_rejected_candidate": rejected[0] if rejected else None,
+        "accepted_candidates": accepted,
+        "rejected_candidates": rejected,
+        "near_rejection_reasons": sorted(row["rejection_reason"] for row in rejected if row["within_anchor_distance"]),
         "current_ball_track": {
             "candidate_id": str(track.get("candidate_id") or "") or None,
             "source": str(track.get("source") or "") or None,
@@ -290,6 +335,7 @@ def _candidate_details(
         "width_px": round(width or 0.0, 3),
         "height_px": round(height or 0.0, 3),
         "area_px": round((width or 0.0) * (height or 0.0), 3),
+        "bbox_xyxy": _bbox(candidate.get("bbox_xyxy")),
         "distance_px_to_operator": distance,
         "anchor_distance_threshold_px": threshold,
         "within_anchor_distance": distance is not None and distance <= threshold,
@@ -375,6 +421,9 @@ def _empty_exact_frame() -> dict[str, Any]:
         "nearest_accepted_candidate": None,
         "nearest_rejected_candidate": None,
         "current_ball_track": None,
+        "accepted_candidates": [],
+        "rejected_candidates": [],
+        "near_rejection_reasons": [],
     }
 
 
@@ -425,3 +474,47 @@ def _bbox_center(value: Any) -> list[float] | None:
 def _jsonish(value: Mapping[str, Any]) -> str:
     import json
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _expected_frame(anchor: Mapping[str, Any], fps: float | None) -> int | None:
+    return int(math.floor(float(anchor["source_time_sec"]) * fps + .5)) if fps and fps > 0 else None
+
+
+def _processed_frames(document: Any) -> set[int] | None:
+    value = _mapping(document).get("processed_frames")
+    if not isinstance(value, list):
+        return None
+    return {int(frame) for frame in value if _number(frame) is not None}
+
+
+def _frame_resolution(expected: int | None, processed: bool | None, resolved: Mapping[str, Any] | None, method: str) -> dict[str, Any]:
+    return {
+        "expected_anchor_frame": expected,
+        "expected_frame_processed": processed,
+        "resolved_detector_frame": {"frame": int(resolved["frame"]), "time_sec": resolved["time_sec"]} if resolved else None,
+        "resolution_method": method,
+    }
+
+
+def _canonical_video_path(source: Mapping[str, Any]) -> Path:
+    root = source.get("match_root")
+    if isinstance(root, str):
+        try:
+            return resolve_match_video_path(Path(root), source.get("video_filename"))
+        except FileNotFoundError:
+            pass
+    return Path(str(source.get("video_path") or ""))
+
+
+def _draw_candidate(image: Any, candidate: Mapping[str, Any], *, color: tuple[int, int, int], label: str) -> None:
+    import cv2
+    bbox, point = _bbox(candidate.get("bbox_xyxy")), _point(candidate.get("position_px"))
+    if bbox:
+        cv2.rectangle(image, (round(bbox[0]), round(bbox[1])), (round(bbox[2]), round(bbox[3])), color, 2)
+        origin = (round(bbox[0]), max(16, round(bbox[1]) - 5))
+    elif point:
+        cv2.circle(image, (round(point[0]), round(point[1])), 7, color, 2)
+        origin = (round(point[0]) + 8, round(point[1]) - 8)
+    else:
+        return
+    cv2.putText(image, f"{label} {candidate.get('confidence')}", origin, cv2.FONT_HERSHEY_SIMPLEX, .45, color, 1, cv2.LINE_AA)
