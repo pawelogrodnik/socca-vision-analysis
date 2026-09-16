@@ -116,7 +116,7 @@ def _evaluate_anchor(anchor: dict[str, Any], source: Mapping[str, Any] | None, *
         return {**base, "classification": "inconclusive", "reason": "source_fps_unavailable"}
     frames = _candidate_frames(source.get("ball_candidates"))
     tracks = _track_rows_by_frame(source.get("ball_tracks"))
-    anchor_frame = _resolve_anchor_frame(frames, source_time_sec=float(anchor["source_time_sec"]), fps=fps)
+    anchor_frame = resolve_operator_anchor_frame(frames, source_time_sec=float(anchor["source_time_sec"]), fps=fps)
     if anchor_frame is None:
         return {**base, "classification": "detector_miss", "reason": "no_persisted_frame_within_anchor_rounding_tolerance"}
     candidate_diagnostics = _anchor_candidate_diagnostics([anchor_frame], anchor, tracks)
@@ -244,7 +244,7 @@ def _anchor_candidate_diagnostics(frames: list[Mapping[str, Any]], anchor: Mappi
             point = _point(candidate.get("position_px"))
             if point is None:
                 continue
-            threshold = _anchor_distance_threshold(candidate)
+            threshold = anchor_distance_threshold_px(candidate)
             rows.append({
                 "candidate_id": str(candidate["candidate_id"]),
                 "frame": int(candidate["frame"]),
@@ -385,7 +385,11 @@ def _compare_paths(
     }
 
 
-def _resolve_anchor_frame(frames: list[Mapping[str, Any]], *, source_time_sec: float, fps: float) -> dict[str, Any] | None:
+def resolve_operator_anchor_frame(
+    frames: list[Mapping[str, Any]], *, source_time_sec: float, fps: float,
+) -> dict[str, Any] | None:
+    """Resolve an anchor using the evaluator's authoritative frame tolerance."""
+
     if not frames:
         return None
     closest = min(frames, key=lambda frame: (abs(float(frame["time_sec"]) - source_time_sec), int(frame["frame"])))
@@ -451,7 +455,9 @@ def _shadow_regression_reason(comparison: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _anchor_distance_threshold(candidate: Mapping[str, Any]) -> float:
+def anchor_distance_threshold_px(candidate: Mapping[str, Any]) -> float:
+    """Return the authoritative candidate-size-aware operator-click threshold."""
+
     diameter = max(float(candidate.get("width_px") or 0.0), float(candidate.get("height_px") or 0.0))
     return round(min(MAX_ANCHOR_DISTANCE_PX, max(MIN_ANCHOR_DISTANCE_PX, diameter * ANCHOR_DIAMETER_MULTIPLIER)), 3)
 
