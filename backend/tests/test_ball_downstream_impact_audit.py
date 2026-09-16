@@ -15,7 +15,7 @@ from app.services.ball_downstream_impact_audit import (
 )
 from app.services.effective_ball_tracks import EffectiveBallTracksError
 from app.services.resolved_ball_tracks import RESOLUTION_SCHEMA_VERSION
-from scripts.audit_ball_downstream_impact import PROTECTED_FILENAMES, _guard_outputs
+from scripts.audit_ball_downstream_impact import _guard_outputs
 
 
 OUTPUT_ARTIFACTS = {
@@ -66,6 +66,14 @@ def _resolved(match_dir: Path, *, x: float = 7.0) -> None:
     _write(match_dir, "resolved_ball_tracks.json", document)
 
 
+def _directory_snapshot(match_dir: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(match_dir).as_posix(): path.read_bytes()
+        for path in sorted(match_dir.rglob("*"))
+        if path.is_file()
+    }
+
+
 class BallDownstreamImpactAuditTests(unittest.TestCase):
     def test_no_resolved_or_semantically_equal_resolved_short_circuits_without_builder(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -87,15 +95,28 @@ class BallDownstreamImpactAuditTests(unittest.TestCase):
             _resolved(match_dir)
             for filename in OUTPUT_ARTIFACTS:
                 (match_dir / filename).write_text(json.dumps({"sentinel": filename}), encoding="utf-8")
-            before = {filename: (match_dir / filename).read_bytes() for filename in OUTPUT_ARTIFACTS}
+            before = _directory_snapshot(match_dir)
 
             report = build_ball_downstream_impact_audit(match_dir)
+            repeated = build_ball_downstream_impact_audit(match_dir)
 
             self.assertIn(report["classification"], {"local_downstream_change", "downstream_change_with_remote_effects", "inconclusive"})
             self.assertEqual(report["inputs"]["player_event_timeline_provenance"], "reconstructed_global_identity_overlay")
             self.assertEqual(report["ball_track_changes"]["contiguous_changed_regions"][0]["start_frame"], 1)
             self.assertEqual(report["ball_track_changes"]["contiguous_changed_regions"][0]["end_frame"], 4)
-            self.assertEqual(before, {filename: (match_dir / filename).read_bytes() for filename in before})
+            self.assertEqual(report, repeated)
+            self.assertEqual(before, _directory_snapshot(match_dir))
+            self.assertNotIn("match_phase_config.json", before)
+
+    def test_existing_phase_config_is_read_but_never_modified(self) -> None:
+        with TemporaryDirectory() as temporary:
+            match_dir = _match_fixture(Path(temporary))
+            _resolved(match_dir)
+            phase = {"periods": [{"period_id": "one", "start_time_sec": 0, "end_time_sec": 1, "team_a_direction": "towards_y_min"}]}
+            _write(match_dir, "match_phase_config.json", phase)
+            before = _directory_snapshot(match_dir)
+            build_ball_downstream_impact_audit(match_dir)
+            self.assertEqual(before, _directory_snapshot(match_dir))
 
     def test_malformed_resolved_projection_fails_loudly(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -124,6 +145,27 @@ class BallDownstreamImpactAuditTests(unittest.TestCase):
         result = _compare_collection(before, changed, "candidates", lambda row, _: row["candidate_key"], ball, 5.0)
         self.assertEqual((result["before_count"], result["after_count"], result["modified_count"]), (2, 2, 1))
 
+    def test_collection_diffs_cover_segments_contacts_restarts_and_volatile_timestamps(self) -> None:
+        ball = {"contiguous_changed_regions": [{"start_time_sec": 1.0, "end_time_sec": 1.0}]}
+        unchanged = _compare_collection(
+            {"segments": [{"id": "one", "time_sec": 1.0, "generated_at": "old"}]},
+            {"segments": [{"id": "one", "time_sec": 1.0, "generated_at": "new"}]},
+            "segments", lambda row, _: row["id"], ball, 5.0,
+        )
+        self.assertEqual(unchanged["changed_count"], 0)
+        contacts = _compare_collection(
+            {"candidates": [{"candidate_key": "old", "time_sec": 1.0}]},
+            {"candidates": [{"candidate_key": "new", "time_sec": 1.0}]},
+            "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
+        )
+        self.assertEqual((contacts["added_count"], contacts["removed_count"]), (1, 1))
+        restarts = _compare_collection(
+            {"candidates": [{"candidate_key": "restart", "time_sec": 1.0, "boundary_line": "left"}]},
+            {"candidates": [{"candidate_key": "restart", "time_sec": 1.0, "boundary_line": "right"}]},
+            "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
+        )
+        self.assertEqual(restarts["modified_count"], 1)
+
     def test_remote_and_momentum_changes_are_reported_but_not_failed(self) -> None:
         ball = {"contiguous_changed_regions": [{"start_time_sec": 1.0, "end_time_sec": 1.0}]}
         remote = _compare_collection({"candidates": []}, {"candidates": [{"candidate_key": "r", "time_sec": 20.0}]}, "candidates", lambda row, _: row["candidate_key"], ball, 5.0)
@@ -131,11 +173,24 @@ class BallDownstreamImpactAuditTests(unittest.TestCase):
         momentum = _compare_momentum({"points": [{"time_sec": 1.0, "value": 0.1}]}, {"points": [{"time_sec": 1.0, "value": 0.2}]}, ball, 5.0)
         self.assertEqual(momentum["changed_point_count"], 1)
 
-    def test_cli_guard_rejects_protected_output(self) -> None:
+    def test_local_propagation_is_classified_against_ball_regions(self) -> None:
+        ball = {"contiguous_changed_regions": [{"start_time_sec": 1.0, "end_time_sec": 1.1}]}
+        local = _compare_collection(
+            {"candidates": []}, {"candidates": [{"candidate_key": "near", "time_sec": 2.0}]},
+            "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
+        )
+        self.assertEqual((local["locality"]["near_change_count"], local["locality"]["remote_change_count"]), (1, 0))
+
+    def test_cli_guard_rejects_every_existing_match_file(self) -> None:
         with TemporaryDirectory() as temporary:
             match_dir = _match_fixture(Path(temporary))
+            for filename in ("match.json", "pitch_config.json", "pass_candidates.json"):
+                (match_dir / filename).touch(exist_ok=True)
+                with self.assertRaises(SystemExit):
+                    _guard_outputs([match_dir], match_dir / filename, parser=_Parser())
+            _write(match_dir, "match_phase_config.json", {"periods": []})
             with self.assertRaises(SystemExit):
-                _guard_outputs([match_dir], match_dir / "pass_candidates.json", parser=_Parser())
+                _guard_outputs([match_dir], match_dir / "match_phase_config.json", parser=_Parser())
 
 
 class _Parser:

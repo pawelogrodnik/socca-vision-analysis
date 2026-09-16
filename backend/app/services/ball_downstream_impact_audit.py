@@ -24,7 +24,7 @@ from app.services.effective_ball_tracks import (
     load_effective_ball_tracks,
 )
 from app.services.event_candidates import build_event_candidate_artifacts
-from app.services.match_phase_config import load_match_phase_config
+from app.services.match_phase_config import load_match_phase_config_read_only
 from app.services.pass_candidates import apply_existing_pass_reviews, build_pass_review_report
 from app.services.player_event_timeline import load_player_event_timeline
 
@@ -86,19 +86,19 @@ def build_ball_downstream_impact_audit(
     players = load_player_event_timeline(match_dir)
     pitch = load_pitch_config(match_dir)
     video = metadata.get("video") if isinstance(metadata.get("video"), dict) else {}
+    phase = load_match_phase_config_read_only(match_dir, {"video": video})
     before = build_ball_possession_analysis(
         match_dir, match_dir / "video.mp4", pitch, video, automatic, players.document,
-        write_overlay_video=False, persist_artifacts=False,
+        write_overlay_video=False, persist_artifacts=False, match_phase_config_doc=phase,
     )
     after = build_ball_possession_analysis(
         match_dir, match_dir / "video.mp4", pitch, video, resolved.document, players.document,
-        write_overlay_video=False, persist_artifacts=False,
+        write_overlay_video=False, persist_artifacts=False, match_phase_config_doc=phase,
     )
     # The generator starts from automatic review decisions. Re-apply only
     # durable operator decisions by stable keys, in memory, to both variants.
     # This is the same review state, without pretending an old review belongs
     # to a newly shaped candidate that no longer has its canonical key.
-    phase = load_match_phase_config(match_dir, {"video": video})
     existing_contacts = _load_optional_object(match_dir / "contact_candidates.json")
     existing_passes = _load_optional_object(match_dir / "pass_candidates.json")
     _apply_review_state(before, existing_contacts, existing_passes, phase, pitch, video)
