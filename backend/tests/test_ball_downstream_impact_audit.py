@@ -10,6 +10,11 @@ from unittest.mock import patch
 from app.services.ball_downstream_impact_audit import (
     _compare_collection,
     _compare_momentum,
+    _contact_projection,
+    _event_projection,
+    _pass_projection,
+    _restart_projection,
+    _segment_projection,
     build_ball_downstream_impact_audit,
     compact_ball_downstream_impact_audit,
 )
@@ -165,6 +170,73 @@ class BallDownstreamImpactAuditTests(unittest.TestCase):
             "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
         )
         self.assertEqual(restarts["modified_count"], 1)
+        unchanged_segment_id = _compare_collection(
+            {"segments": [{"segment_id": "pos-000001", "start_frame": 1, "end_frame": 2}]},
+            {"segments": [{"segment_id": "pos-000002", "start_frame": 1, "end_frame": 2}]},
+            "segments", lambda row, _: "same", ball, 5.0, projection=_segment_projection,
+        )
+        self.assertEqual(unchanged_segment_id["changed_count"], 0)
+        unchanged_restart_id = _compare_collection(
+            {"candidates": [{"candidate_key": "restart", "candidate_id": "restart-0001", "time_sec": 1.0}]},
+            {"candidates": [{"candidate_key": "restart", "candidate_id": "restart-0002", "time_sec": 1.0}]},
+            "candidates", lambda row, _: row["candidate_key"], ball, 5.0, projection=_restart_projection,
+        )
+        self.assertEqual(unchanged_restart_id["changed_count"], 0)
+
+    def test_sequential_identifiers_do_not_pollute_contact_event_or_pass_diffs(self) -> None:
+        ball = {"contiguous_changed_regions": [{"start_time_sec": 1.0, "end_time_sec": 1.0}]}
+        contacts_before = {"candidates": [
+            {"candidate_key": "contact-a", "candidate_id": "contact-0001", "time_sec": 1.0},
+            {"candidate_key": "contact-b", "candidate_id": "contact-0002", "time_sec": 2.0},
+            {"candidate_key": "contact-c", "candidate_id": "contact-0003", "time_sec": 3.0},
+        ]}
+        contacts_after = {"candidates": [
+            {"candidate_key": "contact-a", "candidate_id": "contact-0001", "time_sec": 1.0},
+            {"candidate_key": "contact-x", "candidate_id": "contact-0002", "time_sec": 1.5},
+            {"candidate_key": "contact-b", "candidate_id": "contact-0003", "time_sec": 2.0},
+            {"candidate_key": "contact-c", "candidate_id": "contact-0004", "time_sec": 3.0},
+        ]}
+        contacts = _compare_collection(
+            contacts_before, contacts_after, "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
+            projection=_contact_projection,
+        )
+        self.assertEqual((contacts["added_count"], contacts["removed_count"], contacts["modified_count"]), (1, 0, 0))
+
+        events_before = {"events": [
+            {"source_candidate_key": "contact-b", "event_id": "event-0002", "source_candidate_id": "contact-0002", "event_type": "ball_contact"},
+            {"source_candidate_key": "contact-c", "event_id": "event-0003", "source_candidate_id": "contact-0003", "event_type": "ball_contact"},
+        ]}
+        events_after = {"events": [
+            {"source_candidate_key": "contact-x", "event_id": "event-0002", "source_candidate_id": "contact-0002", "event_type": "ball_contact"},
+            {"source_candidate_key": "contact-b", "event_id": "event-0003", "source_candidate_id": "contact-0003", "event_type": "ball_contact"},
+            {"source_candidate_key": "contact-c", "event_id": "event-0004", "source_candidate_id": "contact-0004", "event_type": "ball_contact"},
+        ]}
+        events = _compare_collection(
+            events_before, events_after, "events", lambda row, _: row["source_candidate_key"], ball, 5.0,
+            projection=_event_projection,
+        )
+        self.assertEqual((events["added_count"], events["removed_count"], events["modified_count"]), (1, 0, 0))
+
+        passes_before = {"candidates": [
+            {"candidate_key": "pass-b", "candidate_id": "pass-0002", "source_event_id": "event-0002", "target_event_id": "event-0003", "source_candidate_id": "contact-b", "target_candidate_id": "contact-c", "source_candidate_key": "contact-b", "target_candidate_key": "contact-c", "outcome": "completed_pass"},
+        ]}
+        passes_after = {"candidates": [
+            {"candidate_key": "pass-x", "candidate_id": "pass-0002", "source_event_id": "event-0002", "target_event_id": "event-0003", "source_candidate_id": "contact-x", "target_candidate_id": "contact-b", "source_candidate_key": "contact-x", "target_candidate_key": "contact-b", "outcome": "completed_pass"},
+            {"candidate_key": "pass-b", "candidate_id": "pass-0003", "source_event_id": "event-0003", "target_event_id": "event-0004", "source_candidate_id": "contact-b", "target_candidate_id": "contact-c", "source_candidate_key": "contact-b", "target_candidate_key": "contact-c", "outcome": "completed_pass"},
+        ]}
+        passes = _compare_collection(
+            passes_before, passes_after, "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
+            projection=_pass_projection,
+        )
+        self.assertEqual((passes["added_count"], passes["removed_count"], passes["modified_count"]), (1, 0, 0))
+
+        changed_outcome = deepcopy(passes_before)
+        changed_outcome["candidates"][0]["outcome"] = "failed_pass"
+        genuine_pass_change = _compare_collection(
+            passes_before, changed_outcome, "candidates", lambda row, _: row["candidate_key"], ball, 5.0,
+            projection=_pass_projection,
+        )
+        self.assertEqual(genuine_pass_change["modified_count"], 1)
 
     def test_remote_and_momentum_changes_are_reported_but_not_failed(self) -> None:
         ball = {"contiguous_changed_regions": [{"start_time_sec": 1.0, "end_time_sec": 1.0}]}

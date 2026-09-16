@@ -114,23 +114,23 @@ def build_ball_downstream_impact_audit(
         ),
         "possession_segments": _compare_collection(
             before_docs["possession_segments"], after_docs["possession_segments"], "segments", _segment_key,
-            ball_changes, threshold,
+            ball_changes, threshold, projection=_segment_projection,
         ),
         "contact_candidates": _compare_collection(
             before_docs["contact_candidates"], after_docs["contact_candidates"], "candidates", _contact_key,
-            ball_changes, threshold,
+            ball_changes, threshold, projection=_contact_projection,
         ),
         "event_candidates": _compare_collection(
             before_docs["event_candidates"], after_docs["event_candidates"], "events", _event_key,
-            ball_changes, threshold,
+            ball_changes, threshold, projection=_event_projection,
         ),
         "restart_candidates": _compare_collection(
             before_docs["restart_candidates"], after_docs["restart_candidates"], "candidates", _restart_key,
-            ball_changes, threshold,
+            ball_changes, threshold, projection=_restart_projection,
         ),
         "pass_candidates": _compare_collection(
             before_docs["pass_candidates"], after_docs["pass_candidates"], "candidates", _pass_key,
-            ball_changes, threshold,
+            ball_changes, threshold, projection=_pass_projection,
         ),
         "pass_review_report": _compare_document(before_docs["pass_review_report"], after_docs["pass_review_report"]),
         "attacking_momentum": _compare_momentum(
@@ -338,9 +338,18 @@ def _compare_possession_frames(before: Mapping[str, Any], after: Mapping[str, An
     }
 
 
-def _compare_collection(before: Mapping[str, Any], after: Mapping[str, Any], field: str, key_fn: Any, ball: Mapping[str, Any], threshold: float) -> dict[str, Any]:
-    left = _indexed(before.get(field), key_fn)
-    right = _indexed(after.get(field), key_fn)
+def _compare_collection(
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+    field: str,
+    key_fn: Any,
+    ball: Mapping[str, Any],
+    threshold: float,
+    *,
+    projection: Any = None,
+) -> dict[str, Any]:
+    left = _indexed(before.get(field), key_fn, projection=projection)
+    right = _indexed(after.get(field), key_fn, projection=projection)
     added = [{"key": key, "after": right[key]} for key in sorted(set(right) - set(left))]
     removed = [{"key": key, "before": left[key]} for key in sorted(set(left) - set(right))]
     modified = [{"key": key, "before": left[key], "after": right[key], "changed_fields": _changed_fields(left[key], right[key])} for key in sorted(set(left) & set(right)) if left[key] != right[key]]
@@ -376,12 +385,12 @@ def _compare_document(before: Mapping[str, Any], after: Mapping[str, Any]) -> di
     return {"before_count": 1, "after_count": 1, "changed_count": int(changed), "modified_count": int(changed), "changed_fields": _changed_fields(left, right) if changed else [], "affected_regions": [], "locality": _empty_locality()}
 
 
-def _indexed(rows: Any, key_fn: Any) -> dict[str, dict[str, Any]]:
+def _indexed(rows: Any, key_fn: Any, *, projection: Any = None) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for index, row in enumerate(rows if isinstance(rows, list) else []):
         if isinstance(row, Mapping):
             key = str(key_fn(row, index))
-            indexed[key] = _semantic(row)
+            indexed[key] = _semantic(projection(row) if projection is not None else row)
     return indexed
 
 
@@ -418,6 +427,47 @@ def _restart_key(row: Mapping[str, Any], _: int) -> str:
 
 def _pass_key(row: Mapping[str, Any], _: int) -> str:
     return str(row.get("candidate_key") or canonical_json_sha256({key: _semantic(row.get(key)) for key in ("source_candidate_key", "target_candidate_key", "restart_candidate_key", "source_candidate_id", "target_candidate_id")}))
+
+
+def _segment_projection(row: Mapping[str, Any]) -> dict[str, Any]:
+    # ``segment_id`` serializes the generated range/status and is redundant
+    # with the actual semantic bounds retained below.
+    return _without_fields(row, {"segment_id"})
+
+
+def _contact_projection(row: Mapping[str, Any]) -> dict[str, Any]:
+    # Contact rows are paired by candidate_key. candidate_id is a sequential
+    # presentation ID and shifts after an earlier insertion.
+    return _without_fields(row, {"candidate_id"})
+
+
+def _event_projection(row: Mapping[str, Any]) -> dict[str, Any]:
+    # Events are paired by source_candidate_key, so these two IDs merely carry
+    # the generator's sequential numbering and cannot add football meaning.
+    return _without_fields(row, {"event_id", "source_candidate_id"})
+
+
+def _restart_projection(row: Mapping[str, Any]) -> dict[str, Any]:
+    # The restart candidate key encodes its stable temporal/boundary identity.
+    return _without_fields(row, {"candidate_id"})
+
+
+def _pass_projection(row: Mapping[str, Any]) -> dict[str, Any]:
+    # Regular passes are paired by candidate_key, built from stable contact
+    # keys. Remove only references made redundant by those stable keys; keep
+    # all football outcome, geometry, review and evidence fields.
+    ignored = {"candidate_id", "source_event_id", "target_event_id"}
+    if row.get("source_candidate_key"):
+        ignored.add("source_candidate_id")
+    if row.get("target_candidate_key"):
+        ignored.add("target_candidate_id")
+    if row.get("restart_candidate_key"):
+        ignored.add("restart_candidate_id")
+    return _without_fields(row, ignored)
+
+
+def _without_fields(row: Mapping[str, Any], ignored: set[str]) -> dict[str, Any]:
+    return {str(key): value for key, value in row.items() if str(key) not in ignored}
 
 
 def _momentum_key(row: Mapping[str, Any]) -> str:
