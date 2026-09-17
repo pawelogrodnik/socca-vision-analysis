@@ -6,7 +6,7 @@ import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 BALL_COCO_CLASS_ID = 32
 BALL_COCO_CLASS_NAME = "sports ball"
@@ -59,6 +59,7 @@ def detect_ball_yolo_coco(
     ball_conf: float = DEFAULT_BALL_CONF,
     max_interpolation_gap_sec: float = DEFAULT_MAX_INTERPOLATION_GAP_SEC,
     camera_motion: Any | None = None,
+    include_raw_predictions: bool = False,
     write_overlay_video: bool = True,
 ) -> dict[str, Any]:
     import cv2
@@ -186,6 +187,7 @@ def detect_ball_yolo_coco(
 
             results = model.predict(**kwargs)
             raw_predictions = 0
+            raw_prediction_rows: list[dict[str, Any]] = []
             candidates: list[dict[str, Any]] = []
             rejected: list[dict[str, Any]] = []
             if results:
@@ -195,6 +197,11 @@ def detect_ball_yolo_coco(
                     confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
                     classes = boxes.cls.cpu().numpy() if boxes.cls is not None else None
                     raw_predictions = len(xyxy)
+                    if include_raw_predictions:
+                        raw_prediction_rows = [
+                            _raw_prediction_row(bbox, conf, classes, index, frame_idx, class_config)
+                            for index, (bbox, conf) in enumerate(zip(xyxy, confs))
+                        ]
                     candidates, rejected = extract_ball_candidates(
                         xyxy,
                         confs,
@@ -214,6 +221,7 @@ def detect_ball_yolo_coco(
                     "frame": frame_idx,
                     "time_sec": round(frame_idx / fps, 3),
                     "raw_predictions": raw_predictions,
+                    **({"raw_prediction_rows": raw_prediction_rows} if include_raw_predictions else {}),
                     "candidates": candidates,
                     "rejected_candidates": rejected,
                     "rejected_counts": dict(Counter(str(item.get("reason") or "unknown") for item in rejected)),
@@ -276,6 +284,7 @@ def collect_ball_candidates_range(
     ball_conf: float = DEFAULT_BALL_CONF,
     max_interpolation_gap_sec: float = DEFAULT_MAX_INTERPOLATION_GAP_SEC,
     camera_motion: Any | None = None,
+    include_raw_predictions: bool = False,
 ) -> dict[str, Any]:
     import cv2
     import numpy as np
@@ -361,6 +370,7 @@ def collect_ball_candidates_range(
                 kwargs["device"] = yolo_device
 
             raw_predictions = 0
+            raw_prediction_rows: list[dict[str, Any]] = []
             candidates: list[dict[str, Any]] = []
             rejected: list[dict[str, Any]] = []
             results = model.predict(**kwargs)
@@ -371,6 +381,11 @@ def collect_ball_candidates_range(
                     confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
                     classes = boxes.cls.cpu().numpy() if boxes.cls is not None else None
                     raw_predictions = len(xyxy)
+                    if include_raw_predictions:
+                        raw_prediction_rows = [
+                            _raw_prediction_row(bbox, conf, classes, index, frame_idx, class_config)
+                            for index, (bbox, conf) in enumerate(zip(xyxy, confs))
+                        ]
                     candidates, rejected = extract_ball_candidates(
                         xyxy,
                         confs,
@@ -390,6 +405,7 @@ def collect_ball_candidates_range(
                     "frame": frame_idx,
                     "time_sec": round(frame_idx / fps, 3),
                     "raw_predictions": raw_predictions,
+                    **({"raw_prediction_rows": raw_prediction_rows} if include_raw_predictions else {}),
                     "candidates": candidates,
                     "rejected_candidates": rejected,
                     "rejected_counts": dict(Counter(str(item.get("reason") or "unknown") for item in rejected)),
@@ -524,6 +540,30 @@ def extract_ball_candidates(
             }
         )
     return candidates, rejected
+
+
+def _raw_prediction_row(
+    bbox: Any,
+    confidence: Any,
+    classes: Any,
+    index: int,
+    frame_idx: int,
+    class_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    x1, y1, x2, y2 = [float(value) for value in bbox]
+    class_id = _class_id_at(classes, index)
+    names = class_config.get("class_name_by_id") if isinstance(class_config.get("class_name_by_id"), dict) else {}
+    return {
+        "candidate_id": f"raw-f{frame_idx:06d}-c{index:02d}",
+        "class_id": class_id,
+        "class_name": names.get(class_id),
+        "confidence": round(float(confidence), 4),
+        "bbox_xyxy": [round(value, 2) for value in (x1, y1, x2, y2)],
+        "position_px": [round((x1 + x2) / 2, 2), round((y1 + y2) / 2, 2)],
+        "width_px": round(x2 - x1, 2),
+        "height_px": round(y2 - y1, 2),
+        "area_px": round((x2 - x1) * (y2 - y1), 2),
+    }
 
 
 def build_ball_candidates_document(
