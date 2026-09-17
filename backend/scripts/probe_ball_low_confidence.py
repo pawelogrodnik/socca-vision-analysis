@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from app import config
 from app.services.analysis import _load_yolo_model, _resolve_yolo_model_name, load_pitch_config
-from app.services.ball_tracking import collect_ball_candidates_range
+from app.services.ball_tracking import _resolve_ball_model_classes, collect_ball_candidates_range
 from app.services.camera_motion import build_camera_motion_model
 from app.services.shot_review_editor import load_shot_review_document
 from app.services.video import read_match_video_metadata, resolve_match_video_path
@@ -45,7 +46,7 @@ def main() -> None:
             _assert_external(path)
     anchors = extract_operator_ball_anchors(load_shot_review_document(args.published_id))
     sources = _source_artifacts(anchors)
-    contexts: dict[str, tuple[Any, Any, dict[str, Any], Path, dict[str, Any]]] = {}
+    contexts: dict[str, tuple[Any, Any, dict[str, Any], Path, dict[str, Any], dict[str, Any]]] = {}
     cameras: dict[tuple[str, float], Any] = {}
 
     def runner(source: dict[str, Any], threshold: float, window: float) -> dict[str, Any]:
@@ -53,18 +54,19 @@ def main() -> None:
         root = config.MATCHES_DIR / source_id
         if source_id not in contexts:
             parameters = source["ball_candidates"].get("parameters") or {}
-            model_name = str(parameters.get("model_path") or "models/best.pt")
-            resolved = Path(_resolve_yolo_model_name(model_name))
-            if not resolved.is_file():
-                raise FileNotFoundError(f"production_ball_model_unavailable:{resolved}")
+            identity = _production_model_identity(root)
+            resolved = Path(identity["resolved_local_path"])
             pitch = load_pitch_config(root)
             metadata = read_match_video_metadata(
                 root,
                 json.loads((root / "match.json").read_text()),
             )
             video = resolve_match_video_path(root, str(metadata.get("filename") or "") or None)
-            contexts[source_id] = (_load_yolo_model(str(resolved)), pitch, parameters, video, metadata)
-        model, pitch, parameters, video, metadata = contexts[source_id]
+            model = _load_yolo_model(str(resolved))
+            identity["detector_source"] = _resolve_ball_model_classes(model)["source"]
+            identity["model_class_configuration"] = _resolve_ball_model_classes(model)
+            contexts[source_id] = (model, pitch, parameters, video, metadata, identity)
+        model, pitch, parameters, video, metadata, identity = contexts[source_id]
         camera_key = (source_id, float(source["_anchor_time"]))
         if camera_key not in cameras:
             camera = build_camera_motion_model(
@@ -92,6 +94,7 @@ def main() -> None:
             include_raw_predictions=True,
         )
         result["fps"] = metadata["fps"]
+        result["model_identity"] = identity
         return result
     thresholds = [float(value) for value in args.thresholds.split(",") if value.strip()]
     report = probe_low_confidence(
@@ -118,6 +121,52 @@ def _assert_external(path: Path) -> None:
         raise ValueError("diagnostic_output_must_not_be_under_match_storage")
 
 
+def _production_model_identity(root: Path) -> dict[str, Any]:
+    """Resolve the ball weights from the persisted source analysis manifest."""
+    match = _read_json_object(root / "match.json")
+    report = _read_json_object(root / "analysis_report.json")
+    run_id = str(report.get("run_id") or match.get("latest_analysis_run_id") or "")
+    manifest_name = str(report.get("run_manifest") or "")
+    if not manifest_name and run_id:
+        manifest_name = f"analysis_runs/{run_id}/run_metadata.json"
+    if not manifest_name:
+        raise ValueError("production_ball_model_identity_unavailable:missing_run_manifest")
+    manifest_path = root / manifest_name
+    if not manifest_path.is_file():
+        raise ValueError("production_ball_model_identity_unavailable:run_manifest_missing")
+    manifest = _read_json_object(manifest_path)
+    parameters = manifest.get("parameters") if isinstance(manifest.get("parameters"), dict) else {}
+    persisted_model = parameters.get("ball_yolo_model")
+    if not isinstance(persisted_model, str) or not persisted_model.strip():
+        raise ValueError("production_ball_model_identity_unavailable:ball_yolo_model_missing")
+    resolved = Path(_resolve_yolo_model_name(persisted_model))
+    if not resolved.is_file():
+        raise FileNotFoundError(f"production_ball_model_file_unavailable:{resolved}")
+    return {
+        "source_analysis_run_id": run_id or None,
+        "run_manifest": str(manifest_path),
+        "persisted_ball_yolo_model": persisted_model,
+        "resolved_local_path": str(resolved),
+        "model_file_exists": True,
+        "model_sha256": _file_sha256(resolved),
+    }
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"expected_json_object:{path}")
+    return value
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
@@ -126,7 +175,7 @@ def _write_json(path: Path, value: Any) -> None:
 def _write_evidence(
     directory: Path,
     report: dict[str, Any],
-    contexts: dict[str, tuple[Any, Any, dict[str, Any], Path, dict[str, Any]]],
+    contexts: dict[str, tuple[Any, Any, dict[str, Any], Path, dict[str, Any], dict[str, Any]]],
 ) -> None:
     """Render exact-frame raw/accepted/rejected evidence outside match storage."""
     import cv2
@@ -137,7 +186,7 @@ def _write_evidence(
             continue
         anchor = row["anchor"]
         source_id = str(anchor["source_match_id"])
-        _model, _pitch, _parameters, video, _metadata = contexts[source_id]
+        _model, _pitch, _parameters, video, _metadata, _identity = contexts[source_id]
         for threshold_row in row["thresholds"]:
             frame = threshold_row["exact_frame"]["frame"]
             capture = cv2.VideoCapture(str(video))

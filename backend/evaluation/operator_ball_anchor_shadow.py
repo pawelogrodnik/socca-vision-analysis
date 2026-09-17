@@ -138,7 +138,7 @@ def _evaluate_anchor(anchor: dict[str, Any], source: Mapping[str, Any] | None, *
     policy = _source_selection_policy(source)
     if policy is None:
         return {**base, "classification": "inconclusive", "reason": "source_ball_selection_policy_unsupported"}
-    path, continuity = _build_local_shadow_path(
+    path, continuity = build_local_trusted_anchor_path(
         frames,
         seed_candidate,
         anchor_time_sec=float(anchor["source_time_sec"]),
@@ -277,7 +277,7 @@ def _current_at_anchor(frame: Mapping[str, Any], tracks: Mapping[int, Mapping[st
     }
 
 
-def _build_local_shadow_path(
+def build_local_trusted_anchor_path(
     frames: list[Mapping[str, Any]],
     seed: Mapping[str, Any],
     *,
@@ -320,6 +320,11 @@ def _build_local_shadow_path(
         "selection_policy": policy_version,
         "max_link_speed_mps": round(max_link_speed_mps, 3),
         "max_observed_speed_mps": round(max(speeds), 3) if speeds else None,
+        "candidate_point_count": len(path),
+        "start_frame": int(path[0]["frame"]) if path else None,
+        "end_frame": int(path[-1]["frame"]) if path else None,
+        "candidate_ids": [str(row["candidate_id"]) for row in path],
+        "plausible": len(path) >= 2 and all(speed <= max_link_speed_mps for speed in speeds),
         "backward_stop_reason": "window_boundary" if backward_rows else "no_policy_compatible_candidate",
         "forward_stop_reason": "window_boundary" if forward else "no_policy_compatible_candidate",
         "uses_interpolation": False,
