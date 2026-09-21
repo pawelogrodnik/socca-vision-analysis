@@ -9,6 +9,9 @@ from typing import Any
 from app.services.candidate_keys import regular_pass_candidate_key
 
 PASS_SOURCE = "ball_contact_events_to_pass_candidates_v1"
+PASS_POLICY_V1 = "v1"
+PASS_POLICY_V2 = "v2"
+PASS_POLICY_VERSIONS = frozenset({PASS_POLICY_V1, PASS_POLICY_V2})
 PASS_EVENT_STATUSES = {"accepted", "uncertain"}
 PASS_REVIEW_STATUSES = {"needs_review", "accepted", "rejected", "uncertain"}
 MIN_PASS_GAP_SEC = 0.05
@@ -23,6 +26,9 @@ MIN_PASS_RELEASE_MEAN_SPEED_MPS = 1.15
 MIN_PASS_RELEASE_SOURCE_CLEARANCE_M = 0.9
 MIN_PASS_RELEASE_STRAIGHTNESS = 0.3
 IMMEDIATE_CONTESTED_FRAMES = 4
+V2_LOCAL_SCRAMBLE_WINDOW_SEC = 0.75
+V2_LOCAL_SCRAMBLE_MIN_EVENTS = 5
+V2_RAPID_CONTACT_GAP_SEC = 0.3
 
 
 def _now_iso() -> str:
@@ -33,13 +39,18 @@ def build_pass_candidates_document(
     event_candidates_doc: dict[str, Any],
     match_phase_config_doc: dict[str, Any] | None = None,
     possession_doc: dict[str, Any] | None = None,
+    *,
+    policy_version: str = PASS_POLICY_V1,
 ) -> dict[str, Any]:
+    if policy_version not in PASS_POLICY_VERSIONS:
+        raise ValueError(f"Unsupported pass policy version: {policy_version}")
+    pass_source = f"ball_contact_events_to_pass_candidates_{policy_version}"
     contact_events = _sorted_contact_events(event_candidates_doc)
     possession_frames_by_frame = _possession_frames_by_frame(possession_doc)
     candidates: list[dict[str, Any]] = []
     skipped_reasons: Counter[str] = Counter()
 
-    for source_event, target_event in zip(contact_events, contact_events[1:]):
+    for pair_index, (source_event, target_event) in enumerate(zip(contact_events, contact_events[1:])):
         reason = _skip_reason(source_event, target_event)
         if reason:
             skipped_reasons[reason] += 1
@@ -56,7 +67,15 @@ def build_pass_candidates_document(
         forward_progress_m = _forward_progress_m(start_position_m, end_position_m, phase["attack_direction"])
         direction = _pass_direction(forward_progress_m)
         release_evidence = _pass_release_evidence(source_event, target_event, possession_frames_by_frame)
-        outcome = _classify_pass_outcome(source_event, target_event, pass_type, release_evidence)
+        local_context = _local_contact_context(contact_events, pair_index)
+        release_evidence["local_contact_context"] = local_context
+        outcome = _classify_pass_outcome(
+            source_event,
+            target_event,
+            pass_type,
+            release_evidence,
+            policy_version=policy_version,
+        )
         auto_review_status = _pass_auto_review_status(source_event, target_event, outcome)
         review_status = _initial_pass_review_status(auto_review_status)
         candidate_id = f"pass-{len(candidates) + 1:04d}"
@@ -74,7 +93,7 @@ def build_pass_candidates_document(
                 "failed": outcome["failed"],
                 "from_restart": False,
                 "excluded_reason": outcome["excluded_reason"],
-                "source": PASS_SOURCE,
+                "source": pass_source,
                 "source_event_id": source_event.get("event_id"),
                 "target_event_id": target_event.get("event_id"),
                 "source_candidate_id": source_event.get("source_candidate_id"),
@@ -115,7 +134,9 @@ def build_pass_candidates_document(
                 "release_evidence": release_evidence.get("release_evidence"),
                 "receiver_evidence": release_evidence.get("receiver_evidence"),
                 "trajectory_evidence": release_evidence.get("trajectory_evidence"),
+                "local_contact_context": release_evidence.get("local_contact_context"),
                 "rejection_reasons": outcome["rejection_reasons"],
+                "pass_policy_version": policy_version,
                 "source_event_review_statuses": [
                     source_event.get("review_status"),
                     target_event.get("review_status"),
@@ -129,7 +150,7 @@ def build_pass_candidates_document(
     return {
         "schema_version": "0.1.0",
         "generated_at": _now_iso(),
-        "source": PASS_SOURCE,
+        "source": pass_source,
         "experimental": True,
         "candidate_semantics": "pass_candidates_from_consecutive_ball_contacts_not_final_stats",
         "parameters": {
@@ -145,6 +166,7 @@ def build_pass_candidates_document(
             "min_pass_release_straightness": MIN_PASS_RELEASE_STRAIGHTNESS,
             "immediate_contested_frames": IMMEDIATE_CONTESTED_FRAMES,
             "allowed_source_event_statuses": sorted(PASS_EVENT_STATUSES),
+            "pass_policy_version": policy_version,
         },
         "summary": _pass_summary(contact_events, candidates, skipped_reasons),
         "candidates": candidates,
@@ -179,8 +201,15 @@ def build_pass_candidate_artifacts(
     event_candidates_doc: dict[str, Any],
     match_phase_config_doc: dict[str, Any] | None = None,
     possession_doc: dict[str, Any] | None = None,
+    *,
+    policy_version: str = PASS_POLICY_V1,
 ) -> dict[str, Any]:
-    pass_candidates = build_pass_candidates_document(event_candidates_doc, match_phase_config_doc, possession_doc)
+    pass_candidates = build_pass_candidates_document(
+        event_candidates_doc,
+        match_phase_config_doc,
+        possession_doc,
+        policy_version=policy_version,
+    )
     pass_review_report = build_pass_review_report(pass_candidates)
     return {
         "pass_candidates": pass_candidates,
@@ -197,9 +226,16 @@ def write_pass_candidate_artifacts(
     event_candidates_doc: dict[str, Any],
     match_phase_config_doc: dict[str, Any] | None = None,
     possession_doc: dict[str, Any] | None = None,
+    *,
+    policy_version: str = PASS_POLICY_V1,
 ) -> dict[str, Any]:
     existing_document = _load_existing_pass_document(match_path)
-    artifacts = build_pass_candidate_artifacts(event_candidates_doc, match_phase_config_doc, possession_doc)
+    artifacts = build_pass_candidate_artifacts(
+        event_candidates_doc,
+        match_phase_config_doc,
+        possession_doc,
+        policy_version=policy_version,
+    )
     apply_existing_pass_reviews(artifacts["pass_candidates"], existing_document)
     artifacts["pass_review_report"] = build_pass_review_report(artifacts["pass_candidates"])
     (match_path / "pass_candidates.json").write_text(
@@ -464,15 +500,56 @@ def _pass_release_evidence(
     }
 
 
+def _local_contact_context(events: list[dict[str, Any]], pair_index: int) -> dict[str, Any]:
+    """Describe local contact density without assigning a football event label.
+
+    This is intentionally based only on already generated contact events.  It
+    gives policy v2 a narrow way to reject dense ricochet/rebound chains while
+    retaining ordinary two- and three-contact passing sequences.
+    """
+
+    source = events[pair_index]
+    target = events[pair_index + 1]
+    center_start = float(source.get("end_time_sec") or source.get("start_time_sec") or 0.0)
+    center_end = float(target.get("start_time_sec") or target.get("end_time_sec") or center_start)
+    lower = center_start - V2_LOCAL_SCRAMBLE_WINDOW_SEC
+    upper = center_end + V2_LOCAL_SCRAMBLE_WINDOW_SEC
+    local = [
+        event for event in events
+        if lower <= float(event.get("start_time_sec") or 0.0) <= upper
+    ]
+    prior_gap = None
+    if pair_index:
+        prior_gap = _time_gap_sec(events[pair_index - 1], source)
+    next_gap = None
+    if pair_index + 2 < len(events):
+        next_gap = _time_gap_sec(target, events[pair_index + 2])
+    rapid_neighbors = sum(
+        gap is not None and gap <= V2_RAPID_CONTACT_GAP_SEC
+        for gap in (prior_gap, _time_gap_sec(source, target), next_gap)
+    )
+    return {
+        "nearby_contact_count": len(local),
+        "prior_gap_sec": _round(prior_gap, 3) if prior_gap is not None else None,
+        "next_gap_sec": _round(next_gap, 3) if next_gap is not None else None,
+        "rapid_neighbor_gaps": rapid_neighbors,
+        "window_sec": V2_LOCAL_SCRAMBLE_WINDOW_SEC,
+    }
+
+
 def _classify_pass_outcome(
     source_event: dict[str, Any],
     target_event: dict[str, Any],
     pass_type: str,
     evidence: dict[str, Any],
+    *,
+    policy_version: str,
 ) -> dict[str, Any]:
     release = evidence.get("release_evidence") if isinstance(evidence.get("release_evidence"), dict) else {}
     trajectory = evidence.get("trajectory_evidence") if isinstance(evidence.get("trajectory_evidence"), dict) else {}
     rejection_reasons = _pass_like_rejection_reasons(release, trajectory)
+    if policy_version == PASS_POLICY_V2:
+        rejection_reasons.extend(_v2_open_play_rejection_reasons(evidence))
     source_team = source_event.get("team_label")
     count_for_team = source_team if source_team in {"A", "B"} and not rejection_reasons else None
     if rejection_reasons:
@@ -510,6 +587,26 @@ def _classify_pass_outcome(
         "excluded_reason": None,
         "rejection_reasons": [],
     }
+
+
+def _v2_open_play_rejection_reasons(evidence: dict[str, Any]) -> list[str]:
+    """Reject only dense, rapid contact clusters that look like a scramble.
+
+    A valid pass can be short, slow, deflected or intercepted.  Therefore v2
+    does not introduce a speed, distance or straightness gate.  It suppresses
+    only a local chain with at least five contacts and multiple rapid
+    transitions, the pattern most likely to represent a rebound/ricochet
+    sequence rather than several independent releases.
+    """
+
+    context = evidence.get("local_contact_context")
+    if not isinstance(context, dict):
+        return []
+    nearby = int(context.get("nearby_contact_count") or 0)
+    rapid = int(context.get("rapid_neighbor_gaps") or 0)
+    if nearby >= V2_LOCAL_SCRAMBLE_MIN_EVENTS and rapid >= 2:
+        return ["local_contact_scramble"]
+    return []
 
 
 def _pass_like_rejection_reasons(release: dict[str, Any], trajectory: dict[str, Any]) -> list[str]:
