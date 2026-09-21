@@ -4,6 +4,7 @@
     "candidate_generation": "current effective ball tracks + current player event timeline",
     "contact_review": "auto_contact_review_v1 regenerated in memory",
     "manual_review_status_used_for_headline_metrics": false,
+    "product_policy": "Pass statistics remain fully automatic; goldset/manual annotations are evaluation-only, not a production pass-correction workflow.",
     "production_artifacts_written": false
   },
   "goldset": {
@@ -92,12 +93,298 @@
       "canonical_shots_in_scope": 11,
       "shots_with_nearby_pass_candidate": 6,
       "shot_as_pass_confusion_count": 6,
-      "shot_as_pass_confusion_rate": 0.5455
+      "shot_as_pass_confusion_rate": 0.5455,
+      "shot_adjacent_pass_candidate_count": 12
     },
     "dead_ball_leakage": {
       "spurious_contact_candidates": 18,
       "spurious_event_candidates": 18,
-      "spurious_pass_candidates": 5
+      "spurious_pass_candidates": 5,
+      "dead_ball_pass_share_of_auto_attempts": 0.0446
+    },
+    "aggregate_fidelity": {
+      "gold": {
+        "open_play": {
+          "attempts": 48,
+          "completed": 30,
+          "failed": 17,
+          "outcome_scorable_attempts": 47,
+          "completion_rate": 0.6383,
+          "teams": {
+            "Corgi": {
+              "attempts": 20,
+              "share": 0.4167,
+              "completed": 11,
+              "failed": 9,
+              "outcome_scorable_attempts": 20,
+              "completion_rate": 0.55
+            },
+            "Verisk": {
+              "attempts": 28,
+              "share": 0.5833,
+              "completed": 19,
+              "failed": 8,
+              "outcome_scorable_attempts": 27,
+              "completion_rate": 0.7037
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "restart": {
+          "attempts": 18,
+          "completed": 15,
+          "failed": 2,
+          "outcome_scorable_attempts": 17,
+          "completion_rate": 0.8824,
+          "teams": {
+            "Corgi": {
+              "attempts": 7,
+              "share": 0.3889,
+              "completed": 6,
+              "failed": 1,
+              "outcome_scorable_attempts": 7,
+              "completion_rate": 0.8571
+            },
+            "Verisk": {
+              "attempts": 11,
+              "share": 0.6111,
+              "completed": 9,
+              "failed": 1,
+              "outcome_scorable_attempts": 10,
+              "completion_rate": 0.9
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "combined": {
+          "attempts": 66,
+          "completed": 45,
+          "failed": 19,
+          "outcome_scorable_attempts": 64,
+          "completion_rate": 0.7031,
+          "teams": {
+            "Corgi": {
+              "attempts": 27,
+              "share": 0.4091,
+              "completed": 17,
+              "failed": 10,
+              "outcome_scorable_attempts": 27,
+              "completion_rate": 0.6296
+            },
+            "Verisk": {
+              "attempts": 39,
+              "share": 0.5909,
+              "completed": 28,
+              "failed": 9,
+              "outcome_scorable_attempts": 37,
+              "completion_rate": 0.7568
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        }
+      },
+      "automatic": {
+        "open_play": {
+          "attempts": 108,
+          "completed": 54,
+          "failed": 54,
+          "outcome_scorable_attempts": 108,
+          "completion_rate": 0.5,
+          "teams": {
+            "Corgi": {
+              "attempts": 55,
+              "share": 0.5093,
+              "completed": 26,
+              "failed": 29,
+              "outcome_scorable_attempts": 55,
+              "completion_rate": 0.4727
+            },
+            "Verisk": {
+              "attempts": 53,
+              "share": 0.4907,
+              "completed": 28,
+              "failed": 25,
+              "outcome_scorable_attempts": 53,
+              "completion_rate": 0.5283
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "restart": {
+          "attempts": 4,
+          "completed": 2,
+          "failed": 2,
+          "outcome_scorable_attempts": 4,
+          "completion_rate": 0.5,
+          "teams": {
+            "Corgi": {
+              "attempts": 1,
+              "share": 0.25,
+              "completed": 0,
+              "failed": 1,
+              "outcome_scorable_attempts": 1,
+              "completion_rate": 0.0
+            },
+            "Verisk": {
+              "attempts": 3,
+              "share": 0.75,
+              "completed": 2,
+              "failed": 1,
+              "outcome_scorable_attempts": 3,
+              "completion_rate": 0.6667
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "combined": {
+          "attempts": 112,
+          "completed": 56,
+          "failed": 56,
+          "outcome_scorable_attempts": 112,
+          "completion_rate": 0.5,
+          "teams": {
+            "Corgi": {
+              "attempts": 56,
+              "share": 0.5,
+              "completed": 26,
+              "failed": 30,
+              "outcome_scorable_attempts": 56,
+              "completion_rate": 0.4643
+            },
+            "Verisk": {
+              "attempts": 56,
+              "share": 0.5,
+              "completed": 30,
+              "failed": 26,
+              "outcome_scorable_attempts": 56,
+              "completion_rate": 0.5357
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        }
+      },
+      "error": {
+        "open_play": {
+          "attempt_count_delta": 60,
+          "completion_rate_delta_pp": -13.83,
+          "teams": {
+            "Corgi": {
+              "pass_count_delta": 35,
+              "pass_count_error_percent": 175.0,
+              "team_share_delta_pp": 9.26,
+              "completion_rate_delta_pp": -7.73
+            },
+            "Verisk": {
+              "pass_count_delta": 25,
+              "pass_count_error_percent": 89.2857,
+              "team_share_delta_pp": -9.26,
+              "completion_rate_delta_pp": -17.54
+            },
+            "unknown": {
+              "pass_count_delta": 0,
+              "pass_count_error_percent": null,
+              "team_share_delta_pp": 0.0,
+              "completion_rate_delta_pp": 0.0
+            }
+          }
+        },
+        "restart": {
+          "attempt_count_delta": -14,
+          "completion_rate_delta_pp": -38.24,
+          "teams": {
+            "Corgi": {
+              "pass_count_delta": -6,
+              "pass_count_error_percent": -85.7143,
+              "team_share_delta_pp": -13.89,
+              "completion_rate_delta_pp": -85.71
+            },
+            "Verisk": {
+              "pass_count_delta": -8,
+              "pass_count_error_percent": -72.7273,
+              "team_share_delta_pp": 13.89,
+              "completion_rate_delta_pp": -23.33
+            },
+            "unknown": {
+              "pass_count_delta": 0,
+              "pass_count_error_percent": null,
+              "team_share_delta_pp": 0.0,
+              "completion_rate_delta_pp": 0.0
+            }
+          }
+        },
+        "combined": {
+          "attempt_count_delta": 46,
+          "completion_rate_delta_pp": -20.31,
+          "teams": {
+            "Corgi": {
+              "pass_count_delta": 29,
+              "pass_count_error_percent": 107.4074,
+              "team_share_delta_pp": 9.09,
+              "completion_rate_delta_pp": -16.53
+            },
+            "Verisk": {
+              "pass_count_delta": 17,
+              "pass_count_error_percent": 43.5897,
+              "team_share_delta_pp": -9.09,
+              "completion_rate_delta_pp": -22.11
+            },
+            "unknown": {
+              "pass_count_delta": 0,
+              "pass_count_error_percent": null,
+              "team_share_delta_pp": 0.0,
+              "completion_rate_delta_pp": 0.0
+            }
+          }
+        }
+      }
+    },
+    "scoring_exclusions": {
+      "pass_restart_annotations": 70,
+      "strict_scored": 66,
+      "context_only_excluded": 4,
+      "ambiguous_excluded": 0
     }
   },
   "windows": {

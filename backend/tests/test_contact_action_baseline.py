@@ -82,6 +82,27 @@ class ContactActionBaselineTests(unittest.TestCase):
         self.assertEqual(report["summary"]["pass"]["matched_pass_attempts"], 1)
         self.assertEqual(report["summary"]["pass"]["unmatched_pass_candidates"], 0)
 
+    def test_temporal_tie_ignores_candidate_team_and_outcome_labels(self) -> None:
+        gold = [_pass("P1", 10.0, outcome="COMPLETED")]
+        candidates = [
+            {"candidate_id": "earlier-wrong", "merged_release_time_sec": 9.0, "outcome": "failed_pass", "from_team_name": "Verisk"},
+            {"candidate_id": "later-correct", "merged_release_time_sec": 11.0, "outcome": "completed_pass", "from_team_name": "Corgi"},
+        ]
+        self.assertEqual(_match_passes(gold, candidates)[0], [(0, 0)])
+        changed_outcome = [{**gold[0], "outcome": "INTERCEPTED"}]
+        changed_team = [{**gold[0], "actor": {"team": "Verisk"}}]
+        self.assertEqual(_match_passes(changed_outcome, candidates)[0], [(0, 0)])
+        self.assertEqual(_match_passes(changed_team, candidates)[0], [(0, 0)])
+
+    def test_contact_tie_ignores_gold_team(self) -> None:
+        gold = [{**_pass("P1", 10.0), "timing_tolerance_sec": 1.0}]
+        candidates = [
+            {"candidate_id": "earlier-wrong-team", "merged_start_time_sec": 9.0, "merged_end_time_sec": 9.5, "team_name": "Verisk"},
+            {"candidate_id": "later-correct-team", "merged_start_time_sec": 10.5, "merged_end_time_sec": 11.0, "team_name": "Corgi"},
+        ]
+        self.assertEqual(_match_contacts(gold, candidates)[0], [(0, 0)])
+        self.assertEqual(_match_contacts([{**gold[0], "actor": {"team": "Verisk"}}], candidates)[0], [(0, 0)])
+
     def test_broad_outcome_mapping_unknown_and_ambiguous_exclusions(self) -> None:
         report = self._evaluate(events=[
             _pass("I", 103.0, outcome="INTERCEPTED"), _pass("M", 105.0, outcome="MISCONTROLLED"),
@@ -100,6 +121,26 @@ class ContactActionBaselineTests(unittest.TestCase):
         report = self._evaluate(events=[_pass("R", 103.0, action="RESTART")], passes=[_candidate("r", 3.0, from_restart=True)])
         self.assertEqual(report["summary"]["pass"]["restart_gold_passes"], 1)
         self.assertEqual(report["summary"]["pass"]["restart_recall"], 1.0)
+
+    def test_aggregate_fidelity_keeps_counts_shares_and_completion_bias_separate(self) -> None:
+        report = self._evaluate(
+            events=[
+                _pass("C", 103.0, outcome="COMPLETED"),
+                {**_pass("V", 105.0, outcome="INTERCEPTED"), "actor": {"team": "Verisk"}, "target": {"team": "Verisk"}},
+                _pass("R", 107.0, action="RESTART", outcome="UNKNOWN"),
+            ],
+            passes=[
+                _candidate("c", 3.0, outcome="completed_pass", from_team="Corgi"),
+                _candidate("v", 5.0, outcome="completed_pass", from_team="Verisk"),
+                _candidate("unknown", 7.0, outcome="failed_pass", from_team="", to_team=""),
+            ],
+        )
+        aggregate = report["summary"]["aggregate_fidelity"]
+        self.assertEqual(aggregate["gold"]["combined"]["teams"]["Corgi"]["attempts"], 2)
+        self.assertEqual(aggregate["gold"]["combined"]["teams"]["Verisk"]["attempts"], 1)
+        self.assertEqual(aggregate["automatic"]["combined"]["teams"]["unknown"]["attempts"], 1)
+        self.assertEqual(aggregate["error"]["combined"]["teams"]["Verisk"]["pass_count_delta"], 0)
+        self.assertEqual(aggregate["gold"]["combined"]["completion_rate"], 0.5)
 
     def test_contact_interval_overlap_and_attempted_contact_hard_negative(self) -> None:
         gold = _pass("P", 10.0)

@@ -138,6 +138,20 @@ def evaluate_contact_action_baseline(
     failure_rows = [*pass_rows, *pass_misses]
     failures = Counter(row["primary_failure_stage"] for row in failure_rows)
     pass_summary = _pass_summary(gold_passes, pass_candidates, pass_rows, pass_misses, pass_false_positives)
+    aggregate_fidelity = _aggregate_fidelity(gold_passes, pass_candidates)
+    pass_restart_annotations = [
+        row for row in events
+        if row.get("event_type") != "SHOT_REFERENCE" and row.get("action") in PASS_ACTIONS
+    ]
+    scoring_exclusions = {
+        "pass_restart_annotations": len(pass_restart_annotations),
+        "strict_scored": len(gold_passes),
+        "context_only_excluded": sum(bool(row.get("context_only")) for row in pass_restart_annotations),
+        "ambiguous_excluded": sum(
+            "AMBIGUOUS" in (row.get("modifiers") or []) and not row.get("context_only")
+            for row in pass_restart_annotations
+        ),
+    }
     by_window = _window_summary(windows, gold_passes, pass_rows, pass_misses, pass_false_positives, scoped)
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -145,6 +159,7 @@ def evaluate_contact_action_baseline(
             "candidate_generation": "current effective ball tracks + current player event timeline",
             "contact_review": "auto_contact_review_v1 regenerated in memory",
             "manual_review_status_used_for_headline_metrics": False,
+            "product_policy": "Pass statistics remain fully automatic; goldset/manual annotations are evaluation-only, not a production pass-correction workflow.",
             "production_artifacts_written": False,
         },
         "goldset": {
@@ -163,8 +178,11 @@ def evaluate_contact_action_baseline(
                 "shots_with_nearby_pass_candidate": sum(bool(row["nearby_pass_candidates"]) for row in shot_confusions),
                 "shot_as_pass_confusion_count": sum(bool(row["nearby_pass_candidates"]) for row in shot_confusions),
                 "shot_as_pass_confusion_rate": _ratio(sum(bool(row["nearby_pass_candidates"]) for row in shot_confusions), len(shot_confusions)),
+                "shot_adjacent_pass_candidate_count": sum(len(row["nearby_pass_candidates"]) for row in shot_confusions),
             },
-            "dead_ball_leakage": _dead_ball_summary(dead_ball),
+            "dead_ball_leakage": _dead_ball_summary(dead_ball, total_auto_attempts=len(pass_candidates)),
+            "aggregate_fidelity": aggregate_fidelity,
+            "scoring_exclusions": scoring_exclusions,
         },
         "windows": by_window,
         "pass_matches": pass_rows,
@@ -192,6 +210,8 @@ def render_contact_action_baseline_markdown(report: Mapping[str, Any]) -> str:
     contact = _mapping(summary.get("contact"))
     confusion = _mapping(summary.get("shot_pass_confusion"))
     dead_ball = _mapping(summary.get("dead_ball_leakage"))
+    aggregate = _mapping(summary.get("aggregate_fidelity"))
+    exclusions = _mapping(summary.get("scoring_exclusions"))
     lines = [
         "# Contact / Action baseline — current pipeline vs Goldset v1", "",
         "## Executive summary", "",
@@ -207,12 +227,54 @@ def render_contact_action_baseline_markdown(report: Mapping[str, Any]) -> str:
         "### RESTART / confusion / dead ball", "",
         f"- Restart recall: **{_percentage(passing.get('restart_recall'))}**",
         f"- Shot-as-pass: **{confusion.get('shot_as_pass_confusion_count', 0)} / {confusion.get('canonical_shots_in_scope', 0)}**",
+        f"- Shot-adjacent generated pass candidates: **{confusion.get('shot_adjacent_pass_candidate_count', 0)}**",
         f"- Dead-ball spurious pass candidates: **{dead_ball.get('spurious_pass_candidates', 0)}**",
+        f"- Dead-ball pass share of automatic attempts: **{_percentage(dead_ball.get('dead_ball_pass_share_of_auto_attempts'))}**",
         f"- Dead-ball spurious contact candidates: **{dead_ball.get('spurious_contact_candidates', 0)}**", "",
+    ]
+    lines.extend([
+        "Pass statistics are intended to remain fully automatic. Goldset/manual annotations are evaluation-only; manual Pass Review is not a planned production correction mechanism.",
+        "", "## Aggregate fidelity", "",
+        f"- Strict PASS/RESTART annotations: {exclusions.get('strict_scored', 0)} / {exclusions.get('pass_restart_annotations', 0)} "
+        f"(context-only excluded: {exclusions.get('context_only_excluded', 0)}; ambiguous excluded: {exclusions.get('ambiguous_excluded', 0)}).",
+        "", "| View | Gold attempts | Automatic attempts | Gold completion | Automatic completion | Δ completion |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ])
+    for view in ("open_play", "restart", "combined"):
+        gold_view = _mapping(_mapping(aggregate.get("gold")).get(view))
+        automatic_view = _mapping(_mapping(aggregate.get("automatic")).get(view))
+        error_view = _mapping(_mapping(aggregate.get("error")).get(view))
+        lines.append(
+            f"| {view} | {gold_view.get('attempts', 0)} | {automatic_view.get('attempts', 0)} | "
+            f"{_percentage(gold_view.get('completion_rate'))} | {_percentage(automatic_view.get('completion_rate'))} | "
+            f"{_signed_pp(error_view.get('completion_rate_delta_pp'))} |"
+        )
+    lines.extend([
+        "",
+        "| Team (combined) | Gold count/share | Automatic count/share | Count delta | Count error | Share delta | Gold / automatic completion | Completion delta |",
+        "| --- | --- | --- | ---: | ---: | ---: | --- | ---: |",
+    ])
+    combined_gold = _mapping(_mapping(aggregate.get("gold")).get("combined"))
+    combined_automatic = _mapping(_mapping(aggregate.get("automatic")).get("combined"))
+    combined_error = _mapping(_mapping(aggregate.get("error")).get("combined"))
+    for team in ("Corgi", "Verisk", "unknown"):
+        gold_team = _mapping(_mapping(combined_gold.get("teams")).get(team))
+        automatic_team = _mapping(_mapping(combined_automatic.get("teams")).get(team))
+        error_team = _mapping(_mapping(combined_error.get("teams")).get(team))
+        lines.append(
+            f"| {team} | {gold_team.get('attempts', 0)} / {_percentage(gold_team.get('share'))} | "
+            f"{automatic_team.get('attempts', 0)} / {_percentage(automatic_team.get('share'))} | "
+            f"{_signed(error_team.get('pass_count_delta'))} | {_signed_percentage(error_team.get('pass_count_error_percent'))} | "
+            f"{_signed_pp(error_team.get('team_share_delta_pp'))} | "
+            f"{_percentage(gold_team.get('completion_rate'))} / {_percentage(automatic_team.get('completion_rate'))} | "
+            f"{_signed_pp(error_team.get('completion_rate_delta_pp'))} |"
+        )
+    lines.extend([
+        "", "Aggregate metrics are diagnostic only. They do not apply balancing, threshold tuning, or any correction to production candidates.", "",
         "## Results by window", "",
         "| Window | Gold passes | Matched | Missed | Pass candidates | Unmatched candidates |",
         "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ]
+    ])
     for window_id, row in _mapping(report.get("windows")).items():
         data = _mapping(row)
         lines.append(
@@ -265,7 +327,8 @@ def render_contact_action_baseline_markdown(report: Mapping[str, Any]) -> str:
         )
     lines.extend(["", "## Top failure categories", ""])
     for category, count in _mapping(_mapping(report.get("failure_breakdown")).get("by_primary_stage")).items():
-        lines.append(f"- `{category}`: **{count}**")
+        if category != "CORRECT":
+            lines.append(f"- `{category}`: **{count}**")
     lines.extend(["", "This report is descriptive baseline evidence only; it does not change production behavior.", ""])
     return "\n".join(lines)
 
@@ -327,23 +390,23 @@ def _sequence_match(
     """Chronological one-to-one alignment: max pairs, then min normalized time error."""
 
     count_gold, count_candidates = len(gold), len(candidates)
-    cells: list[list[tuple[tuple[int, float, int], list[tuple[int, int]]]]] = [
-        [((0, 0.0, 0), []) for _ in range(count_candidates + 1)] for _ in range(count_gold + 1)
+    cells: list[list[tuple[tuple[int, float], list[tuple[int, int]]]]] = [
+        [((0, 0.0), []) for _ in range(count_candidates + 1)] for _ in range(count_gold + 1)
     ]
     for gold_index in range(count_gold + 1):
         for candidate_index in range(count_candidates + 1):
             if gold_index == 0 and candidate_index == 0:
                 continue
-            options: list[tuple[tuple[int, float, int], list[tuple[int, int]]]] = []
+            options: list[tuple[tuple[int, float], list[tuple[int, int]]]] = []
             if gold_index:
                 options.append(cells[gold_index - 1][candidate_index])
             if candidate_index:
                 options.append(cells[gold_index][candidate_index - 1])
             if gold_index and candidate_index and compatible(gold[gold_index - 1], candidates[candidate_index - 1]):
                 prior_score, prior_pairs = cells[gold_index - 1][candidate_index - 1]
-                normalized_cost, semantic_bonus = cost(gold[gold_index - 1], candidates[candidate_index - 1])
-                options.append(((prior_score[0] + 1, prior_score[1] - normalized_cost, prior_score[2] + semantic_bonus), prior_pairs + [(gold_index - 1, candidate_index - 1)]))
-            cells[gold_index][candidate_index] = max(options, key=lambda item: item[0])
+                normalized_cost = cost(gold[gold_index - 1], candidates[candidate_index - 1])
+                options.append(((prior_score[0] + 1, prior_score[1] - normalized_cost), prior_pairs + [(gold_index - 1, candidate_index - 1)]))
+            cells[gold_index][candidate_index] = max(options, key=_alignment_order)
     pairs = cells[count_gold][count_candidates][1]
     return pairs, set(range(count_gold)) - {left for left, _ in pairs}, set(range(count_candidates)) - {right for _, right in pairs}
 
@@ -352,11 +415,17 @@ def _pass_compatible(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -> b
     return abs(_number(candidate.get("merged_release_time_sec")) - _number(gold.get("approx_time_sec"))) <= _number(gold.get("timing_tolerance_sec"), 1.0)
 
 
-def _pass_match_cost(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -> tuple[float, int]:
+def _alignment_order(item: tuple[tuple[int, float], list[tuple[int, int]]]) -> tuple[Any, ...]:
+    """Structural tie-break: earliest pre-sorted candidate order wins."""
+
+    score, pairs = item
+    return score, tuple(-candidate_index for _, candidate_index in pairs)
+
+
+def _pass_match_cost(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -> float:
     tolerance = max(_number(gold.get("timing_tolerance_sec"), 1.0), 0.001)
     error = abs(_number(candidate.get("merged_release_time_sec")) - _number(gold.get("approx_time_sec"))) / tolerance
-    bonus = int(_candidate_actor_team(candidate) == _gold_team(gold)) + int(_candidate_broad_outcome(candidate) == PASS_OUTCOME_BY_GOLD.get(str(gold.get("outcome"))))
-    return error, bonus
+    return error
 
 
 def _contact_compatible(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -> bool:
@@ -365,11 +434,11 @@ def _contact_compatible(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -
     return _number(candidate.get("merged_start_time_sec")) <= upper and _number(candidate.get("merged_end_time_sec")) >= lower
 
 
-def _contact_match_cost(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -> tuple[float, int]:
+def _contact_match_cost(gold: Mapping[str, Any], candidate: Mapping[str, Any]) -> float:
     time = _number(gold.get("approx_time_sec"))
     start, end = _number(candidate.get("merged_start_time_sec")), _number(candidate.get("merged_end_time_sec"))
     distance = 0.0 if start <= time <= end else min(abs(time - start), abs(time - end))
-    return distance / max(_number(gold.get("timing_tolerance_sec"), 1.0), 0.001), int(_candidate_team(candidate) == _gold_team(gold))
+    return distance / max(_number(gold.get("timing_tolerance_sec"), 1.0), 0.001)
 
 
 def _score_pass_matches(gold: Sequence[Mapping[str, Any]], candidates: Sequence[Mapping[str, Any]], pairs: Sequence[tuple[int, int]], identity_notes: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -532,6 +601,100 @@ def _pass_summary(gold: Sequence[Mapping[str, Any]], candidates: Sequence[Mappin
     }
 
 
+def _aggregate_fidelity(
+    gold_events: Sequence[Mapping[str, Any]],
+    automatic_candidates: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Compare natural automatic aggregates; no balancing or correction is applied."""
+
+    gold_rows = [
+        {
+            "view": "restart" if row.get("action") == "RESTART" else "open_play",
+            "team": _gold_team(row),
+            "outcome": PASS_OUTCOME_BY_GOLD.get(str(row.get("outcome"))),
+        }
+        for row in gold_events
+    ]
+    automatic_rows = [
+        {
+            "view": "restart" if row.get("from_restart") else "open_play",
+            "team": _candidate_actor_team(row),
+            "outcome": _candidate_broad_outcome(row),
+        }
+        for row in automatic_candidates
+    ]
+    gold = _aggregate_rows(gold_rows)
+    automatic = _aggregate_rows(automatic_rows)
+    return {"gold": gold, "automatic": automatic, "error": _aggregate_error(gold, automatic)}
+
+
+def _aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        view: _aggregate_view([row for row in rows if view == "combined" or row.get("view") == view])
+        for view in ("open_play", "restart", "combined")
+    }
+
+
+def _aggregate_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    total = len(rows)
+    team_rows: dict[str, list[Mapping[str, Any]]] = {
+        team: [row for row in rows if _aggregate_team(row.get("team")) == team]
+        for team in ("Corgi", "Verisk", "unknown")
+    }
+    teams = {team: _aggregate_team_rows(values, total) for team, values in team_rows.items()}
+    outcomes = Counter(str(row.get("outcome")) for row in rows if row.get("outcome") in PASS_OUTCOMES)
+    outcome_total = outcomes["completed_pass"] + outcomes["failed_pass"]
+    return {
+        "attempts": total,
+        "completed": outcomes["completed_pass"],
+        "failed": outcomes["failed_pass"],
+        "outcome_scorable_attempts": outcome_total,
+        "completion_rate": _ratio(outcomes["completed_pass"], outcome_total),
+        "teams": teams,
+    }
+
+
+def _aggregate_team_rows(rows: Sequence[Mapping[str, Any]], total_attempts: int) -> dict[str, Any]:
+    outcomes = Counter(str(row.get("outcome")) for row in rows if row.get("outcome") in PASS_OUTCOMES)
+    outcome_total = outcomes["completed_pass"] + outcomes["failed_pass"]
+    return {
+        "attempts": len(rows),
+        "share": _ratio(len(rows), total_attempts),
+        "completed": outcomes["completed_pass"],
+        "failed": outcomes["failed_pass"],
+        "outcome_scorable_attempts": outcome_total,
+        "completion_rate": _ratio(outcomes["completed_pass"], outcome_total),
+    }
+
+
+def _aggregate_error(gold: Mapping[str, Mapping[str, Any]], automatic: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    output: dict[str, dict[str, Any]] = {}
+    for view in ("open_play", "restart", "combined"):
+        gold_view, auto_view = _mapping(gold.get(view)), _mapping(automatic.get(view))
+        teams: dict[str, Any] = {}
+        for team in ("Corgi", "Verisk", "unknown"):
+            gold_team = _mapping(_mapping(gold_view.get("teams")).get(team))
+            auto_team = _mapping(_mapping(auto_view.get("teams")).get(team))
+            gold_attempts, auto_attempts = int(gold_team.get("attempts") or 0), int(auto_team.get("attempts") or 0)
+            teams[team] = {
+                "pass_count_delta": auto_attempts - gold_attempts,
+                "pass_count_error_percent": _signed_percentage_ratio(auto_attempts - gold_attempts, gold_attempts),
+                "team_share_delta_pp": _round((_number(auto_team.get("share")) - _number(gold_team.get("share"))) * 100),
+                "completion_rate_delta_pp": _round((_number(auto_team.get("completion_rate")) - _number(gold_team.get("completion_rate"))) * 100),
+            }
+        output[view] = {
+            "attempt_count_delta": int(auto_view.get("attempts") or 0) - int(gold_view.get("attempts") or 0),
+            "completion_rate_delta_pp": _round((_number(auto_view.get("completion_rate")) - _number(gold_view.get("completion_rate"))) * 100),
+            "teams": teams,
+        }
+    return output
+
+
+def _aggregate_team(value: Any) -> str:
+    team = _team_text(value)
+    return team if team in {"Corgi", "Verisk"} else "unknown"
+
+
 def _contact_summary(gold: Sequence[Mapping[str, Any]], candidates: Sequence[Mapping[str, Any]], matches: Sequence[Mapping[str, Any]], missing: set[int]) -> dict[str, Any]:
     statuses = Counter(str(row.get("auto_review_status") or row.get("review_status") or "unknown") for row in matches)
     all_statuses = Counter(str(row.get("review_status") or row.get("status") or "unknown") for row in candidates)
@@ -637,11 +800,15 @@ def _gold_public(event: Mapping[str, Any]) -> dict[str, Any]:
     return {"gold_event_id": event.get("event_id"), "window_id": event.get("window_id"), "gold_time_sec": event.get("approx_time_sec"), "action": event.get("action"), "outcome": event.get("outcome"), "actor": _mapping(event.get("actor")), "target": _mapping(event.get("target")), "manual_note": event.get("manual_note")}
 
 
-def _dead_ball_summary(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    return {
+def _dead_ball_summary(rows: Sequence[Mapping[str, Any]], *, total_auto_attempts: int) -> dict[str, Any]:
+    summary: dict[str, Any] = {
         f"spurious_{key}": sum(int(_mapping(row.get("spurious")).get(key, 0)) for row in rows)
         for key in ("contact_candidates", "event_candidates", "pass_candidates")
     }
+    summary["dead_ball_pass_share_of_auto_attempts"] = _ratio(
+        int(summary["spurious_pass_candidates"]), total_auto_attempts,
+    )
+    return summary
 
 
 def _pass_diagnostic_line(row: Mapping[str, Any]) -> str:
@@ -681,6 +848,27 @@ def _f1(precision: float, recall: float) -> float:
 
 def _percentage(value: Any) -> str:
     return f"{_number(value) * 100:.1f}%"
+
+
+def _signed(value: Any) -> str:
+    number = _number(value)
+    return f"{number:+.0f}"
+
+
+def _signed_percentage(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return f"{_number(value):+.1f}%"
+
+
+def _signed_pp(value: Any) -> str:
+    return f"{_number(value):+.1f} pp"
+
+
+def _signed_percentage_ratio(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return _round(numerator / denominator * 100)
 
 
 def _mmss(value: Any) -> str:

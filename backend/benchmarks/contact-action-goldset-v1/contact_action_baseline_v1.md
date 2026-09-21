@@ -20,8 +20,30 @@ This is a read-only measurement of regenerated automatic candidates. Historical 
 
 - Restart recall: **33.3%**
 - Shot-as-pass: **6 / 11**
+- Shot-adjacent generated pass candidates: **12**
 - Dead-ball spurious pass candidates: **5**
+- Dead-ball pass share of automatic attempts: **4.5%**
 - Dead-ball spurious contact candidates: **18**
+
+Pass statistics are intended to remain fully automatic. Goldset/manual annotations are evaluation-only; manual Pass Review is not a planned production correction mechanism.
+
+## Aggregate fidelity
+
+- Strict PASS/RESTART annotations: 66 / 70 (context-only excluded: 4; ambiguous excluded: 0).
+
+| View | Gold attempts | Automatic attempts | Gold completion | Automatic completion | Δ completion |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| open_play | 48 | 108 | 63.8% | 50.0% | -13.8 pp |
+| restart | 18 | 4 | 88.2% | 50.0% | -38.2 pp |
+| combined | 66 | 112 | 70.3% | 50.0% | -20.3 pp |
+
+| Team (combined) | Gold count/share | Automatic count/share | Count delta | Count error | Share delta | Gold / automatic completion | Completion delta |
+| --- | --- | --- | ---: | ---: | ---: | --- | ---: |
+| Corgi | 27 / 40.9% | 56 / 50.0% | +29 | +107.4% | +9.1 pp | 63.0% / 46.4% | -16.5 pp |
+| Verisk | 39 / 59.1% | 56 / 50.0% | +17 | +43.6% | -9.1 pp | 75.7% / 53.6% | -22.1 pp |
+| unknown | 0 / 0.0% | 0 / 0.0% | +0 | n/a | +0.0 pp | 0.0% / 0.0% | +0.0 pp |
+
+Aggregate metrics are diagnostic only. They do not apply balancing, threshold tuning, or any correction to production candidates.
 
 ## Results by window
 
@@ -206,7 +228,6 @@ This is a read-only measurement of regenerated automatic candidates. Historical 
 
 - `PASS_CONSTRUCTION_MISS`: **23**
 - `PASS_OUTCOME_ERROR`: **18**
-- `CORRECT`: **10**
 - `CONTACT_MISS`: **7**
 - `ACTOR_TEAM_ERROR`: **5**
 - `RESTART_ATTRIBUTION_ERROR`: **2**
