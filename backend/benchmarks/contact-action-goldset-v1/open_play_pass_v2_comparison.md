@@ -6,6 +6,8 @@
 - Active-play scored duration: **342.4s**
 - Excluded duration: **107.6s**
 
+- Boundary contract: `excluded=[start,end); active=[start,end), with an active selected-window end included`
+
 | Window | Active-play duration | Excluded game-state ranges | Restart ranges |
 | --- | ---: | --- | --- |
 | W1 | 71.0s | — | 40.0–42.0, 61.0–63.0 |
@@ -19,16 +21,16 @@
 
 | Metric | Gold | V1 | V2 |
 | --- | ---: | ---: | ---: |
-| Attempts | 46 | 97 | 89 |
+| Attempts | 48 | 97 | 89 |
 | Corgi attempts | 20 | 49 | 44 |
-| Verisk attempts | 26 | 48 | 45 |
+| Verisk attempts | 28 | 48 | 45 |
 | Unknown attempts | 0 | 0 | 0 |
-| Corgi share | 43.48% | 50.52% | 49.44% |
-| Verisk share | 56.52% | 49.48% | 50.56% |
-| Completion rate | 63.04% | 50.52% | 50.56% |
+| Corgi share | 41.67% | 50.52% | 49.44% |
+| Verisk share | 58.33% | 49.48% | 50.56% |
+| Completion rate | 63.83% | 50.52% | 50.56% |
 | Corgi completion | 55.00% | 51.02% | 50.00% |
-| Verisk completion | 69.23% | 50.00% | 51.11% |
-| Completed | 29 | 49 | 45 |
+| Verisk completion | 70.37% | 50.00% | 51.11% |
+| Completed | 30 | 49 | 45 |
 | Failed | 17 | 48 | 44 |
 
 ## Event-level diagnostics (secondary)
@@ -36,10 +38,10 @@
 | Metric | V1 | V2 |
 | --- | ---: | ---: |
 | Precision | 30.93% | 29.21% |
-| Recall | 65.22% | 56.52% |
-| F1 | 41.96% | 38.52% |
+| Recall | 62.50% | 54.17% |
+| F1 | 41.38% | 37.95% |
 | Matched | 30 | 26 |
-| Missed | 16 | 20 |
+| Missed | 18 | 22 |
 | False positives | 67 | 63 |
 | Outcome accuracy | 53.33% | 53.85% |
 | Actor-team accuracy | 53.33% | 57.69% |
@@ -50,12 +52,12 @@
 | Metric | V1 | V2 |
 | --- | ---: | ---: |
 | Corgi count delta / error | +29 / +145.00% | +24 / +120.00% |
-| Corgi share delta | +7.04 pp | +5.96 pp |
+| Corgi share delta | +8.85 pp | +7.77 pp |
 | Corgi completion delta | -3.98 pp | -5.00 pp |
-| Verisk count delta / error | +22 / +84.62% | +19 / +73.08% |
-| Verisk share delta | -7.04 pp | -5.96 pp |
-| Verisk completion delta | -19.23 pp | -18.12 pp |
-| Overall completion delta | -12.52 pp | -12.48 pp |
+| Verisk count delta / error | +20 / +71.43% | +17 / +60.71% |
+| Verisk share delta | -8.85 pp | -7.77 pp |
+| Verisk completion delta | -20.37 pp | -19.26 pp |
+| Overall completion delta | -13.31 pp | -13.27 pp |
 
 ## Active-play false positives
 

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from evaluation.open_play_pass_v2 import (
+    _in_active_play,
     derive_active_play_mask,
     evaluate_open_play_pass_policy_comparison,
 )
@@ -62,6 +63,25 @@ class OpenPlayPassV2Tests(unittest.TestCase):
         ])
         self.assertEqual(mask["windows"]["W1"]["active_play_scored_duration_sec"], 13.0)
 
+    def test_boundary_contract_excludes_interval_start_and_includes_its_end(self) -> None:
+        goldset = {
+            "windows": [_window()],
+            "game_state_intervals": [{"window_id": "W1", "start_time_sec": 0, "end_time_sec": 3, "state": "NOT_IN_PLAY"}],
+            "events": [_event("restart", 5, action="RESTART")],
+        }
+        mask = derive_active_play_mask(goldset)
+        # NOT_IN_PLAY [0, 3): 3 is the first active timestamp.
+        self.assertFalse(_in_active_play(0.0, "W1", mask))
+        self.assertTrue(_in_active_play(3.0, "W1", mask))
+        # RESTART [4, 6): the restart start and interior are excluded, 6 is active.
+        self.assertFalse(_in_active_play(4.0, "W1", mask))
+        self.assertFalse(_in_active_play(5.0, "W1", mask))
+        self.assertTrue(_in_active_play(6.0, "W1", mask))
+
+    def test_final_active_interval_includes_selected_window_end(self) -> None:
+        mask = derive_active_play_mask({"windows": [_window()], "game_state_intervals": [], "events": []})
+        self.assertTrue(_in_active_play(20.0, "W1", mask))
+
     def test_primary_scope_excludes_non_active_restart_context_only_and_ambiguous(self) -> None:
         goldset = {
             "windows": [_window()],
@@ -98,6 +118,19 @@ class OpenPlayPassV2Tests(unittest.TestCase):
         goldset = json.loads((Path(__file__).parent / "fixtures" / "contact_action_goldset_v1.json").read_text(encoding="utf-8"))
         self.assertEqual(derive_active_play_mask(goldset), derive_active_play_mask(goldset))
         self.assertEqual(set(derive_active_play_mask(goldset)["windows"]), {"W1", "W2", "W3", "W4", "W5", "W6"})
+
+    def test_real_goldset_includes_restart_end_and_selected_window_end_passes(self) -> None:
+        goldset = json.loads((Path(__file__).parent / "fixtures" / "contact_action_goldset_v1.json").read_text(encoding="utf-8"))
+        report = evaluate_open_play_pass_policy_comparison(goldset, {}, {})
+        active_event_ids = {
+            row["event_id"]
+            for row in goldset["events"]
+            if row.get("action") == "PASS"
+            and _in_active_play(float(row["approx_time_sec"]), str(row["window_id"]), report["active_play_mask"])
+        }
+        self.assertIn("W1-E013", active_event_ids)
+        self.assertIn("W2-E019", active_event_ids)
+        self.assertEqual(report["primary"]["gold"]["attempts"], 48)
 
 
 if __name__ == "__main__":

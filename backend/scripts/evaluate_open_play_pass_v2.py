@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-markdown", type=Path, required=True)
     parser.add_argument("--matches-root", type=Path, default=MATCHES_DIR)
+    parser.add_argument("--overwrite", action="store_true", help="Replace an existing checked-in evaluation report explicitly.")
     args = parser.parse_args()
 
     goldset = _read(args.goldset)
@@ -44,8 +45,8 @@ def main() -> None:
     finally:
         assert_source_tree_unchanged(before, match_dirs)
     report["source_tree_snapshot"] = summarize_source_tree_snapshot(before)
-    _write_new(args.output_json, json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-    _write_new(args.output_markdown, render_open_play_pass_policy_comparison_markdown(report))
+    _write_output(args.output_json, json.dumps(report, indent=2, ensure_ascii=False) + "\n", overwrite=args.overwrite)
+    _write_output(args.output_markdown, render_open_play_pass_policy_comparison_markdown(report), overwrite=args.overwrite)
     print(json.dumps({"primary": report["primary"], "comparison": report["comparison"]}, indent=2, ensure_ascii=False))
 
 
@@ -56,9 +57,9 @@ def _read(path: Path) -> dict:
     return document
 
 
-def _write_new(path: Path, content: str) -> None:
+def _write_output(path: Path, content: str, *, overwrite: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+    if path.exists() and not overwrite:
         raise FileExistsError(f"Refusing to overwrite evaluation output: {path}")
     path.write_text(content, encoding="utf-8")
 

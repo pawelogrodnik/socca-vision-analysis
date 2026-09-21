@@ -28,6 +28,12 @@ from evaluation.contact_action_baseline import (
 
 SCHEMA_VERSION = "open-play-pass-policy-comparison:v2"
 
+# The mask is a deterministic evaluation boundary, not an approximation:
+# excluded intervals are [start, end), as are active intervals.  The selected
+# window's final endpoint is included when it is active, so an annotation at
+# the exact end of the reviewed fragment remains eligible.
+INTERVAL_BOUNDARY_SEMANTICS = "excluded=[start,end); active=[start,end), with an active selected-window end included"
+
 
 def derive_active_play_mask(goldset: Mapping[str, Any]) -> dict[str, Any]:
     """Subtract manually annotated inactive and restart ranges from W1–W6."""
@@ -87,6 +93,7 @@ def derive_active_play_mask(goldset: Mapping[str, Any]) -> dict[str, Any]:
         }
     return {
         "source": "contact-action-goldset:v1 evaluation-only human game-state annotations",
+        "interval_boundary_semantics": INTERVAL_BOUNDARY_SEMANTICS,
         "windows": windows_result,
         "total_selected_duration_sec": _round(total_selected),
         "total_active_play_scored_duration_sec": _round(total_active),
@@ -146,6 +153,7 @@ def render_open_play_pass_policy_comparison_markdown(report: Mapping[str, Any]) 
         f"- Selected window duration: **{mask.get('total_selected_duration_sec', 0):.1f}s**",
         f"- Active-play scored duration: **{mask.get('total_active_play_scored_duration_sec', 0):.1f}s**",
         f"- Excluded duration: **{mask.get('total_excluded_duration_sec', 0):.1f}s**", "",
+        f"- Boundary contract: `{mask.get('interval_boundary_semantics')}`", "",
         "| Window | Active-play duration | Excluded game-state ranges | Restart ranges |",
         "| --- | ---: | --- | --- |",
     ]
@@ -362,11 +370,19 @@ def _subtract_intervals(start: float, end: float, excluded: Sequence[Mapping[str
 
 def _in_active_play(time_sec: float, window_id: str, mask: Mapping[str, Any]) -> bool:
     window = _mapping(_mapping(mask.get("windows")).get(window_id))
-    return any(
-        float(row.get("start_time_sec") or 0.0) < time_sec < float(row.get("end_time_sec") or 0.0)
-        for row in window.get("active_play_intervals") or []
-        if isinstance(row, Mapping)
-    )
+    selected_end = float(_mapping(window.get("selected_window")).get("end_time_sec") or 0.0)
+    for row in window.get("active_play_intervals") or []:
+        if not isinstance(row, Mapping):
+            continue
+        start, end = float(row.get("start_time_sec") or 0.0), float(row.get("end_time_sec") or 0.0)
+        if start <= time_sec < end:
+            return True
+        # Only the terminal active interval can include its right endpoint.
+        # If an exclusion reaches the window end, subtraction emits no such
+        # interval, so this cannot make a timestamp both active and excluded.
+        if end == selected_end and start <= time_sec == end:
+            return True
+    return False
 
 
 def _window_for_time(windows: Mapping[str, Mapping[str, Any]], time_sec: float) -> str:

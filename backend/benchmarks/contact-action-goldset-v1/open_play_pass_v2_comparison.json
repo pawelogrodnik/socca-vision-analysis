@@ -8,6 +8,7 @@
   },
   "active_play_mask": {
     "source": "contact-action-goldset:v1 evaluation-only human game-state annotations",
+    "interval_boundary_semantics": "excluded=[start,end); active=[start,end), with an active selected-window end included",
     "windows": {
       "W1": {
         "selected_window": {
@@ -318,27 +319,27 @@
   },
   "primary": {
     "gold": {
-      "attempts": 46,
-      "completed": 29,
+      "attempts": 48,
+      "completed": 30,
       "failed": 17,
-      "outcome_scorable_attempts": 46,
-      "completion_rate": 0.6304,
+      "outcome_scorable_attempts": 47,
+      "completion_rate": 0.6383,
       "teams": {
         "Corgi": {
           "attempts": 20,
-          "share": 0.4348,
+          "share": 0.4167,
           "completed": 11,
           "failed": 9,
           "outcome_scorable_attempts": 20,
           "completion_rate": 0.55
         },
         "Verisk": {
-          "attempts": 26,
-          "share": 0.5652,
-          "completed": 18,
+          "attempts": 28,
+          "share": 0.5833,
+          "completed": 19,
           "failed": 8,
-          "outcome_scorable_attempts": 26,
-          "completion_rate": 0.6923
+          "outcome_scorable_attempts": 27,
+          "completion_rate": 0.7037
         },
         "unknown": {
           "attempts": 0,
@@ -386,20 +387,20 @@
         }
       },
       "aggregate_error": {
-        "attempt_count_delta": 51,
-        "completion_rate_delta_pp": -12.52,
+        "attempt_count_delta": 49,
+        "completion_rate_delta_pp": -13.31,
         "teams": {
           "Corgi": {
             "pass_count_delta": 29,
             "pass_count_error_percent": 145.0,
-            "team_share_delta_pp": 7.04,
+            "team_share_delta_pp": 8.85,
             "completion_rate_delta_pp": -3.98
           },
           "Verisk": {
-            "pass_count_delta": 22,
-            "pass_count_error_percent": 84.6154,
-            "team_share_delta_pp": -7.04,
-            "completion_rate_delta_pp": -19.23
+            "pass_count_delta": 20,
+            "pass_count_error_percent": 71.4286,
+            "team_share_delta_pp": -8.85,
+            "completion_rate_delta_pp": -20.37
           },
           "unknown": {
             "pass_count_delta": 0,
@@ -410,16 +411,16 @@
         }
       },
       "event_metrics": {
-        "gold_pass_attempts": 46,
+        "gold_pass_attempts": 48,
         "pass_candidates_in_scope": 97,
         "matched_pass_attempts": 30,
-        "missed_pass_attempts": 16,
+        "missed_pass_attempts": 18,
         "unmatched_pass_candidates": 67,
         "precision": 0.3093,
-        "recall": 0.6522,
-        "f1": 0.4196,
-        "open_play_gold_passes": 46,
-        "open_play_recall": 0.6522,
+        "recall": 0.625,
+        "f1": 0.4138,
+        "open_play_gold_passes": 48,
+        "open_play_recall": 0.625,
         "restart_gold_passes": 0,
         "restart_recall": 0.0,
         "outcome_scorable_matches": 30,
@@ -1388,20 +1389,36 @@
       ],
       "misses": [
         {
-          "gold_event_id": "W5-E006",
-          "window_id": "W5",
-          "gold_time_sec": 1817.0,
+          "gold_event_id": "W4-E017",
+          "window_id": "W4",
+          "gold_time_sec": 1413.0,
           "action": "PASS",
           "outcome": "COMPLETED",
           "actor": {
-            "team": "Verisk",
-            "display_name": "b04"
+            "team": "Corgi",
+            "display_name": "Piotrek"
           },
           "target": {
-            "team": "Verisk",
-            "display_name": "B defender/B03"
+            "team": "Corgi",
+            "display_name": "Andrzej"
           },
-          "manual_note": "b04 to a defender initially shown as B?, later B03."
+          "manual_note": "Piotrek to Andrzej."
+        },
+        {
+          "gold_event_id": "W4-E018",
+          "window_id": "W4",
+          "gold_time_sec": 1415.0,
+          "action": "PASS",
+          "outcome": "COMPLETED",
+          "actor": {
+            "team": "Corgi",
+            "display_name": "Andrzej"
+          },
+          "target": {
+            "team": "Corgi",
+            "display_name": "Piotrek"
+          },
+          "manual_note": "Andrzej returns to Piotrek."
         },
         {
           "gold_event_id": "W1-E005",
@@ -1418,6 +1435,22 @@
             "display_name": "b05"
           },
           "manual_note": "b06 to b05."
+        },
+        {
+          "gold_event_id": "W5-E006",
+          "window_id": "W5",
+          "gold_time_sec": 1817.0,
+          "action": "PASS",
+          "outcome": "COMPLETED",
+          "actor": {
+            "team": "Verisk",
+            "display_name": "b04"
+          },
+          "target": {
+            "team": "Verisk",
+            "display_name": "B defender/B03"
+          },
+          "manual_note": "b04 to a defender initially shown as B?, later B03."
         },
         {
           "gold_event_id": "W6-E001",
@@ -1450,6 +1483,22 @@
             "display_name": "Kuba"
           },
           "manual_note": "Mateusz tries to play into the area; Kuba nearly controls but b13 wins it."
+        },
+        {
+          "gold_event_id": "W1-E013",
+          "window_id": "W1",
+          "gold_time_sec": 42.0,
+          "action": "PASS",
+          "outcome": "UNKNOWN",
+          "actor": {
+            "team": "Verisk",
+            "display_name": "b04"
+          },
+          "target": {
+            "team": "Verisk",
+            "display_name": "b02"
+          },
+          "manual_note": "b04 heads toward b02 in the middle of the penalty area; play becomes contested."
         },
         {
           "gold_event_id": "W6-E011",
@@ -1516,20 +1565,20 @@
           "manual_note": "Long diagonal to Roman; Roman fails to receive."
         },
         {
-          "gold_event_id": "W6-E019",
-          "window_id": "W6",
-          "gold_time_sec": 1986.5,
+          "gold_event_id": "W2-E019",
+          "window_id": "W2",
+          "gold_time_sec": 615.0,
           "action": "PASS",
           "outcome": "COMPLETED",
           "actor": {
             "team": "Verisk",
-            "display_name": "b13"
+            "display_name": "b04"
           },
           "target": {
             "team": "Verisk",
-            "display_name": "b04"
+            "display_name": "b07"
           },
-          "manual_note": "b13 to b04 at the end of W6."
+          "manual_note": "b04 to b07 at the end of the reviewed fragment."
         },
         {
           "gold_event_id": "W3-E002",
@@ -1546,6 +1595,22 @@
             "display_name": "Roman"
           },
           "manual_note": "Long pass for Roman is not controlled; B goalkeeper collects."
+        },
+        {
+          "gold_event_id": "W6-E019",
+          "window_id": "W6",
+          "gold_time_sec": 1986.5,
+          "action": "PASS",
+          "outcome": "COMPLETED",
+          "actor": {
+            "team": "Verisk",
+            "display_name": "b13"
+          },
+          "target": {
+            "team": "Verisk",
+            "display_name": "b04"
+          },
+          "manual_note": "b13 to b04 at the end of W6."
         },
         {
           "gold_event_id": "W3-E014",
@@ -1610,38 +1675,6 @@
             "display_name": "Paweł"
           },
           "manual_note": "Mateusz's inaccurate pass toward Paweł is intercepted by b07."
-        },
-        {
-          "gold_event_id": "W4-E017",
-          "window_id": "W4",
-          "gold_time_sec": 1413.0,
-          "action": "PASS",
-          "outcome": "COMPLETED",
-          "actor": {
-            "team": "Corgi",
-            "display_name": "Piotrek"
-          },
-          "target": {
-            "team": "Corgi",
-            "display_name": "Andrzej"
-          },
-          "manual_note": "Piotrek to Andrzej."
-        },
-        {
-          "gold_event_id": "W4-E018",
-          "window_id": "W4",
-          "gold_time_sec": 1415.0,
-          "action": "PASS",
-          "outcome": "COMPLETED",
-          "actor": {
-            "team": "Corgi",
-            "display_name": "Andrzej"
-          },
-          "target": {
-            "team": "Corgi",
-            "display_name": "Piotrek"
-          },
-          "manual_note": "Andrzej returns to Piotrek."
         }
       ],
       "false_positives": [
@@ -2643,20 +2676,20 @@
         }
       },
       "aggregate_error": {
-        "attempt_count_delta": 43,
-        "completion_rate_delta_pp": -12.48,
+        "attempt_count_delta": 41,
+        "completion_rate_delta_pp": -13.27,
         "teams": {
           "Corgi": {
             "pass_count_delta": 24,
             "pass_count_error_percent": 120.0,
-            "team_share_delta_pp": 5.96,
+            "team_share_delta_pp": 7.77,
             "completion_rate_delta_pp": -5.0
           },
           "Verisk": {
-            "pass_count_delta": 19,
-            "pass_count_error_percent": 73.0769,
-            "team_share_delta_pp": -5.96,
-            "completion_rate_delta_pp": -18.12
+            "pass_count_delta": 17,
+            "pass_count_error_percent": 60.7143,
+            "team_share_delta_pp": -7.77,
+            "completion_rate_delta_pp": -19.26
           },
           "unknown": {
             "pass_count_delta": 0,
@@ -2667,16 +2700,16 @@
         }
       },
       "event_metrics": {
-        "gold_pass_attempts": 46,
+        "gold_pass_attempts": 48,
         "pass_candidates_in_scope": 89,
         "matched_pass_attempts": 26,
-        "missed_pass_attempts": 20,
+        "missed_pass_attempts": 22,
         "unmatched_pass_candidates": 63,
         "precision": 0.2921,
-        "recall": 0.5652,
-        "f1": 0.3852,
-        "open_play_gold_passes": 46,
-        "open_play_recall": 0.5652,
+        "recall": 0.5417,
+        "f1": 0.3795,
+        "open_play_gold_passes": 48,
+        "open_play_recall": 0.5417,
         "restart_gold_passes": 0,
         "restart_recall": 0.0,
         "outcome_scorable_matches": 26,
@@ -3546,6 +3579,38 @@
             "display_name": "player 1"
           },
           "manual_note": "b05 attempts a pass to player 1; Mateusz intercepts."
+        },
+        {
+          "gold_event_id": "W1-E013",
+          "window_id": "W1",
+          "gold_time_sec": 42.0,
+          "action": "PASS",
+          "outcome": "UNKNOWN",
+          "actor": {
+            "team": "Verisk",
+            "display_name": "b04"
+          },
+          "target": {
+            "team": "Verisk",
+            "display_name": "b02"
+          },
+          "manual_note": "b04 heads toward b02 in the middle of the penalty area; play becomes contested."
+        },
+        {
+          "gold_event_id": "W2-E019",
+          "window_id": "W2",
+          "gold_time_sec": 615.0,
+          "action": "PASS",
+          "outcome": "COMPLETED",
+          "actor": {
+            "team": "Verisk",
+            "display_name": "b04"
+          },
+          "target": {
+            "team": "Verisk",
+            "display_name": "b07"
+          },
+          "manual_note": "b04 to b07 at the end of the reviewed fragment."
         },
         {
           "gold_event_id": "W3-E002",
