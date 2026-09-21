@@ -1,0 +1,5044 @@
+{
+  "schema_version": "contact-action-baseline-evaluation:v1",
+  "evaluation_layer": {
+    "candidate_generation": "current effective ball tracks + current player event timeline",
+    "contact_review": "auto_contact_review_v1 regenerated in memory",
+    "manual_review_status_used_for_headline_metrics": false,
+    "product_policy": "Pass statistics remain fully automatic; goldset/manual annotations are evaluation-only, not a production pass-correction workflow.",
+    "production_artifacts_written": false
+  },
+  "goldset": {
+    "schema_version": "contact-action-goldset:v1",
+    "published_match_id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
+    "window_count": 6,
+    "manual_event_count": 113,
+    "canonical_shot_reference_count": 11
+  },
+  "sources": [
+    {
+      "source_match_id": "5e62625e",
+      "window_ids": [
+        "W5",
+        "W6"
+      ],
+      "documents_regenerated_in_memory": [
+        "contact_candidates",
+        "event_candidates",
+        "pass_candidates",
+        "restart_candidates"
+      ]
+    },
+    {
+      "source_match_id": "6d8fc20c",
+      "window_ids": [
+        "W3",
+        "W4"
+      ],
+      "documents_regenerated_in_memory": [
+        "contact_candidates",
+        "event_candidates",
+        "pass_candidates",
+        "restart_candidates"
+      ]
+    },
+    {
+      "source_match_id": "9c7485e4",
+      "window_ids": [
+        "W1",
+        "W2"
+      ],
+      "documents_regenerated_in_memory": [
+        "contact_candidates",
+        "event_candidates",
+        "pass_candidates",
+        "restart_candidates"
+      ]
+    }
+  ],
+  "summary": {
+    "pass": {
+      "gold_pass_attempts": 66,
+      "pass_candidates_in_scope": 112,
+      "matched_pass_attempts": 36,
+      "missed_pass_attempts": 30,
+      "unmatched_pass_candidates": 76,
+      "precision": 0.3214,
+      "recall": 0.5455,
+      "f1": 0.4045,
+      "open_play_gold_passes": 48,
+      "open_play_recall": 0.625,
+      "restart_gold_passes": 18,
+      "restart_recall": 0.3333,
+      "outcome_scorable_matches": 35,
+      "outcome_accuracy": 0.4857,
+      "actor_team_accuracy": 0.5556,
+      "receiver_team_accuracy": 0.6857
+    },
+    "contact": {
+      "strict_contact_anchors": 96,
+      "contact_candidates_in_scope": 226,
+      "matched_strict_anchors": 75,
+      "contact_misses": 21,
+      "recall": 0.7812,
+      "matched_auto_review_statuses": {
+        "accepted": 47,
+        "uncertain": 28
+      },
+      "candidate_auto_review_statuses": {
+        "accepted": 121,
+        "uncertain": 105
+      }
+    },
+    "shot_pass_confusion": {
+      "canonical_shots_in_scope": 11,
+      "shots_with_nearby_pass_candidate": 6,
+      "shot_as_pass_confusion_count": 6,
+      "shot_as_pass_confusion_rate": 0.5455,
+      "shot_adjacent_pass_candidate_count": 12
+    },
+    "dead_ball_leakage": {
+      "spurious_contact_candidates": 18,
+      "spurious_event_candidates": 18,
+      "spurious_pass_candidates": 5,
+      "dead_ball_pass_share_of_auto_attempts": 0.0446
+    },
+    "aggregate_fidelity": {
+      "gold": {
+        "open_play": {
+          "attempts": 48,
+          "completed": 30,
+          "failed": 17,
+          "outcome_scorable_attempts": 47,
+          "completion_rate": 0.6383,
+          "teams": {
+            "Corgi": {
+              "attempts": 20,
+              "share": 0.4167,
+              "completed": 11,
+              "failed": 9,
+              "outcome_scorable_attempts": 20,
+              "completion_rate": 0.55
+            },
+            "Verisk": {
+              "attempts": 28,
+              "share": 0.5833,
+              "completed": 19,
+              "failed": 8,
+              "outcome_scorable_attempts": 27,
+              "completion_rate": 0.7037
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "restart": {
+          "attempts": 18,
+          "completed": 15,
+          "failed": 2,
+          "outcome_scorable_attempts": 17,
+          "completion_rate": 0.8824,
+          "teams": {
+            "Corgi": {
+              "attempts": 7,
+              "share": 0.3889,
+              "completed": 6,
+              "failed": 1,
+              "outcome_scorable_attempts": 7,
+              "completion_rate": 0.8571
+            },
+            "Verisk": {
+              "attempts": 11,
+              "share": 0.6111,
+              "completed": 9,
+              "failed": 1,
+              "outcome_scorable_attempts": 10,
+              "completion_rate": 0.9
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "combined": {
+          "attempts": 66,
+          "completed": 45,
+          "failed": 19,
+          "outcome_scorable_attempts": 64,
+          "completion_rate": 0.7031,
+          "teams": {
+            "Corgi": {
+              "attempts": 27,
+              "share": 0.4091,
+              "completed": 17,
+              "failed": 10,
+              "outcome_scorable_attempts": 27,
+              "completion_rate": 0.6296
+            },
+            "Verisk": {
+              "attempts": 39,
+              "share": 0.5909,
+              "completed": 28,
+              "failed": 9,
+              "outcome_scorable_attempts": 37,
+              "completion_rate": 0.7568
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        }
+      },
+      "automatic": {
+        "open_play": {
+          "attempts": 108,
+          "completed": 54,
+          "failed": 54,
+          "outcome_scorable_attempts": 108,
+          "completion_rate": 0.5,
+          "teams": {
+            "Corgi": {
+              "attempts": 55,
+              "share": 0.5093,
+              "completed": 26,
+              "failed": 29,
+              "outcome_scorable_attempts": 55,
+              "completion_rate": 0.4727
+            },
+            "Verisk": {
+              "attempts": 53,
+              "share": 0.4907,
+              "completed": 28,
+              "failed": 25,
+              "outcome_scorable_attempts": 53,
+              "completion_rate": 0.5283
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "restart": {
+          "attempts": 4,
+          "completed": 2,
+          "failed": 2,
+          "outcome_scorable_attempts": 4,
+          "completion_rate": 0.5,
+          "teams": {
+            "Corgi": {
+              "attempts": 1,
+              "share": 0.25,
+              "completed": 0,
+              "failed": 1,
+              "outcome_scorable_attempts": 1,
+              "completion_rate": 0.0
+            },
+            "Verisk": {
+              "attempts": 3,
+              "share": 0.75,
+              "completed": 2,
+              "failed": 1,
+              "outcome_scorable_attempts": 3,
+              "completion_rate": 0.6667
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        },
+        "combined": {
+          "attempts": 112,
+          "completed": 56,
+          "failed": 56,
+          "outcome_scorable_attempts": 112,
+          "completion_rate": 0.5,
+          "teams": {
+            "Corgi": {
+              "attempts": 56,
+              "share": 0.5,
+              "completed": 26,
+              "failed": 30,
+              "outcome_scorable_attempts": 56,
+              "completion_rate": 0.4643
+            },
+            "Verisk": {
+              "attempts": 56,
+              "share": 0.5,
+              "completed": 30,
+              "failed": 26,
+              "outcome_scorable_attempts": 56,
+              "completion_rate": 0.5357
+            },
+            "unknown": {
+              "attempts": 0,
+              "share": 0.0,
+              "completed": 0,
+              "failed": 0,
+              "outcome_scorable_attempts": 0,
+              "completion_rate": 0.0
+            }
+          }
+        }
+      },
+      "error": {
+        "open_play": {
+          "attempt_count_delta": 60,
+          "completion_rate_delta_pp": -13.83,
+          "teams": {
+            "Corgi": {
+              "pass_count_delta": 35,
+              "pass_count_error_percent": 175.0,
+              "team_share_delta_pp": 9.26,
+              "completion_rate_delta_pp": -7.73
+            },
+            "Verisk": {
+              "pass_count_delta": 25,
+              "pass_count_error_percent": 89.2857,
+              "team_share_delta_pp": -9.26,
+              "completion_rate_delta_pp": -17.54
+            },
+            "unknown": {
+              "pass_count_delta": 0,
+              "pass_count_error_percent": null,
+              "team_share_delta_pp": 0.0,
+              "completion_rate_delta_pp": 0.0
+            }
+          }
+        },
+        "restart": {
+          "attempt_count_delta": -14,
+          "completion_rate_delta_pp": -38.24,
+          "teams": {
+            "Corgi": {
+              "pass_count_delta": -6,
+              "pass_count_error_percent": -85.7143,
+              "team_share_delta_pp": -13.89,
+              "completion_rate_delta_pp": -85.71
+            },
+            "Verisk": {
+              "pass_count_delta": -8,
+              "pass_count_error_percent": -72.7273,
+              "team_share_delta_pp": 13.89,
+              "completion_rate_delta_pp": -23.33
+            },
+            "unknown": {
+              "pass_count_delta": 0,
+              "pass_count_error_percent": null,
+              "team_share_delta_pp": 0.0,
+              "completion_rate_delta_pp": 0.0
+            }
+          }
+        },
+        "combined": {
+          "attempt_count_delta": 46,
+          "completion_rate_delta_pp": -20.31,
+          "teams": {
+            "Corgi": {
+              "pass_count_delta": 29,
+              "pass_count_error_percent": 107.4074,
+              "team_share_delta_pp": 9.09,
+              "completion_rate_delta_pp": -16.53
+            },
+            "Verisk": {
+              "pass_count_delta": 17,
+              "pass_count_error_percent": 43.5897,
+              "team_share_delta_pp": -9.09,
+              "completion_rate_delta_pp": -22.11
+            },
+            "unknown": {
+              "pass_count_delta": 0,
+              "pass_count_error_percent": null,
+              "team_share_delta_pp": 0.0,
+              "completion_rate_delta_pp": 0.0
+            }
+          }
+        }
+      }
+    },
+    "scoring_exclusions": {
+      "pass_restart_annotations": 70,
+      "strict_scored": 66,
+      "context_only_excluded": 4,
+      "ambiguous_excluded": 0
+    }
+  },
+  "windows": {
+    "W1": {
+      "merged_range_sec": [
+        0.0,
+        75.0
+      ],
+      "gold_pass_attempts": 13,
+      "matched_pass_attempts": 11,
+      "missed_pass_attempts": 2,
+      "pass_candidates": 29,
+      "unmatched_pass_candidates": 18
+    },
+    "W2": {
+      "merged_range_sec": [
+        540.0,
+        615.0
+      ],
+      "gold_pass_attempts": 8,
+      "matched_pass_attempts": 5,
+      "missed_pass_attempts": 3,
+      "pass_candidates": 17,
+      "unmatched_pass_candidates": 12
+    },
+    "W3": {
+      "merged_range_sec": [
+        1261.3,
+        1336.3
+      ],
+      "gold_pass_attempts": 11,
+      "matched_pass_attempts": 3,
+      "missed_pass_attempts": 8,
+      "pass_candidates": 14,
+      "unmatched_pass_candidates": 11
+    },
+    "W4": {
+      "merged_range_sec": [
+        1351.3,
+        1426.3
+      ],
+      "gold_pass_attempts": 16,
+      "matched_pass_attempts": 11,
+      "missed_pass_attempts": 5,
+      "pass_candidates": 17,
+      "unmatched_pass_candidates": 6
+    },
+    "W5": {
+      "merged_range_sec": [
+        1761.878,
+        1836.878
+      ],
+      "gold_pass_attempts": 8,
+      "matched_pass_attempts": 5,
+      "missed_pass_attempts": 3,
+      "pass_candidates": 23,
+      "unmatched_pass_candidates": 18
+    },
+    "W6": {
+      "merged_range_sec": [
+        1911.878,
+        1986.878
+      ],
+      "gold_pass_attempts": 10,
+      "matched_pass_attempts": 1,
+      "missed_pass_attempts": 9,
+      "pass_candidates": 12,
+      "unmatched_pass_candidates": 11
+    }
+  },
+  "pass_matches": [
+    {
+      "gold_event_id": "W1-E001",
+      "window_id": "W1",
+      "gold_time_sec": 3.5,
+      "candidate_id": "pass-0001",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 3.37,
+      "candidate_release_merged_time_sec": 3.37,
+      "time_delta_sec": -0.13,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A04",
+      "actual_receiver_stable_player_id": "B06",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E002",
+      "window_id": "W1",
+      "gold_time_sec": 11.0,
+      "candidate_id": "pass-0003",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 10.711,
+      "candidate_release_merged_time_sec": 10.711,
+      "time_delta_sec": -0.289,
+      "expected_action": "PASS",
+      "expected_outcome": "MISCONTROLLED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A04",
+      "actual_receiver_stable_player_id": "B03",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E003",
+      "window_id": "W1",
+      "gold_time_sec": 15.0,
+      "candidate_id": "pass-0006",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 14.615,
+      "candidate_release_merged_time_sec": 14.615,
+      "time_delta_sec": -0.385,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "B08",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E004",
+      "window_id": "W1",
+      "gold_time_sec": 18.0,
+      "candidate_id": "pass-0009",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 18.318,
+      "candidate_release_merged_time_sec": 18.318,
+      "time_delta_sec": 0.318,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B08",
+      "actual_receiver_stable_player_id": "B06",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E006",
+      "window_id": "W1",
+      "gold_time_sec": 25.0,
+      "candidate_id": "pass-0013",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 25.792,
+      "candidate_release_merged_time_sec": 25.792,
+      "time_delta_sec": 0.792,
+      "expected_action": "PASS",
+      "expected_outcome": "INTERCEPTED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A04",
+      "actual_receiver_stable_player_id": "A05",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E007",
+      "window_id": "W1",
+      "gold_time_sec": 26.0,
+      "candidate_id": "pass-0014",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 26.159,
+      "candidate_release_merged_time_sec": 26.159,
+      "time_delta_sec": 0.159,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "A06",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": []
+    },
+    {
+      "gold_event_id": "W1-E008",
+      "window_id": "W1",
+      "gold_time_sec": 26.7,
+      "candidate_id": "pass-0015",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 27.16,
+      "candidate_release_merged_time_sec": 27.16,
+      "time_delta_sec": 0.46,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A06",
+      "actual_receiver_stable_player_id": "A05",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": []
+    },
+    {
+      "gold_event_id": "W1-E009",
+      "window_id": "W1",
+      "gold_time_sec": 28.0,
+      "candidate_id": "pass-0016",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 27.794,
+      "candidate_release_merged_time_sec": 27.794,
+      "time_delta_sec": -0.206,
+      "expected_action": "PASS",
+      "expected_outcome": "INTERCEPTED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "A04",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E010",
+      "window_id": "W1",
+      "gold_time_sec": 31.0,
+      "candidate_id": "pass-0018",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 30.931,
+      "candidate_release_merged_time_sec": 30.931,
+      "time_delta_sec": -0.069,
+      "expected_action": "PASS",
+      "expected_outcome": "INTERCEPTED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B06",
+      "actual_receiver_stable_player_id": "A06",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "RECEIVER_TEAM_ERROR",
+      "error_tags": [
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E012",
+      "window_id": "W1",
+      "gold_time_sec": 41.0,
+      "candidate_id": "pass-0020",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 41.542,
+      "candidate_release_merged_time_sec": 41.542,
+      "time_delta_sec": 0.542,
+      "expected_action": "RESTART",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A04",
+      "actual_receiver_stable_player_id": "B01",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "RESTART_ATTRIBUTION_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E016",
+      "window_id": "W1",
+      "gold_time_sec": 62.0,
+      "candidate_id": "pass-0028",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 61.862,
+      "candidate_release_merged_time_sec": 61.862,
+      "time_delta_sec": -0.138,
+      "expected_action": "RESTART",
+      "expected_outcome": "UNKNOWN",
+      "expected_broad_outcome": null,
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": null,
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": null,
+      "outcome_correct": null,
+      "actual_actor_stable_player_id": "B03",
+      "actual_receiver_stable_player_id": "B04",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "RESTART_ATTRIBUTION_ERROR",
+      "error_tags": [
+        "RESTART_ATTRIBUTION_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E002",
+      "window_id": "W2",
+      "gold_time_sec": 560.0,
+      "candidate_id": "pass-0174",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 560.227,
+      "candidate_release_merged_time_sec": 560.227,
+      "time_delta_sec": 0.227,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B07",
+      "actual_receiver_stable_player_id": "B04",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E006",
+      "window_id": "W2",
+      "gold_time_sec": 565.0,
+      "candidate_id": "pass-0180",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 565.165,
+      "candidate_release_merged_time_sec": 565.165,
+      "time_delta_sec": 0.165,
+      "expected_action": "PASS",
+      "expected_outcome": "MISCONTROLLED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B04",
+      "actual_receiver_stable_player_id": "B07",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E008",
+      "window_id": "W2",
+      "gold_time_sec": 570.0,
+      "candidate_id": "pass-0181",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 570.17,
+      "candidate_release_merged_time_sec": 570.17,
+      "time_delta_sec": 0.17,
+      "expected_action": "RESTART",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B07",
+      "actual_receiver_stable_player_id": "B02",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "RESTART_ATTRIBUTION_ERROR",
+      "error_tags": [
+        "RESTART_ATTRIBUTION_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E013",
+      "window_id": "W2",
+      "gold_time_sec": 581.0,
+      "candidate_id": "pass-0183",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 580.581,
+      "candidate_release_merged_time_sec": 580.581,
+      "time_delta_sec": -0.419,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "A05",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E014",
+      "window_id": "W2",
+      "gold_time_sec": 582.0,
+      "candidate_id": "pass-0184",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 582.282,
+      "candidate_release_merged_time_sec": 582.282,
+      "time_delta_sec": 0.282,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "A04",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": []
+    },
+    {
+      "gold_event_id": "W3-E005",
+      "window_id": "W3",
+      "gold_time_sec": 1278.0,
+      "candidate_id": "pass-0027",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 123.59,
+      "candidate_release_merged_time_sec": 1279.89,
+      "time_delta_sec": 1.89,
+      "expected_action": "PASS",
+      "expected_outcome": "MISCONTROLLED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A06",
+      "actual_receiver_stable_player_id": "A08",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W3-E009",
+      "window_id": "W3",
+      "gold_time_sec": 1293.0,
+      "candidate_id": "pass-0028",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 137.437,
+      "candidate_release_merged_time_sec": 1293.737,
+      "time_delta_sec": 0.737,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A01",
+      "actual_receiver_stable_player_id": "A06",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W3-E016",
+      "window_id": "W3",
+      "gold_time_sec": 1327.3,
+      "candidate_id": "pass-0036",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 170.938,
+      "candidate_release_merged_time_sec": 1327.238,
+      "time_delta_sec": -0.062,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A04",
+      "actual_receiver_stable_player_id": "A06",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E003",
+      "window_id": "W4",
+      "gold_time_sec": 1352.5,
+      "candidate_id": "pass-0056",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 196.63,
+      "candidate_release_merged_time_sec": 1352.93,
+      "time_delta_sec": 0.43,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B02",
+      "actual_receiver_stable_player_id": "A08",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E004",
+      "window_id": "W4",
+      "gold_time_sec": 1353.3,
+      "candidate_id": "pass-0057",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 197.064,
+      "candidate_release_merged_time_sec": 1353.364,
+      "time_delta_sec": 0.064,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A08",
+      "actual_receiver_stable_player_id": "A07",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E005",
+      "window_id": "W4",
+      "gold_time_sec": 1355.0,
+      "candidate_id": "pass-0060",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 199.032,
+      "candidate_release_merged_time_sec": 1355.332,
+      "time_delta_sec": 0.332,
+      "expected_action": "PASS",
+      "expected_outcome": "INTERCEPTED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "B12",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E006",
+      "window_id": "W4",
+      "gold_time_sec": 1356.0,
+      "candidate_id": "pass-0061",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 199.299,
+      "candidate_release_merged_time_sec": 1355.599,
+      "time_delta_sec": -0.401,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B12",
+      "actual_receiver_stable_player_id": "A07",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E009",
+      "window_id": "W4",
+      "gold_time_sec": 1359.0,
+      "candidate_id": "pass-0064",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 202.536,
+      "candidate_release_merged_time_sec": 1358.836,
+      "time_delta_sec": -0.164,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B04",
+      "actual_receiver_stable_player_id": "B07",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": []
+    },
+    {
+      "gold_event_id": "W4-E010",
+      "window_id": "W4",
+      "gold_time_sec": 1361.0,
+      "candidate_id": "pass-0066",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 204.605,
+      "candidate_release_merged_time_sec": 1360.905,
+      "time_delta_sec": -0.095,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A02",
+      "actual_receiver_stable_player_id": "B02",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E011",
+      "window_id": "W4",
+      "gold_time_sec": 1363.0,
+      "candidate_id": "pass-0067",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 206.44,
+      "candidate_release_merged_time_sec": 1362.74,
+      "time_delta_sec": -0.26,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B02",
+      "actual_receiver_stable_player_id": "B03",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": []
+    },
+    {
+      "gold_event_id": "W4-E012",
+      "window_id": "W4",
+      "gold_time_sec": 1366.5,
+      "candidate_id": "pass-0071",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 209.81,
+      "candidate_release_merged_time_sec": 1366.11,
+      "time_delta_sec": -0.39,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B07",
+      "actual_receiver_stable_player_id": "B12",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E013",
+      "window_id": "W4",
+      "gold_time_sec": 1388.0,
+      "candidate_id": "pass-0072",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 232.032,
+      "candidate_release_merged_time_sec": 1388.332,
+      "time_delta_sec": 0.332,
+      "expected_action": "RESTART",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "B03",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "RECEIVER_TEAM_ERROR",
+        "RESTART_ATTRIBUTION_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E015",
+      "window_id": "W4",
+      "gold_time_sec": 1397.0,
+      "candidate_id": "pass-0075",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 241.275,
+      "candidate_release_merged_time_sec": 1397.575,
+      "time_delta_sec": 0.575,
+      "expected_action": "RESTART",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A06",
+      "actual_receiver_stable_player_id": "B12",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "RESTART_ATTRIBUTION_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E019",
+      "window_id": "W4",
+      "gold_time_sec": 1418.0,
+      "candidate_id": "pass-0077",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 261.562,
+      "candidate_release_merged_time_sec": 1417.862,
+      "time_delta_sec": -0.138,
+      "expected_action": "PASS",
+      "expected_outcome": "OUT",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A01",
+      "actual_receiver_stable_player_id": "A08",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W5-E005",
+      "window_id": "W5",
+      "gold_time_sec": 1815.0,
+      "candidate_id": "pass-0012",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 53.259,
+      "candidate_release_merged_time_sec": 1815.137,
+      "time_delta_sec": 0.137,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B04",
+      "actual_receiver_stable_player_id": "B03",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": []
+    },
+    {
+      "gold_event_id": "W5-E007",
+      "window_id": "W5",
+      "gold_time_sec": 1818.5,
+      "candidate_id": "pass-0013",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 56.963,
+      "candidate_release_merged_time_sec": 1818.841,
+      "time_delta_sec": 0.341,
+      "expected_action": "PASS",
+      "expected_outcome": "MISCONTROLLED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B03",
+      "actual_receiver_stable_player_id": "B01",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W5-E009",
+      "window_id": "W5",
+      "gold_time_sec": 1823.0,
+      "candidate_id": "pass-0018",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 61.267,
+      "candidate_release_merged_time_sec": 1823.145,
+      "time_delta_sec": 0.145,
+      "expected_action": "RESTART",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "B05",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "RECEIVER_TEAM_ERROR",
+        "RESTART_ATTRIBUTION_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W5-E010",
+      "window_id": "W5",
+      "gold_time_sec": 1826.0,
+      "candidate_id": "pass-0020",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 64.337,
+      "candidate_release_merged_time_sec": 1826.215,
+      "time_delta_sec": 0.215,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B03",
+      "actual_receiver_stable_player_id": "A04",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W5-E011",
+      "window_id": "W5",
+      "gold_time_sec": 1831.0,
+      "candidate_id": "pass-0022",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 69.176,
+      "candidate_release_merged_time_sec": 1831.054,
+      "time_delta_sec": 0.054,
+      "expected_action": "PASS",
+      "expected_outcome": "MISCONTROLLED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B03",
+      "actual_receiver_stable_player_id": "B01",
+      "identity_context": false,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR"
+      ]
+    },
+    {
+      "gold_event_id": "W6-E013",
+      "window_id": "W6",
+      "gold_time_sec": 1958.0,
+      "candidate_id": "pass-0041",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 196.082,
+      "candidate_release_merged_time_sec": 1957.96,
+      "time_delta_sec": -0.04,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "B03",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    }
+  ],
+  "pass_misses": [
+    {
+      "gold_event_id": "W1-E005",
+      "window_id": "W1",
+      "gold_time_sec": 21.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b06"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b05"
+      },
+      "manual_note": "b06 to b05.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W1-E013",
+      "window_id": "W1",
+      "gold_time_sec": 42.0,
+      "action": "PASS",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b02"
+      },
+      "manual_note": "b04 heads toward b02 in the middle of the penalty area; play becomes contested.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 2,
+      "nearby_contact_review_statuses": {
+        "accepted": 2
+      }
+    },
+    {
+      "gold_event_id": "W2-E001",
+      "window_id": "W2",
+      "gold_time_sec": 556.5,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b07"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b05"
+      },
+      "manual_note": "Throw-in restart after the replacement-ball delay; b07 is only visible after throwing and re-entering.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W2-E011",
+      "window_id": "W2",
+      "gold_time_sec": 578.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "player 1"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b06"
+      },
+      "manual_note": "Team B touchline restart; player 1 appears only after entering the pitch.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W2-E019",
+      "window_id": "W2",
+      "gold_time_sec": 615.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b07"
+      },
+      "manual_note": "b04 to b07 at the end of the reviewed fragment.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W3-E001",
+      "window_id": "W3",
+      "gold_time_sec": 1269.3,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "manual_note": "Goalkeeper restart after initial out-of-play period.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W3-E002",
+      "window_id": "W3",
+      "gold_time_sec": 1273.3,
+      "action": "PASS",
+      "outcome": "MISCONTROLLED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Roman"
+      },
+      "manual_note": "Long pass for Roman is not controlled; B goalkeeper collects.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W3-E004",
+      "window_id": "W3",
+      "gold_time_sec": 1275.8,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b01/B?"
+      },
+      "manual_note": "Goalkeeper plays to b01, whose overlay later becomes B?.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 3,
+      "nearby_contact_review_statuses": {
+        "accepted": 2,
+        "uncertain": 1
+      }
+    },
+    {
+      "gold_event_id": "W3-E007",
+      "window_id": "W3",
+      "gold_time_sec": 1290.3,
+      "action": "RESTART",
+      "outcome": "MISCONTROLLED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Roman"
+      },
+      "manual_note": "Long throw to Roman, who controls poorly.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W3-E011",
+      "window_id": "W3",
+      "gold_time_sec": 1310.3,
+      "action": "RESTART",
+      "outcome": "MISCONTROLLED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b07"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b12"
+      },
+      "manual_note": "Free-kick restart to b12, who fails to receive.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W3-E013",
+      "window_id": "W3",
+      "gold_time_sec": 1320.3,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "manual_note": "Mati GK restart to Piotrek.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W3-E014",
+      "window_id": "W3",
+      "gold_time_sec": 1323.3,
+      "action": "PASS",
+      "outcome": "INTERCEPTED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Roman"
+      },
+      "manual_note": "Piotrek's line pass for Roman is intercepted by Team B; overlay temporarily calls the player A01.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 4,
+      "nearby_contact_review_statuses": {
+        "uncertain": 4
+      }
+    },
+    {
+      "gold_event_id": "W3-E017",
+      "window_id": "W3",
+      "gold_time_sec": 1331.3,
+      "action": "PASS",
+      "outcome": "MISCONTROLLED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b08"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b12"
+      },
+      "manual_note": "Through ball to b12 is not controlled.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 2,
+      "nearby_contact_review_statuses": {
+        "accepted": 2
+      }
+    },
+    {
+      "gold_event_id": "W4-E007",
+      "window_id": "W4",
+      "gold_time_sec": 1357.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Mateusz"
+      },
+      "manual_note": "Piotrek to Mateusz.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W4-E008",
+      "window_id": "W4",
+      "gold_time_sec": 1358.0,
+      "action": "PASS",
+      "outcome": "INTERCEPTED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mateusz"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Paweł"
+      },
+      "manual_note": "Mateusz's inaccurate pass toward Paweł is intercepted by b07.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 7,
+      "nearby_contact_review_statuses": {
+        "accepted": 4,
+        "uncertain": 3
+      }
+    },
+    {
+      "gold_event_id": "W4-E016",
+      "window_id": "W4",
+      "gold_time_sec": 1406.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "manual_note": "Mati GK restarts to Piotrek.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W4-E017",
+      "window_id": "W4",
+      "gold_time_sec": 1413.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Andrzej"
+      },
+      "manual_note": "Piotrek to Andrzej.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 2,
+      "nearby_contact_review_statuses": {
+        "accepted": 2
+      }
+    },
+    {
+      "gold_event_id": "W4-E018",
+      "window_id": "W4",
+      "gold_time_sec": 1415.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Andrzej"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "manual_note": "Andrzej returns to Piotrek.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W5-E004",
+      "window_id": "W5",
+      "gold_time_sec": 1808.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b05"
+      },
+      "manual_note": "Goalkeeper restarts to b05.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 2,
+      "nearby_contact_review_statuses": {
+        "accepted": 2
+      }
+    },
+    {
+      "gold_event_id": "W5-E006",
+      "window_id": "W5",
+      "gold_time_sec": 1817.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "B defender/B03"
+      },
+      "manual_note": "b04 to a defender initially shown as B?, later B03.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    },
+    {
+      "gold_event_id": "W5-E013",
+      "window_id": "W5",
+      "gold_time_sec": 1835.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b02"
+      },
+      "manual_note": "Goalkeeper restarts to b02.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W6-E001",
+      "window_id": "W6",
+      "gold_time_sec": 1913.0,
+      "action": "PASS",
+      "outcome": "INTERCEPTED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "manual_note": "b13's pass into the middle is cleared by Piotrek.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W6-E009",
+      "window_id": "W6",
+      "gold_time_sec": 1948.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Mateusz"
+      },
+      "manual_note": "Long goalkeeper throw to Mateusz.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 3,
+      "nearby_contact_review_statuses": {
+        "accepted": 2,
+        "uncertain": 1
+      }
+    },
+    {
+      "gold_event_id": "W6-E010",
+      "window_id": "W6",
+      "gold_time_sec": 1950.0,
+      "action": "PASS",
+      "outcome": "INTERCEPTED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mateusz"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Kuba"
+      },
+      "manual_note": "Mateusz tries to play into the area; Kuba nearly controls but b13 wins it.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 2,
+      "nearby_contact_review_statuses": {
+        "accepted": 2
+      }
+    },
+    {
+      "gold_event_id": "W6-E011",
+      "window_id": "W6",
+      "gold_time_sec": 1954.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b03"
+      },
+      "manual_note": "b13 to b03.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 3,
+      "nearby_contact_review_statuses": {
+        "accepted": 1,
+        "uncertain": 2
+      }
+    },
+    {
+      "gold_event_id": "W6-E012",
+      "window_id": "W6",
+      "gold_time_sec": 1955.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b03"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "manual_note": "b03 returns to b13.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 4,
+      "nearby_contact_review_statuses": {
+        "accepted": 2,
+        "uncertain": 2
+      }
+    },
+    {
+      "gold_event_id": "W6-E016",
+      "window_id": "W6",
+      "gold_time_sec": 1962.0,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Kuba"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Krzysiek"
+      },
+      "manual_note": "Kuba to Krzysiek.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 2,
+      "nearby_contact_review_statuses": {
+        "accepted": 1,
+        "uncertain": 1
+      }
+    },
+    {
+      "gold_event_id": "W6-E017",
+      "window_id": "W6",
+      "gold_time_sec": 1963.0,
+      "action": "PASS",
+      "outcome": "MISCONTROLLED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Krzysiek"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Roman"
+      },
+      "manual_note": "Long diagonal to Roman; Roman fails to receive.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS",
+        "MULTIPLE_CANDIDATES_AMBIGUOUS"
+      ],
+      "nearby_contact_candidate_count": 3,
+      "nearby_contact_review_statuses": {
+        "accepted": 2,
+        "uncertain": 1
+      }
+    },
+    {
+      "gold_event_id": "W6-E018",
+      "window_id": "W6",
+      "gold_time_sec": 1972.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "manual_note": "Goalkeeper restart to b13 after ball out of play.",
+      "primary_failure_stage": "CONTACT_MISS",
+      "error_tags": [
+        "CONTACT_MISS"
+      ],
+      "nearby_contact_candidate_count": 0,
+      "nearby_contact_review_statuses": {}
+    },
+    {
+      "gold_event_id": "W6-E019",
+      "window_id": "W6",
+      "gold_time_sec": 1986.5,
+      "action": "PASS",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "manual_note": "b13 to b04 at the end of W6.",
+      "primary_failure_stage": "PASS_CONSTRUCTION_MISS",
+      "error_tags": [
+        "PASS_CONSTRUCTION_MISS"
+      ],
+      "nearby_contact_candidate_count": 1,
+      "nearby_contact_review_statuses": {
+        "accepted": 1
+      }
+    }
+  ],
+  "pass_false_positives": [
+    {
+      "candidate_id": "pass-0002",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 10.511,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E002",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0004",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 12.279,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E002",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0005",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 13.814,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E003",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0007",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 15.516,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E003",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0008",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 16.85,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E004",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0010",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 21.955,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E005",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0019",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 31.798,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E010",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0329",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 36.97,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E011",
+      "nearest_gold_action": "CONTEST"
+    },
+    {
+      "candidate_id": "pass-0021",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 43.477,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W1-S001",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0023",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 45.512,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E015",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0024",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 46.413,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E015",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0025",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 46.88,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E015",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0026",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 47.648,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E015",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0330",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 59.826,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E016",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0029",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 62.229,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W1-E016",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0030",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 63.163,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W1-E017",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0031",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 63.63,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W1-E017",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0032",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 67.234,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "CONTEST_AS_PASS",
+      "nearest_gold_event_id": "W1-E018",
+      "nearest_gold_action": "CONTEST"
+    },
+    {
+      "candidate_id": "pass-0334",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 554.121,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "DEAD_BALL_PASS",
+      "nearest_gold_event_id": "W2-E001",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0173",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 559.726,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W2-E002",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0177",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 563.33,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W2-E004",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0178",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 563.697,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W2-E004",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0179",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 564.131,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W2-E005",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0185",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 588.889,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W2-S001",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0186",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 590.591,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "AMBIGUOUS_ACTION_AS_PASS",
+      "nearest_gold_event_id": "W2-E017",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0187",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 593.26,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W2-E018",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0188",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 593.694,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W2-S002",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0189",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 594.595,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W2-S002",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0190",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 607.674,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W2-E019",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0191",
+      "source_match_id": "9c7485e4",
+      "merged_release_time_sec": 611.078,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W2-E019",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0025",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1270.815,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E001",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0029",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1297.608,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "DEAD_BALL_PASS",
+      "nearest_gold_event_id": "W3-E010",
+      "nearest_gold_action": "CONTEST"
+    },
+    {
+      "candidate_id": "pass-0030",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1298.976,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "DEAD_BALL_PASS",
+      "nearest_gold_event_id": "W3-E010",
+      "nearest_gold_action": "CONTEST"
+    },
+    {
+      "candidate_id": "pass-0031",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1314.124,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E012",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0032",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1314.625,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E012",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0034",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1324.502,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W3-E015",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0035",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1325.87,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E015",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0039",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1330.007,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E017",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0040",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1335.679,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E018",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0041",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1335.98,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E018",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0042",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1336.28,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W3-E018",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0055",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1351.529,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "CONTEST_AS_PASS",
+      "nearest_gold_event_id": "W4-E002",
+      "nearest_gold_action": "CONTEST"
+    },
+    {
+      "candidate_id": "pass-0065",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1360.704,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W4-E010",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0068",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1365.109,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W4-E012",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0073",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1396.373,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "DEAD_BALL_PASS",
+      "nearest_gold_event_id": "W4-E015",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0076",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1416.594,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W4-E019",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0079",
+      "source_match_id": "6d8fc20c",
+      "merged_release_time_sec": 1421.565,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W4-E019",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0001",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1762.579,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "DEAD_BALL_PASS",
+      "nearest_gold_event_id": "W5-S001",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0002",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1785.137,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "AMBIGUOUS_ACTION_AS_PASS",
+      "nearest_gold_event_id": "W5-E001",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0003",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1786.071,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W5-S002",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0004",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1786.171,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W5-S002",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0005",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1786.271,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W5-S002",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0007",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1786.772,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "AMBIGUOUS_ACTION_AS_PASS",
+      "nearest_gold_event_id": "W5-E002",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0008",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1787.339,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "AMBIGUOUS_ACTION_AS_PASS",
+      "nearest_gold_event_id": "W5-E002",
+      "nearest_gold_action": "OTHER"
+    },
+    {
+      "candidate_id": "pass-0009",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1788.374,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "CONTROL_AS_PASS",
+      "nearest_gold_event_id": "W5-E003",
+      "nearest_gold_action": "CONTROL"
+    },
+    {
+      "candidate_id": "pass-0010",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1791.144,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W5-S003",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0011",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1812.4,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W5-E005",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0014",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1819.642,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W5-E008",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0015",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1819.775,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W5-E008",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0016",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1819.975,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W5-E008",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0017",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1820.676,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W5-E008",
+      "nearest_gold_action": "GK_COLLECTION"
+    },
+    {
+      "candidate_id": "pass-0021",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1830.821,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W5-E011",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0023",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1831.955,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W5-E012",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0024",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1832.789,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W5-S004",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0025",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1832.99,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "SHOT_AS_PASS",
+      "nearest_gold_event_id": "W5-S004",
+      "nearest_gold_action": null
+    },
+    {
+      "candidate_id": "pass-0039",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1942.377,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E009",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0040",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1956.559,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E013",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0042",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1958.227,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E013",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0099",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1960.029,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "INTERVENTION_AS_PASS",
+      "nearest_gold_event_id": "W6-E014",
+      "nearest_gold_action": "INTERVENTION"
+    },
+    {
+      "candidate_id": "pass-0043",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1960.897,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "CONTROL_AS_PASS",
+      "nearest_gold_event_id": "W6-E015",
+      "nearest_gold_action": "CONTROL"
+    },
+    {
+      "candidate_id": "pass-0045",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1964.501,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E017",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0046",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1964.634,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E017",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0047",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1964.734,
+      "outcome": "completed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E017",
+      "nearest_gold_action": "PASS"
+    },
+    {
+      "candidate_id": "pass-0048",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1967.571,
+      "outcome": "failed_pass",
+      "actor_team": "Corgi",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E018",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0049",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1968.172,
+      "outcome": "failed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E018",
+      "nearest_gold_action": "RESTART"
+    },
+    {
+      "candidate_id": "pass-0050",
+      "source_match_id": "5e62625e",
+      "merged_release_time_sec": 1978.016,
+      "outcome": "completed_pass",
+      "actor_team": "Verisk",
+      "classification": "UNMATCHED_PASS_CANDIDATE",
+      "nearest_gold_event_id": "W6-E018",
+      "nearest_gold_action": "RESTART"
+    }
+  ],
+  "failure_breakdown": {
+    "by_primary_stage": {
+      "PASS_CONSTRUCTION_MISS": 23,
+      "PASS_OUTCOME_ERROR": 18,
+      "CORRECT": 10,
+      "CONTACT_MISS": 7,
+      "ACTOR_TEAM_ERROR": 5,
+      "RESTART_ATTRIBUTION_ERROR": 2,
+      "RECEIVER_TEAM_ERROR": 1
+    },
+    "representative_examples": {
+      "ACTOR_TEAM_ERROR": [
+        {
+          "gold_event_id": "W1-E002",
+          "gold_time_sec": 11.0,
+          "candidate_id": "pass-0003",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "failed_pass",
+          "actual_outcome": "failed_pass",
+          "error_tags": [
+            "ACTOR_TEAM_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W3-E009",
+          "gold_time_sec": 1293.0,
+          "candidate_id": "pass-0028",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "ACTOR_TEAM_ERROR",
+            "RECEIVER_TEAM_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W3-E016",
+          "gold_time_sec": 1327.3,
+          "candidate_id": "pass-0036",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "ACTOR_TEAM_ERROR",
+            "RECEIVER_TEAM_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W4-E004",
+          "gold_time_sec": 1353.3,
+          "candidate_id": "pass-0057",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "ACTOR_TEAM_ERROR",
+            "RECEIVER_TEAM_ERROR",
+            "IDENTITY_CONTEXT"
+          ]
+        },
+        {
+          "gold_event_id": "W4-E005",
+          "gold_time_sec": 1355.0,
+          "candidate_id": "pass-0060",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "failed_pass",
+          "actual_outcome": "failed_pass",
+          "error_tags": [
+            "ACTOR_TEAM_ERROR",
+            "IDENTITY_CONTEXT"
+          ]
+        }
+      ],
+      "CONTACT_MISS": [
+        {
+          "gold_event_id": "W2-E011",
+          "gold_time_sec": 578.0,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "CONTACT_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W3-E007",
+          "gold_time_sec": 1290.3,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "CONTACT_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W3-E013",
+          "gold_time_sec": 1320.3,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "CONTACT_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W4-E016",
+          "gold_time_sec": 1406.0,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "CONTACT_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W5-E013",
+          "gold_time_sec": 1835.0,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "CONTACT_MISS"
+          ]
+        }
+      ],
+      "PASS_CONSTRUCTION_MISS": [
+        {
+          "gold_event_id": "W1-E005",
+          "gold_time_sec": 21.0,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "PASS_CONSTRUCTION_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W1-E013",
+          "gold_time_sec": 42.0,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "PASS_CONSTRUCTION_MISS",
+            "MULTIPLE_CANDIDATES_AMBIGUOUS"
+          ]
+        },
+        {
+          "gold_event_id": "W2-E001",
+          "gold_time_sec": 556.5,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "PASS_CONSTRUCTION_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W2-E019",
+          "gold_time_sec": 615.0,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "PASS_CONSTRUCTION_MISS"
+          ]
+        },
+        {
+          "gold_event_id": "W3-E001",
+          "gold_time_sec": 1269.3,
+          "candidate_id": null,
+          "expected_action": null,
+          "expected_broad_outcome": null,
+          "actual_outcome": null,
+          "error_tags": [
+            "PASS_CONSTRUCTION_MISS"
+          ]
+        }
+      ],
+      "PASS_OUTCOME_ERROR": [
+        {
+          "gold_event_id": "W1-E001",
+          "gold_time_sec": 3.5,
+          "candidate_id": "pass-0001",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "failed_pass",
+          "error_tags": [
+            "PASS_OUTCOME_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W1-E003",
+          "gold_time_sec": 15.0,
+          "candidate_id": "pass-0006",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "failed_pass",
+          "error_tags": [
+            "PASS_OUTCOME_ERROR",
+            "ACTOR_TEAM_ERROR",
+            "IDENTITY_CONTEXT"
+          ]
+        },
+        {
+          "gold_event_id": "W1-E006",
+          "gold_time_sec": 25.0,
+          "candidate_id": "pass-0013",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "failed_pass",
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "PASS_OUTCOME_ERROR",
+            "ACTOR_TEAM_ERROR",
+            "RECEIVER_TEAM_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W1-E009",
+          "gold_time_sec": 28.0,
+          "candidate_id": "pass-0016",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "failed_pass",
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "PASS_OUTCOME_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W1-E012",
+          "gold_time_sec": 41.0,
+          "candidate_id": "pass-0020",
+          "expected_action": "RESTART",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "failed_pass",
+          "error_tags": [
+            "PASS_OUTCOME_ERROR",
+            "ACTOR_TEAM_ERROR",
+            "RESTART_ATTRIBUTION_ERROR"
+          ]
+        }
+      ],
+      "RECEIVER_TEAM_ERROR": [
+        {
+          "gold_event_id": "W1-E010",
+          "gold_time_sec": 31.0,
+          "candidate_id": "pass-0018",
+          "expected_action": "PASS",
+          "expected_broad_outcome": "failed_pass",
+          "actual_outcome": "failed_pass",
+          "error_tags": [
+            "RECEIVER_TEAM_ERROR"
+          ]
+        }
+      ],
+      "RESTART_ATTRIBUTION_ERROR": [
+        {
+          "gold_event_id": "W1-E016",
+          "gold_time_sec": 62.0,
+          "candidate_id": "pass-0028",
+          "expected_action": "RESTART",
+          "expected_broad_outcome": null,
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "RESTART_ATTRIBUTION_ERROR"
+          ]
+        },
+        {
+          "gold_event_id": "W2-E008",
+          "gold_time_sec": 570.0,
+          "candidate_id": "pass-0181",
+          "expected_action": "RESTART",
+          "expected_broad_outcome": "completed_pass",
+          "actual_outcome": "completed_pass",
+          "error_tags": [
+            "RESTART_ATTRIBUTION_ERROR"
+          ]
+        }
+      ]
+    }
+  },
+  "contact_matches": [
+    {
+      "gold_event_id": "W1-E001",
+      "candidate_id": "contact-0001",
+      "window_id": "W1",
+      "gold_time_sec": 3.5,
+      "candidate_start_time_sec": 0.0,
+      "candidate_end_time_sec": 3.37,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E002",
+      "candidate_id": "contact-0004",
+      "window_id": "W1",
+      "gold_time_sec": 11.0,
+      "candidate_start_time_sec": 11.078,
+      "candidate_end_time_sec": 11.245,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W1-E003",
+      "candidate_id": "contact-0010",
+      "window_id": "W1",
+      "gold_time_sec": 15.0,
+      "candidate_start_time_sec": 15.148,
+      "candidate_end_time_sec": 15.516,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E004",
+      "candidate_id": "contact-0013",
+      "window_id": "W1",
+      "gold_time_sec": 18.0,
+      "candidate_start_time_sec": 17.851,
+      "candidate_end_time_sec": 18.318,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E005",
+      "candidate_id": "contact-0014",
+      "window_id": "W1",
+      "gold_time_sec": 21.0,
+      "candidate_start_time_sec": 19.553,
+      "candidate_end_time_sec": 21.955,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E006",
+      "candidate_id": "contact-0017",
+      "window_id": "W1",
+      "gold_time_sec": 25.0,
+      "candidate_start_time_sec": 25.158,
+      "candidate_end_time_sec": 25.459,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E007",
+      "candidate_id": "contact-0020",
+      "window_id": "W1",
+      "gold_time_sec": 26.0,
+      "candidate_start_time_sec": 25.993,
+      "candidate_end_time_sec": 26.159,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W1-E008",
+      "candidate_id": "contact-0021",
+      "window_id": "W1",
+      "gold_time_sec": 26.7,
+      "candidate_start_time_sec": 26.66,
+      "candidate_end_time_sec": 27.16,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E009",
+      "candidate_id": "contact-0022",
+      "window_id": "W1",
+      "gold_time_sec": 28.0,
+      "candidate_start_time_sec": 27.728,
+      "candidate_end_time_sec": 27.794,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W1-E010",
+      "candidate_id": "contact-0024",
+      "window_id": "W1",
+      "gold_time_sec": 31.0,
+      "candidate_start_time_sec": 29.062,
+      "candidate_end_time_sec": 30.931,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E012",
+      "candidate_id": "contact-0030",
+      "window_id": "W1",
+      "gold_time_sec": 41.0,
+      "candidate_start_time_sec": 41.341,
+      "candidate_end_time_sec": 41.542,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E013",
+      "candidate_id": "contact-0031",
+      "window_id": "W1",
+      "gold_time_sec": 42.0,
+      "candidate_start_time_sec": 42.042,
+      "candidate_end_time_sec": 42.209,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E014",
+      "candidate_id": "contact-0032",
+      "window_id": "W1",
+      "gold_time_sec": 43.0,
+      "candidate_start_time_sec": 43.01,
+      "candidate_end_time_sec": 43.477,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W1-S002",
+      "candidate_id": "contact-0043",
+      "window_id": "W1",
+      "gold_time_sec": 50.0,
+      "candidate_start_time_sec": 49.783,
+      "candidate_end_time_sec": 50.017,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W1-E016",
+      "candidate_id": "contact-0045",
+      "window_id": "W1",
+      "gold_time_sec": 62.0,
+      "candidate_start_time_sec": 61.762,
+      "candidate_end_time_sec": 61.862,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W1-E017",
+      "candidate_id": "contact-0047",
+      "window_id": "W1",
+      "gold_time_sec": 62.7,
+      "candidate_start_time_sec": 63.163,
+      "candidate_end_time_sec": 63.163,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E001",
+      "candidate_id": "contact-0315",
+      "window_id": "W2",
+      "gold_time_sec": 556.5,
+      "candidate_start_time_sec": 557.457,
+      "candidate_end_time_sec": 558.025,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W2-E002",
+      "candidate_id": "contact-0319",
+      "window_id": "W2",
+      "gold_time_sec": 560.0,
+      "candidate_start_time_sec": 560.027,
+      "candidate_end_time_sec": 560.227,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E004",
+      "candidate_id": "contact-0325",
+      "window_id": "W2",
+      "gold_time_sec": 563.5,
+      "candidate_start_time_sec": 563.63,
+      "candidate_end_time_sec": 563.697,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E005",
+      "candidate_id": "contact-0326",
+      "window_id": "W2",
+      "gold_time_sec": 564.0,
+      "candidate_start_time_sec": 563.997,
+      "candidate_end_time_sec": 564.131,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E006",
+      "candidate_id": "contact-0327",
+      "window_id": "W2",
+      "gold_time_sec": 565.0,
+      "candidate_start_time_sec": 565.165,
+      "candidate_end_time_sec": 565.165,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E008",
+      "candidate_id": "contact-0328",
+      "window_id": "W2",
+      "gold_time_sec": 570.0,
+      "candidate_start_time_sec": 569.903,
+      "candidate_end_time_sec": 570.17,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W2-E013",
+      "candidate_id": "contact-0333",
+      "window_id": "W2",
+      "gold_time_sec": 581.0,
+      "candidate_start_time_sec": 580.347,
+      "candidate_end_time_sec": 580.581,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E014",
+      "candidate_id": "contact-0334",
+      "window_id": "W2",
+      "gold_time_sec": 582.0,
+      "candidate_start_time_sec": 582.149,
+      "candidate_end_time_sec": 582.282,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-S001",
+      "candidate_id": "contact-0336",
+      "window_id": "W2",
+      "gold_time_sec": 588.5,
+      "candidate_start_time_sec": 586.52,
+      "candidate_end_time_sec": 588.889,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W2-E018",
+      "candidate_id": "contact-0340",
+      "window_id": "W2",
+      "gold_time_sec": 593.0,
+      "candidate_start_time_sec": 593.193,
+      "candidate_end_time_sec": 593.26,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W2-E019",
+      "candidate_id": "contact-0348",
+      "window_id": "W2",
+      "gold_time_sec": 615.0,
+      "candidate_start_time_sec": 613.313,
+      "candidate_end_time_sec": 615.282,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E001",
+      "candidate_id": "contact-0049",
+      "window_id": "W3",
+      "gold_time_sec": 1269.3,
+      "candidate_start_time_sec": 1268.946,
+      "candidate_end_time_sec": 1269.847,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E002",
+      "candidate_id": "contact-0051",
+      "window_id": "W3",
+      "gold_time_sec": 1273.3,
+      "candidate_start_time_sec": 1273.884,
+      "candidate_end_time_sec": 1274.151,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E003",
+      "candidate_id": "contact-0052",
+      "window_id": "W3",
+      "gold_time_sec": 1275.3,
+      "candidate_start_time_sec": 1275.719,
+      "candidate_end_time_sec": 1275.986,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E004",
+      "candidate_id": "contact-0053",
+      "window_id": "W3",
+      "gold_time_sec": 1275.8,
+      "candidate_start_time_sec": 1276.287,
+      "candidate_end_time_sec": 1276.287,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W3-E005",
+      "candidate_id": "contact-0055",
+      "window_id": "W3",
+      "gold_time_sec": 1278.0,
+      "candidate_start_time_sec": 1276.954,
+      "candidate_end_time_sec": 1279.89,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E008",
+      "candidate_id": "contact-0057",
+      "window_id": "W3",
+      "gold_time_sec": 1292.3,
+      "candidate_start_time_sec": 1291.969,
+      "candidate_end_time_sec": 1292.069,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E009",
+      "candidate_id": "contact-0058",
+      "window_id": "W3",
+      "gold_time_sec": 1293.0,
+      "candidate_start_time_sec": 1293.637,
+      "candidate_end_time_sec": 1293.737,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W3-E011",
+      "candidate_id": "contact-0066",
+      "window_id": "W3",
+      "gold_time_sec": 1310.3,
+      "candidate_start_time_sec": 1309.587,
+      "candidate_end_time_sec": 1310.02,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E012",
+      "candidate_id": "contact-0067",
+      "window_id": "W3",
+      "gold_time_sec": 1312.3,
+      "candidate_start_time_sec": 1311.856,
+      "candidate_end_time_sec": 1314.124,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W3-E014",
+      "candidate_id": "contact-0073",
+      "window_id": "W3",
+      "gold_time_sec": 1323.3,
+      "candidate_start_time_sec": 1322.766,
+      "candidate_end_time_sec": 1322.867,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W3-E015",
+      "candidate_id": "contact-0074",
+      "window_id": "W3",
+      "gold_time_sec": 1324.5,
+      "candidate_start_time_sec": 1324.101,
+      "candidate_end_time_sec": 1324.502,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W3-E016",
+      "candidate_id": "contact-0076",
+      "window_id": "W3",
+      "gold_time_sec": 1327.3,
+      "candidate_start_time_sec": 1327.238,
+      "candidate_end_time_sec": 1327.238,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W3-E017",
+      "candidate_id": "contact-0081",
+      "window_id": "W3",
+      "gold_time_sec": 1331.3,
+      "candidate_start_time_sec": 1330.808,
+      "candidate_end_time_sec": 1331.809,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E003",
+      "candidate_id": "contact-0101",
+      "window_id": "W4",
+      "gold_time_sec": 1352.5,
+      "candidate_start_time_sec": 1352.863,
+      "candidate_end_time_sec": 1352.93,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W4-E004",
+      "candidate_id": "contact-0102",
+      "window_id": "W4",
+      "gold_time_sec": 1353.3,
+      "candidate_start_time_sec": 1353.364,
+      "candidate_end_time_sec": 1353.364,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W4-E005",
+      "candidate_id": "contact-0106",
+      "window_id": "W4",
+      "gold_time_sec": 1355.0,
+      "candidate_start_time_sec": 1354.965,
+      "candidate_end_time_sec": 1355.132,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E006",
+      "candidate_id": "contact-0109",
+      "window_id": "W4",
+      "gold_time_sec": 1356.0,
+      "candidate_start_time_sec": 1355.766,
+      "candidate_end_time_sec": 1356.167,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E007",
+      "candidate_id": "contact-0110",
+      "window_id": "W4",
+      "gold_time_sec": 1357.0,
+      "candidate_start_time_sec": 1356.734,
+      "candidate_end_time_sec": 1357.535,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E008",
+      "candidate_id": "contact-0111",
+      "window_id": "W4",
+      "gold_time_sec": 1358.0,
+      "candidate_start_time_sec": 1357.802,
+      "candidate_end_time_sec": 1357.968,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E009",
+      "candidate_id": "contact-0116",
+      "window_id": "W4",
+      "gold_time_sec": 1359.0,
+      "candidate_start_time_sec": 1358.836,
+      "candidate_end_time_sec": 1358.836,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W4-E010",
+      "candidate_id": "contact-0118",
+      "window_id": "W4",
+      "gold_time_sec": 1361.0,
+      "candidate_start_time_sec": 1360.771,
+      "candidate_end_time_sec": 1360.905,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W4-E011",
+      "candidate_id": "contact-0119",
+      "window_id": "W4",
+      "gold_time_sec": 1363.0,
+      "candidate_start_time_sec": 1361.405,
+      "candidate_end_time_sec": 1362.74,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E012",
+      "candidate_id": "contact-0123",
+      "window_id": "W4",
+      "gold_time_sec": 1366.5,
+      "candidate_start_time_sec": 1366.076,
+      "candidate_end_time_sec": 1366.11,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-S001",
+      "candidate_id": "contact-0124",
+      "window_id": "W4",
+      "gold_time_sec": 1368.5,
+      "candidate_start_time_sec": 1368.445,
+      "candidate_end_time_sec": 1368.546,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W4-E013",
+      "candidate_id": "contact-0127",
+      "window_id": "W4",
+      "gold_time_sec": 1388.0,
+      "candidate_start_time_sec": 1387.932,
+      "candidate_end_time_sec": 1388.332,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E015",
+      "candidate_id": "contact-0131",
+      "window_id": "W4",
+      "gold_time_sec": 1397.0,
+      "candidate_start_time_sec": 1397.141,
+      "candidate_end_time_sec": 1397.341,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-S002",
+      "candidate_id": "contact-0135",
+      "window_id": "W4",
+      "gold_time_sec": 1400.5,
+      "candidate_start_time_sec": 1399.977,
+      "candidate_end_time_sec": 1400.544,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E017",
+      "candidate_id": "contact-0136",
+      "window_id": "W4",
+      "gold_time_sec": 1413.0,
+      "candidate_start_time_sec": 1410.654,
+      "candidate_end_time_sec": 1412.456,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E018",
+      "candidate_id": "contact-0137",
+      "window_id": "W4",
+      "gold_time_sec": 1415.0,
+      "candidate_start_time_sec": 1413.224,
+      "candidate_end_time_sec": 1416.594,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W4-E019",
+      "candidate_id": "contact-0138",
+      "window_id": "W4",
+      "gold_time_sec": 1418.0,
+      "candidate_start_time_sec": 1417.561,
+      "candidate_end_time_sec": 1417.862,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W5-E004",
+      "candidate_id": "contact-0018",
+      "window_id": "W5",
+      "gold_time_sec": 1808.0,
+      "candidate_start_time_sec": 1807.895,
+      "candidate_end_time_sec": 1809.03,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W5-E005",
+      "candidate_id": "contact-0021",
+      "window_id": "W5",
+      "gold_time_sec": 1815.0,
+      "candidate_start_time_sec": 1814.669,
+      "candidate_end_time_sec": 1815.137,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W5-E006",
+      "candidate_id": "contact-0022",
+      "window_id": "W5",
+      "gold_time_sec": 1817.0,
+      "candidate_start_time_sec": 1817.472,
+      "candidate_end_time_sec": 1818.841,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W5-E007",
+      "candidate_id": "contact-0023",
+      "window_id": "W5",
+      "gold_time_sec": 1818.5,
+      "candidate_start_time_sec": 1819.575,
+      "candidate_end_time_sec": 1819.642,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W5-E008",
+      "candidate_id": "contact-0025",
+      "window_id": "W5",
+      "gold_time_sec": 1820.0,
+      "candidate_start_time_sec": 1819.875,
+      "candidate_end_time_sec": 1819.975,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W5-E009",
+      "candidate_id": "contact-0028",
+      "window_id": "W5",
+      "gold_time_sec": 1823.0,
+      "candidate_start_time_sec": 1822.712,
+      "candidate_end_time_sec": 1823.145,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W5-E010",
+      "candidate_id": "contact-0033",
+      "window_id": "W5",
+      "gold_time_sec": 1826.0,
+      "candidate_start_time_sec": 1825.882,
+      "candidate_end_time_sec": 1826.215,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W5-E011",
+      "candidate_id": "contact-0035",
+      "window_id": "W5",
+      "gold_time_sec": 1831.0,
+      "candidate_start_time_sec": 1830.887,
+      "candidate_end_time_sec": 1831.054,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W5-E012",
+      "candidate_id": "contact-0036",
+      "window_id": "W5",
+      "gold_time_sec": 1832.0,
+      "candidate_start_time_sec": 1831.588,
+      "candidate_end_time_sec": 1831.955,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E009",
+      "candidate_id": "contact-0062",
+      "window_id": "W6",
+      "gold_time_sec": 1948.0,
+      "candidate_start_time_sec": 1947.916,
+      "candidate_end_time_sec": 1948.083,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E010",
+      "candidate_id": "contact-0063",
+      "window_id": "W6",
+      "gold_time_sec": 1950.0,
+      "candidate_start_time_sec": 1948.25,
+      "candidate_end_time_sec": 1948.483,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E011",
+      "candidate_id": "contact-0064",
+      "window_id": "W6",
+      "gold_time_sec": 1954.0,
+      "candidate_start_time_sec": 1953.989,
+      "candidate_end_time_sec": 1954.824,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E012",
+      "candidate_id": "contact-0066",
+      "window_id": "W6",
+      "gold_time_sec": 1955.0,
+      "candidate_start_time_sec": 1954.957,
+      "candidate_end_time_sec": 1954.957,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W6-E013",
+      "candidate_id": "contact-0068",
+      "window_id": "W6",
+      "gold_time_sec": 1958.0,
+      "candidate_start_time_sec": 1957.727,
+      "candidate_end_time_sec": 1957.96,
+      "auto_review_status": "uncertain"
+    },
+    {
+      "gold_event_id": "W6-E014",
+      "candidate_id": "contact-0070",
+      "window_id": "W6",
+      "gold_time_sec": 1960.0,
+      "candidate_start_time_sec": 1958.861,
+      "candidate_end_time_sec": 1959.395,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E016",
+      "candidate_id": "contact-0072",
+      "window_id": "W6",
+      "gold_time_sec": 1962.0,
+      "candidate_start_time_sec": 1962.432,
+      "candidate_end_time_sec": 1962.565,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E017",
+      "candidate_id": "contact-0074",
+      "window_id": "W6",
+      "gold_time_sec": 1963.0,
+      "candidate_start_time_sec": 1962.999,
+      "candidate_end_time_sec": 1964.501,
+      "auto_review_status": "accepted"
+    },
+    {
+      "gold_event_id": "W6-E019",
+      "candidate_id": "contact-0081",
+      "window_id": "W6",
+      "gold_time_sec": 1986.5,
+      "candidate_start_time_sec": 1979.351,
+      "candidate_end_time_sec": 1986.992,
+      "auto_review_status": "accepted"
+    }
+  ],
+  "contact_misses": [
+    {
+      "gold_event_id": "W1-S001",
+      "window_id": "W1",
+      "gold_time_sec": 43.5,
+      "action": null,
+      "outcome": "blocked",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference; operator confirms a blocked Verisk shot, with Przemek's headed intervention in the surrounding sequence."
+    },
+    {
+      "gold_event_id": "W2-E007",
+      "window_id": "W2",
+      "gold_time_sec": 568.0,
+      "action": "GK_COLLECTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {},
+      "manual_note": "B goalkeeper collects the overhit pass."
+    },
+    {
+      "gold_event_id": "W2-E010",
+      "window_id": "W2",
+      "gold_time_sec": 574.0,
+      "action": "INTERVENTION",
+      "outcome": "OUT",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {},
+      "manual_note": "Piotrek cuts out the ball and clears to touchline."
+    },
+    {
+      "gold_event_id": "W2-E011",
+      "window_id": "W2",
+      "gold_time_sec": 578.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "player 1"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b06"
+      },
+      "manual_note": "Team B touchline restart; player 1 appears only after entering the pitch."
+    },
+    {
+      "gold_event_id": "W2-S002",
+      "window_id": "W2",
+      "gold_time_sec": 594.3,
+      "action": null,
+      "outcome": "goal",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference; Krzysiek scores after the ricochet sequence."
+    },
+    {
+      "gold_event_id": "W3-E006",
+      "window_id": "W3",
+      "gold_time_sec": 1282.3,
+      "action": "GK_COLLECTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {},
+      "manual_note": "Mati GK gains the ball."
+    },
+    {
+      "gold_event_id": "W3-E007",
+      "window_id": "W3",
+      "gold_time_sec": 1290.3,
+      "action": "RESTART",
+      "outcome": "MISCONTROLLED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Roman"
+      },
+      "manual_note": "Long throw to Roman, who controls poorly."
+    },
+    {
+      "gold_event_id": "W3-E013",
+      "window_id": "W3",
+      "gold_time_sec": 1320.3,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "manual_note": "Mati GK restart to Piotrek."
+    },
+    {
+      "gold_event_id": "W4-E016",
+      "window_id": "W4",
+      "gold_time_sec": 1406.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mati GK"
+      },
+      "target": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "manual_note": "Mati GK restarts to Piotrek."
+    },
+    {
+      "gold_event_id": "W5-S001",
+      "window_id": "W5",
+      "gold_time_sec": 1784.0,
+      "action": null,
+      "outcome": "blocked",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference for the free kick into the wall."
+    },
+    {
+      "gold_event_id": "W5-S002",
+      "window_id": "W5",
+      "gold_time_sec": 1786.1,
+      "action": null,
+      "outcome": "on_target",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference; b04 shoots on target and goalkeeper saves."
+    },
+    {
+      "gold_event_id": "W5-S003",
+      "window_id": "W5",
+      "gold_time_sec": 1792.0,
+      "action": null,
+      "outcome": "off_target",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference for the end of Mateusz's solo run."
+    },
+    {
+      "gold_event_id": "W5-S004",
+      "window_id": "W5",
+      "gold_time_sec": 1833.5,
+      "action": null,
+      "outcome": "on_target",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference; Patryk shoots and goalkeeper saves."
+    },
+    {
+      "gold_event_id": "W5-E013",
+      "window_id": "W5",
+      "gold_time_sec": 1835.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b02"
+      },
+      "manual_note": "Goalkeeper restarts to b02."
+    },
+    {
+      "gold_event_id": "W6-E001",
+      "window_id": "W6",
+      "gold_time_sec": 1913.0,
+      "action": "PASS",
+      "outcome": "INTERCEPTED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "manual_note": "b13's pass into the middle is cleared by Piotrek."
+    },
+    {
+      "gold_event_id": "W6-E002",
+      "window_id": "W6",
+      "gold_time_sec": 1913.5,
+      "action": "INTERVENTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {},
+      "manual_note": "Piotrek clears the pass."
+    },
+    {
+      "gold_event_id": "W6-E004",
+      "window_id": "W6",
+      "gold_time_sec": 1919.0,
+      "action": "INTERVENTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b03/B?"
+      },
+      "target": {},
+      "manual_note": "b03/B? wins the ball from Patryk."
+    },
+    {
+      "gold_event_id": "W6-E006",
+      "window_id": "W6",
+      "gold_time_sec": 1923.5,
+      "action": "INTERVENTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Piotrek"
+      },
+      "target": {},
+      "manual_note": "Piotrek blocks the driven ball."
+    },
+    {
+      "gold_event_id": "W6-E008",
+      "window_id": "W6",
+      "gold_time_sec": 1926.0,
+      "action": "INTERVENTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mateusz"
+      },
+      "target": {},
+      "manual_note": "Mateusz clears; temporary Team B overlay is an identity error."
+    },
+    {
+      "gold_event_id": "W6-S001",
+      "window_id": "W6",
+      "gold_time_sec": 1929.5,
+      "action": null,
+      "outcome": "off_target",
+      "actor": {},
+      "target": {},
+      "manual_note": "Canonical Shot Review reference; use 32:09.5 rather than approximate 32:11 manual anchor."
+    },
+    {
+      "gold_event_id": "W6-E018",
+      "window_id": "W6",
+      "gold_time_sec": 1972.0,
+      "action": "RESTART",
+      "outcome": "COMPLETED",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "B goalkeeper"
+      },
+      "target": {
+        "team": "Verisk",
+        "display_name": "b13"
+      },
+      "manual_note": "Goalkeeper restart to b13 after ball out of play."
+    }
+  ],
+  "unmatched_contact_candidate_count": 151,
+  "shot_pass_confusions": [
+    {
+      "shot_id": "shot-review-c2fbf99d-3ca7-401f-a3c7-989f427785c1",
+      "canonical_time_sec": 43.5,
+      "outcome": "blocked",
+      "nearby_pass_candidates": [
+        {
+          "candidate_id": "pass-0021",
+          "source_match_id": "9c7485e4",
+          "time_delta_sec": -0.023
+        }
+      ]
+    },
+    {
+      "shot_id": "shot-review-430af4ed-703c-4f49-b801-0856aaa896b0",
+      "canonical_time_sec": 50.0,
+      "outcome": "off_target",
+      "nearby_pass_candidates": []
+    },
+    {
+      "shot_id": "shot-review-0c9a417f-6d11-4b06-9a1d-b33dcc4f2990",
+      "canonical_time_sec": 588.5,
+      "outcome": "on_target",
+      "nearby_pass_candidates": [
+        {
+          "candidate_id": "pass-0185",
+          "source_match_id": "9c7485e4",
+          "time_delta_sec": 0.389
+        }
+      ]
+    },
+    {
+      "shot_id": "shot-review-49a57e87-d29a-488e-850e-8d2841f52f64",
+      "canonical_time_sec": 594.3,
+      "outcome": "goal",
+      "nearby_pass_candidates": [
+        {
+          "candidate_id": "pass-0188",
+          "source_match_id": "9c7485e4",
+          "time_delta_sec": -0.606
+        },
+        {
+          "candidate_id": "pass-0189",
+          "source_match_id": "9c7485e4",
+          "time_delta_sec": 0.295
+        }
+      ]
+    },
+    {
+      "shot_id": "shot-review-478361d8-451d-472a-9a6d-81526a5c6f5b",
+      "canonical_time_sec": 1368.5,
+      "outcome": "blocked",
+      "nearby_pass_candidates": []
+    },
+    {
+      "shot_id": "shot-review-9aa7bbf4-8a90-4be8-97d9-f28fbdd846d7",
+      "canonical_time_sec": 1400.5,
+      "outcome": "off_target",
+      "nearby_pass_candidates": []
+    },
+    {
+      "shot_id": "shot-review-4fa1b416-04ce-4e09-8eff-b53a8b77252f",
+      "canonical_time_sec": 1784.0,
+      "outcome": "blocked",
+      "nearby_pass_candidates": []
+    },
+    {
+      "shot_id": "shot-review-962984be-75c2-4a09-af97-5f461c0c0b63",
+      "canonical_time_sec": 1786.1,
+      "outcome": "on_target",
+      "nearby_pass_candidates": [
+        {
+          "candidate_id": "pass-0002",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": -0.963
+        },
+        {
+          "candidate_id": "pass-0003",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": -0.029
+        },
+        {
+          "candidate_id": "pass-0004",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": 0.071
+        },
+        {
+          "candidate_id": "pass-0005",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": 0.171
+        },
+        {
+          "candidate_id": "pass-0007",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": 0.672
+        }
+      ]
+    },
+    {
+      "shot_id": "shot-review-f0b70547-3dbb-4b75-bdd4-12ce05b73abe",
+      "canonical_time_sec": 1792.0,
+      "outcome": "off_target",
+      "nearby_pass_candidates": [
+        {
+          "candidate_id": "pass-0010",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": -0.856
+        }
+      ]
+    },
+    {
+      "shot_id": "shot-review-96b0fd71-0dd8-4381-96c1-b7dacf6c2a9c",
+      "canonical_time_sec": 1833.5,
+      "outcome": "on_target",
+      "nearby_pass_candidates": [
+        {
+          "candidate_id": "pass-0024",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": -0.711
+        },
+        {
+          "candidate_id": "pass-0025",
+          "source_match_id": "5e62625e",
+          "time_delta_sec": -0.51
+        }
+      ]
+    },
+    {
+      "shot_id": "shot-review-1f710931-cfba-4a8d-b711-406dfa08552b",
+      "canonical_time_sec": 1929.5,
+      "outcome": "off_target",
+      "nearby_pass_candidates": []
+    }
+  ],
+  "dead_ball_candidates": [
+    {
+      "window_id": "W2",
+      "state": "NOT_IN_PLAY",
+      "reason": "waiting_for_replacement_ball",
+      "start_time_sec": 540.0,
+      "end_time_sec": 556.5,
+      "generated": {
+        "contact_candidates": 2,
+        "event_candidates": 2,
+        "restart_candidates": 1,
+        "pass_candidates": 1
+      },
+      "legitimate_restart_at_boundary": [],
+      "spurious": {
+        "contact_candidates": 2,
+        "event_candidates": 2,
+        "pass_candidates": 1
+      }
+    },
+    {
+      "window_id": "W3",
+      "state": "NOT_IN_PLAY",
+      "reason": "restart_preparation",
+      "start_time_sec": 1261.3,
+      "end_time_sec": 1269.3,
+      "generated": {
+        "contact_candidates": 1,
+        "event_candidates": 1,
+        "restart_candidates": 0,
+        "pass_candidates": 0
+      },
+      "legitimate_restart_at_boundary": [],
+      "spurious": {
+        "contact_candidates": 1,
+        "event_candidates": 1,
+        "pass_candidates": 0
+      }
+    },
+    {
+      "window_id": "W3",
+      "state": "GK_HOLD",
+      "reason": "goalkeeper_possession",
+      "start_time_sec": 1282.3,
+      "end_time_sec": 1290.3,
+      "generated": {
+        "contact_candidates": 0,
+        "event_candidates": 0,
+        "restart_candidates": 0,
+        "pass_candidates": 0
+      },
+      "legitimate_restart_at_boundary": [],
+      "spurious": {
+        "contact_candidates": 0,
+        "event_candidates": 0,
+        "pass_candidates": 0
+      }
+    },
+    {
+      "window_id": "W3",
+      "state": "NOT_IN_PLAY",
+      "reason": "foul_and_free_kick_setup",
+      "start_time_sec": 1294.3,
+      "end_time_sec": 1310.3,
+      "generated": {
+        "contact_candidates": 8,
+        "event_candidates": 8,
+        "restart_candidates": 0,
+        "pass_candidates": 2
+      },
+      "legitimate_restart_at_boundary": [],
+      "spurious": {
+        "contact_candidates": 8,
+        "event_candidates": 8,
+        "pass_candidates": 2
+      }
+    },
+    {
+      "window_id": "W4",
+      "state": "NOT_IN_PLAY",
+      "reason": "foul_and_free_kick_setup",
+      "start_time_sec": 1392.0,
+      "end_time_sec": 1397.0,
+      "generated": {
+        "contact_candidates": 3,
+        "event_candidates": 3,
+        "restart_candidates": 0,
+        "pass_candidates": 1
+      },
+      "legitimate_restart_at_boundary": [],
+      "spurious": {
+        "contact_candidates": 3,
+        "event_candidates": 3,
+        "pass_candidates": 1
+      }
+    },
+    {
+      "window_id": "W5",
+      "state": "NOT_IN_PLAY",
+      "reason": "free_kick_setup",
+      "start_time_sec": 1761.878,
+      "end_time_sec": 1784.0,
+      "generated": {
+        "contact_candidates": 4,
+        "event_candidates": 4,
+        "restart_candidates": 0,
+        "pass_candidates": 1
+      },
+      "legitimate_restart_at_boundary": [],
+      "spurious": {
+        "contact_candidates": 4,
+        "event_candidates": 4,
+        "pass_candidates": 1
+      }
+    }
+  ],
+  "hard_negative_results": [
+    {
+      "gold_event_id": "W1-E015",
+      "gold_time_sec": 46.0,
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Mateusz"
+      },
+      "matching_contact_candidate_count": 1,
+      "candidate_ids": [
+        "contact-0035"
+      ],
+      "result": "false_positive_contact"
+    }
+  ],
+  "identity_context_matches": [
+    {
+      "gold_event_id": "W1-E003",
+      "window_id": "W1",
+      "gold_time_sec": 15.0,
+      "candidate_id": "pass-0006",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 14.615,
+      "candidate_release_merged_time_sec": 14.615,
+      "time_delta_sec": -0.385,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "B08",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W1-E004",
+      "window_id": "W1",
+      "gold_time_sec": 18.0,
+      "candidate_id": "pass-0009",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 18.318,
+      "candidate_release_merged_time_sec": 18.318,
+      "time_delta_sec": 0.318,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B08",
+      "actual_receiver_stable_player_id": "B06",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E002",
+      "window_id": "W2",
+      "gold_time_sec": 560.0,
+      "candidate_id": "pass-0174",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 560.227,
+      "candidate_release_merged_time_sec": 560.227,
+      "time_delta_sec": 0.227,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B07",
+      "actual_receiver_stable_player_id": "B04",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W2-E013",
+      "window_id": "W2",
+      "gold_time_sec": 581.0,
+      "candidate_id": "pass-0183",
+      "candidate_source_match_id": "9c7485e4",
+      "candidate_release_source_time_sec": 580.581,
+      "candidate_release_merged_time_sec": 580.581,
+      "time_delta_sec": -0.419,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "A05",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E004",
+      "window_id": "W4",
+      "gold_time_sec": 1353.3,
+      "candidate_id": "pass-0057",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 197.064,
+      "candidate_release_merged_time_sec": 1353.364,
+      "time_delta_sec": 0.064,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": false,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A08",
+      "actual_receiver_stable_player_id": "A07",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR",
+        "RECEIVER_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E005",
+      "window_id": "W4",
+      "gold_time_sec": 1355.0,
+      "candidate_id": "pass-0060",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 199.032,
+      "candidate_release_merged_time_sec": 1355.332,
+      "time_delta_sec": 0.332,
+      "expected_action": "PASS",
+      "expected_outcome": "INTERCEPTED",
+      "expected_broad_outcome": "failed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "B12",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "ACTOR_TEAM_ERROR",
+      "error_tags": [
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E006",
+      "window_id": "W4",
+      "gold_time_sec": 1356.0,
+      "candidate_id": "pass-0061",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 199.299,
+      "candidate_release_merged_time_sec": 1355.599,
+      "time_delta_sec": -0.401,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Corgi",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "B12",
+      "actual_receiver_stable_player_id": "A07",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "strong_candidate",
+      "review_status": "needs_review",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W4-E012",
+      "window_id": "W4",
+      "gold_time_sec": 1366.5,
+      "candidate_id": "pass-0071",
+      "candidate_source_match_id": "6d8fc20c",
+      "candidate_release_source_time_sec": 209.81,
+      "candidate_release_merged_time_sec": 1366.11,
+      "time_delta_sec": -0.39,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "completed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Verisk",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": true,
+      "actual_actor_stable_player_id": "B07",
+      "actual_receiver_stable_player_id": "B12",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "CORRECT",
+      "error_tags": [
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W5-E009",
+      "window_id": "W5",
+      "gold_time_sec": 1823.0,
+      "candidate_id": "pass-0018",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 61.267,
+      "candidate_release_merged_time_sec": 1823.145,
+      "time_delta_sec": 0.145,
+      "expected_action": "RESTART",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Corgi",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": true,
+      "expected_receiver_team": "Corgi",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": false,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A07",
+      "actual_receiver_stable_player_id": "B05",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": false,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "RECEIVER_TEAM_ERROR",
+        "RESTART_ATTRIBUTION_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    },
+    {
+      "gold_event_id": "W6-E013",
+      "window_id": "W6",
+      "gold_time_sec": 1958.0,
+      "candidate_id": "pass-0041",
+      "candidate_source_match_id": "5e62625e",
+      "candidate_release_source_time_sec": 196.082,
+      "candidate_release_merged_time_sec": 1957.96,
+      "time_delta_sec": -0.04,
+      "expected_action": "PASS",
+      "expected_outcome": "COMPLETED",
+      "expected_broad_outcome": "completed_pass",
+      "actual_outcome": "failed_pass",
+      "expected_actor_team": "Verisk",
+      "actual_actor_team": "Corgi",
+      "actor_team_correct": false,
+      "expected_receiver_team": "Verisk",
+      "actual_receiver_team": "Verisk",
+      "receiver_team_correct": true,
+      "outcome_correct": false,
+      "actual_actor_stable_player_id": "A05",
+      "actual_receiver_stable_player_id": "B03",
+      "identity_context": true,
+      "from_restart": false,
+      "restart_attribution_correct": true,
+      "auto_review_status": "uncertain",
+      "review_status": "uncertain",
+      "primary_failure_stage": "PASS_OUTCOME_ERROR",
+      "error_tags": [
+        "PASS_OUTCOME_ERROR",
+        "ACTOR_TEAM_ERROR",
+        "IDENTITY_CONTEXT"
+      ]
+    }
+  ],
+  "ambiguous_annotations": [
+    {
+      "gold_event_id": "W2-E003",
+      "window_id": "W2",
+      "gold_time_sec": 561.5,
+      "action": "OTHER",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b04"
+      },
+      "target": {},
+      "manual_note": "Probably a shot or hard driven ball into the penalty area; preserve shot-versus-cross uncertainty."
+    },
+    {
+      "gold_event_id": "W2-E017",
+      "window_id": "W2",
+      "gold_time_sec": 591.0,
+      "action": "OTHER",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Paweł"
+      },
+      "target": {},
+      "manual_note": "Intentional centrostrzał after the rebound, but excluded from shot goldset as a non-robust shot label."
+    },
+    {
+      "gold_event_id": "W5-E001",
+      "window_id": "W5",
+      "gold_time_sec": 1784.5,
+      "action": "INTERVENTION",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Corgi",
+        "display_name": "Przemek"
+      },
+      "target": {},
+      "manual_note": "Ball apparently cleared outside the area by Przemek after the wall block; actor remains uncertain."
+    },
+    {
+      "gold_event_id": "W5-E002",
+      "window_id": "W5",
+      "gold_time_sec": 1787.0,
+      "action": "OTHER",
+      "outcome": "UNKNOWN",
+      "actor": {},
+      "target": {},
+      "manual_note": "Save and loose-ball sequence; no unsupported extra contact is inferred."
+    },
+    {
+      "gold_event_id": "W6-E005",
+      "window_id": "W6",
+      "gold_time_sec": 1923.0,
+      "action": "OTHER",
+      "outcome": "UNKNOWN",
+      "actor": {
+        "team": "Verisk",
+        "display_name": "b03/B?"
+      },
+      "target": {},
+      "manual_note": "Probably a shot or driven ball into the box; preserve uncertainty."
+    }
+  ],
+  "source_tree_snapshot": [
+    {
+      "source_match_id": "5e62625e",
+      "file_count": 4305,
+      "tree_fingerprint": "8e7c8120b493d9b9e9470ebb17640256bd9359c57f68edfac18de82c823b8f6b"
+    },
+    {
+      "source_match_id": "6d8fc20c",
+      "file_count": 6775,
+      "tree_fingerprint": "07bfaf13ed13c93ed48e79ab20f8cd32b6a8b4b774846ce5d229999fbe5c7ea2"
+    },
+    {
+      "source_match_id": "9c7485e4",
+      "file_count": 38862,
+      "tree_fingerprint": "01503086756c57a95bbd8dabce96a14d71a51ec6b98ac71952c0c603dc588934"
+    }
+  ]
+}
