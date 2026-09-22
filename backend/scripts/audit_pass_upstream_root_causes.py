@@ -41,7 +41,11 @@ def main() -> None:
     before = snapshot_source_tree(match_dirs)
     try:
         documents = {
-            source_id: build_current_automatic_documents(directory, include_possession_context=True)
+            source_id: build_current_automatic_documents(
+                directory,
+                include_possession_context=True,
+                include_effective_ball_context=True,
+            )
             for source_id, directory in match_dirs.items()
         }
         identities = {source_id: _read_object(directory / "global_identity.json") for source_id, directory in match_dirs.items()}

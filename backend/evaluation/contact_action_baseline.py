@@ -80,6 +80,7 @@ def build_current_automatic_documents(
     *,
     pass_policy_version: str = "v1",
     include_possession_context: bool = False,
+    include_effective_ball_context: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Run the actual downstream builder in memory using current effective inputs.
 
@@ -112,6 +113,13 @@ def build_current_automatic_documents(
     }
     if include_possession_context:
         documents["possession_candidates"] = dict(result.get("possession_candidates") or {})
+    if include_effective_ball_context:
+        documents["effective_ball_tracks"] = dict(effective.document)
+        documents["effective_ball_metadata"] = {
+            "artifact": effective.artifact,
+            "provenance": effective.provenance,
+            "input_digest": effective.input_digest,
+        }
     return documents
 
 
