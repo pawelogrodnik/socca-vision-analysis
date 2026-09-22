@@ -79,6 +79,7 @@ def build_current_automatic_documents(
     match_dir: Path,
     *,
     pass_policy_version: str = "v1",
+    include_possession_context: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Run the actual downstream builder in memory using current effective inputs.
 
@@ -105,10 +106,13 @@ def build_current_automatic_documents(
         match_phase_config_doc=phase,
         pass_policy_version=pass_policy_version,
     )
-    return {
+    documents = {
         name: dict(result.get(name) or {})
         for name in ("contact_candidates", "event_candidates", "restart_candidates", "pass_candidates")
     }
+    if include_possession_context:
+        documents["possession_candidates"] = dict(result.get("possession_candidates") or {})
+    return documents
 
 
 def evaluate_contact_action_baseline(
