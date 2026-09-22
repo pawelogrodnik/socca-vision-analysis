@@ -480,7 +480,7 @@
         "displacement_to_path_ratio": 0.9992
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-026"
     },
     {
@@ -639,7 +639,7 @@
         "displacement_to_path_ratio": 0.975
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-027"
     },
     {
@@ -718,7 +718,7 @@
         "displacement_to_path_ratio": 0.9226
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-028"
     },
     {
@@ -876,7 +876,7 @@
         "displacement_to_path_ratio": 0.9961
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-029"
     },
     {
@@ -955,7 +955,7 @@
         "displacement_to_path_ratio": 0.9502
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-030"
     },
     {
@@ -1114,7 +1114,7 @@
         "displacement_to_path_ratio": 0.9698
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-031"
     },
     {
@@ -1593,7 +1593,7 @@
         "displacement_to_path_ratio": 0.7798
       },
       "window_id": "W1",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-032"
     },
     {
@@ -1753,7 +1753,7 @@
         "displacement_to_path_ratio": 0.8862
       },
       "window_id": "W1",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-034"
     },
     {
@@ -1832,7 +1832,7 @@
         "displacement_to_path_ratio": 0.8949
       },
       "window_id": "W1",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-034"
     },
     {
@@ -1911,7 +1911,7 @@
         "displacement_to_path_ratio": 0.9887
       },
       "window_id": "W1",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-034"
     },
     {
@@ -1990,7 +1990,7 @@
         "displacement_to_path_ratio": 0.9965
       },
       "window_id": "W1",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-034"
     },
     {
@@ -2309,7 +2309,7 @@
         "displacement_to_path_ratio": 0.8147
       },
       "window_id": "W2",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-037"
     },
     {
@@ -3348,7 +3348,7 @@
         "displacement_to_path_ratio": 0.895
       },
       "window_id": "W2",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-042"
     },
     {
@@ -3427,7 +3427,7 @@
         "displacement_to_path_ratio": 0.9356
       },
       "window_id": "W2",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-043"
     },
     {
@@ -3507,7 +3507,7 @@
         "displacement_to_path_ratio": 0.8621
       },
       "window_id": "W3",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-015"
     },
     {
@@ -3746,7 +3746,7 @@
         "displacement_to_path_ratio": 0.9979
       },
       "window_id": "W3",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-016"
     },
     {
@@ -3825,7 +3825,7 @@
         "displacement_to_path_ratio": 0.9996
       },
       "window_id": "W3",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-016"
     },
     {
@@ -3984,7 +3984,7 @@
         "displacement_to_path_ratio": 0.9953
       },
       "window_id": "W3",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-018"
     },
     {
@@ -4143,7 +4143,7 @@
         "displacement_to_path_ratio": 0.9366
       },
       "window_id": "W3",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-019"
     },
     {
@@ -4222,7 +4222,7 @@
         "displacement_to_path_ratio": 0.9991
       },
       "window_id": "W3",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-020"
     },
     {
@@ -4301,7 +4301,7 @@
         "displacement_to_path_ratio": 0.9992
       },
       "window_id": "W3",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-020"
     },
     {
@@ -4382,7 +4382,7 @@
         "displacement_to_path_ratio": 0.3985
       },
       "window_id": "W3",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-020"
     },
     {
@@ -4941,7 +4941,7 @@
         "displacement_to_path_ratio": 0.9932
       },
       "window_id": "W4",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-022"
     },
     {
@@ -5178,7 +5178,7 @@
         "displacement_to_path_ratio": 0.9866
       },
       "window_id": "W4",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-023"
     },
     {
@@ -5338,7 +5338,7 @@
         "displacement_to_path_ratio": 0.997
       },
       "window_id": "W4",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-024"
     },
     {
@@ -5498,7 +5498,7 @@
         "displacement_to_path_ratio": 1.0
       },
       "window_id": "W4",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-025"
     },
     {
@@ -6211,7 +6211,7 @@
         "displacement_to_path_ratio": 0.8444
       },
       "window_id": "W5",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-004"
     },
     {
@@ -6451,7 +6451,7 @@
         "displacement_to_path_ratio": 0.9985
       },
       "window_id": "W5",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-005"
     },
     {
@@ -6530,7 +6530,7 @@
         "displacement_to_path_ratio": 0.9995
       },
       "window_id": "W5",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-005"
     },
     {
@@ -6610,7 +6610,7 @@
         "displacement_to_path_ratio": 0.9444
       },
       "window_id": "W5",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-005"
     },
     {
@@ -6689,7 +6689,7 @@
         "displacement_to_path_ratio": 0.441
       },
       "window_id": "W5",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-005"
     },
     {
@@ -6847,7 +6847,7 @@
         "displacement_to_path_ratio": 0.9989
       },
       "window_id": "W5",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-006"
     },
     {
@@ -7246,7 +7246,7 @@
         "displacement_to_path_ratio": 0.4689
       },
       "window_id": "W6",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-008"
     },
     {
@@ -7326,7 +7326,7 @@
         "displacement_to_path_ratio": 0.8775
       },
       "window_id": "W6",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-009"
     },
     {
@@ -7485,7 +7485,7 @@
         "displacement_to_path_ratio": 0.4652
       },
       "window_id": "W6",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-010"
     },
     {
@@ -7644,7 +7644,7 @@
         "displacement_to_path_ratio": 1.0011
       },
       "window_id": "W6",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-012"
     },
     {
@@ -7723,7 +7723,7 @@
         "displacement_to_path_ratio": 1.0
       },
       "window_id": "W6",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-012"
     },
     {
@@ -7802,7 +7802,7 @@
         "displacement_to_path_ratio": 0.9753
       },
       "window_id": "W6",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-012"
     },
     {
@@ -7881,7 +7881,7 @@
         "displacement_to_path_ratio": 0.9254
       },
       "window_id": "W6",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-013"
     },
     {
@@ -7960,7 +7960,7 @@
         "displacement_to_path_ratio": 0.7702
       },
       "window_id": "W6",
-      "false_positive_root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-013"
     },
     {
@@ -8040,7 +8040,7 @@
         "displacement_to_path_ratio": 0.5502
       },
       "window_id": "W6",
-      "false_positive_root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "false_positive_root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "false_positive_cluster_id": "fp-cluster-014"
     }
   ],
@@ -11276,7 +11276,8 @@
       "nearby_contact_statuses": {},
       "nearby_pass_candidate_ids": [],
       "rejection_reasons": {},
-      "skipped_contact_pairs": []
+      "skipped_contact_pairs": [],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W1-E013",
@@ -11293,7 +11294,7 @@
         "display_name": "b02"
       },
       "manual_note": "b04 heads toward b02 in the middle of the penalty area; play becomes contested.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0030",
         "event-0031"
@@ -11312,10 +11313,15 @@
           "source_match_id": "9c7485e4",
           "source_event_id": "event-0031",
           "target_event_id": "event-0032",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "B01",
           "source_time_sec": 42.209,
           "target_time_sec": 43.01,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP"
       ]
     },
     {
@@ -11339,7 +11345,8 @@
       "nearby_contact_statuses": {},
       "nearby_pass_candidate_ids": [],
       "rejection_reasons": {},
-      "skipped_contact_pairs": []
+      "skipped_contact_pairs": [],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W3-E002",
@@ -11356,7 +11363,7 @@
         "display_name": "Roman"
       },
       "manual_note": "Long pass for Roman is not controlled; B goalkeeper collects.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0051"
       ],
@@ -11373,10 +11380,16 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0051",
           "target_event_id": "event-0052",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "A06",
           "source_time_sec": 1274.1509999999998,
           "target_time_sec": 1275.719,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP",
+        "SINGLE_NEARBY_CONTACT"
       ]
     },
     {
@@ -11394,7 +11407,7 @@
         "display_name": "Roman"
       },
       "manual_note": "Piotrek's line pass for Roman is intercepted by Team B; overlay temporarily calls the player A01.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0072",
         "event-0073",
@@ -11415,6 +11428,8 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0071",
           "target_event_id": "event-0072",
+          "source_stable_player_id": "B12",
+          "target_stable_player_id": "B12",
           "source_time_sec": 1322.366,
           "target_time_sec": 1322.433,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11423,6 +11438,8 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0072",
           "target_event_id": "event-0073",
+          "source_stable_player_id": "B12",
+          "target_stable_player_id": "B12",
           "source_time_sec": 1322.433,
           "target_time_sec": 1322.766,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11431,10 +11448,16 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0073",
           "target_event_id": "event-0074",
+          "source_stable_player_id": "B12",
+          "target_stable_player_id": "B12",
           "source_time_sec": 1322.867,
           "target_time_sec": 1324.1009999999999,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP",
+        "MULTIPLE_NEARBY_CONTACTS"
       ]
     },
     {
@@ -11452,7 +11475,7 @@
         "display_name": "b12"
       },
       "manual_note": "Through ball to b12 is not controlled.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0081",
         "event-0082"
@@ -11471,10 +11494,15 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0081",
           "target_event_id": "event-0082",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "B08",
           "source_time_sec": 1331.809,
           "target_time_sec": 1331.9089999999999,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP"
       ]
     },
     {
@@ -11492,7 +11520,7 @@
         "display_name": "Mateusz"
       },
       "manual_note": "Piotrek to Mateusz.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0110",
         "event-0111"
@@ -11511,6 +11539,8 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0109",
           "target_event_id": "event-0110",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "A07",
           "source_time_sec": 1356.167,
           "target_time_sec": 1356.734,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11519,10 +11549,15 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0110",
           "target_event_id": "event-0111",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "A07",
           "source_time_sec": 1357.5349999999999,
           "target_time_sec": 1357.802,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP"
       ]
     },
     {
@@ -11585,6 +11620,8 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0110",
           "target_event_id": "event-0111",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "A07",
           "source_time_sec": 1357.5349999999999,
           "target_time_sec": 1357.802,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11593,6 +11630,8 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0112",
           "target_event_id": "event-0113",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B04",
           "source_time_sec": 1358.202,
           "target_time_sec": 1358.269,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11601,6 +11640,8 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0113",
           "target_event_id": "event-0114",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B04",
           "source_time_sec": 1358.269,
           "target_time_sec": 1358.335,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11609,11 +11650,14 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0114",
           "target_event_id": "event-0115",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A07",
           "source_time_sec": 1358.435,
           "target_time_sec": 1358.469,
           "skip_reason": "gap_too_short"
         }
-      ]
+      ],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W4-E017",
@@ -11630,7 +11674,7 @@
         "display_name": "Andrzej"
       },
       "manual_note": "Piotrek to Andrzej.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0137"
       ],
@@ -11647,10 +11691,16 @@
           "source_match_id": "6d8fc20c",
           "source_event_id": "event-0136",
           "target_event_id": "event-0137",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A08",
           "source_time_sec": 1412.456,
           "target_time_sec": 1413.224,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP",
+        "SINGLE_NEARBY_CONTACT"
       ]
     },
     {
@@ -11674,7 +11724,8 @@
       "nearby_contact_statuses": {},
       "nearby_pass_candidate_ids": [],
       "rejection_reasons": {},
-      "skipped_contact_pairs": []
+      "skipped_contact_pairs": [],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W5-E006",
@@ -11691,7 +11742,7 @@
         "display_name": "B defender/B03"
       },
       "manual_note": "b04 to a defender initially shown as B?, later B03.",
-      "root_cause": "SOURCE_CONTACT_PRESENT_TARGET_MISSING",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0022"
       ],
@@ -11703,7 +11754,10 @@
       },
       "nearby_pass_candidate_ids": [],
       "rejection_reasons": {},
-      "skipped_contact_pairs": []
+      "skipped_contact_pairs": [],
+      "diagnostic_signals": [
+        "SINGLE_NEARBY_CONTACT"
+      ]
     },
     {
       "gold_event_id": "W6-E001",
@@ -11726,7 +11780,8 @@
       "nearby_contact_statuses": {},
       "nearby_pass_candidate_ids": [],
       "rejection_reasons": {},
-      "skipped_contact_pairs": []
+      "skipped_contact_pairs": [],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W6-E010",
@@ -11743,7 +11798,7 @@
         "display_name": "Kuba"
       },
       "manual_note": "Mateusz tries to play into the area; Kuba nearly controls but b13 wins it.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0063"
       ],
@@ -11760,6 +11815,8 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0062",
           "target_event_id": "event-0063",
+          "source_stable_player_id": "A11",
+          "target_stable_player_id": "A11",
           "source_time_sec": 1948.0829999999999,
           "target_time_sec": 1948.25,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11768,10 +11825,16 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0063",
           "target_event_id": "event-0064",
+          "source_stable_player_id": "A11",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1948.483,
           "target_time_sec": 1953.989,
           "skip_reason": "gap_too_long"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP",
+        "SINGLE_NEARBY_CONTACT"
       ]
     },
     {
@@ -11789,7 +11852,7 @@
         "display_name": "b03"
       },
       "manual_note": "b13 to b03.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0064",
         "event-0065",
@@ -11811,6 +11874,8 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0064",
           "target_event_id": "event-0065",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1954.8239999999998,
           "target_time_sec": 1954.8899999999999,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11819,6 +11884,8 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0065",
           "target_event_id": "event-0066",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1954.8899999999999,
           "target_time_sec": 1954.9569999999999,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11827,10 +11894,16 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0066",
           "target_event_id": "event-0067",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1954.9569999999999,
           "target_time_sec": 1955.491,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP",
+        "MULTIPLE_NEARBY_CONTACTS"
       ]
     },
     {
@@ -11848,7 +11921,7 @@
         "display_name": "b13"
       },
       "manual_note": "b03 returns to b13.",
-      "root_cause": "SAME_PLAYER_SKIP",
+      "root_cause": "UNKNOWN",
       "nearby_contact_ids": [
         "event-0065",
         "event-0066",
@@ -11870,6 +11943,8 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0064",
           "target_event_id": "event-0065",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1954.8239999999998,
           "target_time_sec": 1954.8899999999999,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11878,6 +11953,8 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0065",
           "target_event_id": "event-0066",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1954.8899999999999,
           "target_time_sec": 1954.9569999999999,
           "skip_reason": "same_player_consecutive_contacts"
@@ -11886,10 +11963,16 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0066",
           "target_event_id": "event-0067",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "B13",
           "source_time_sec": 1954.9569999999999,
           "target_time_sec": 1955.491,
           "skip_reason": "same_player_consecutive_contacts"
         }
+      ],
+      "diagnostic_signals": [
+        "NEARBY_SAME_PLAYER_SKIP",
+        "MULTIPLE_NEARBY_CONTACTS"
       ]
     },
     {
@@ -11935,11 +12018,14 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0072",
           "target_event_id": "event-0073",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "A03",
           "source_time_sec": 1962.565,
           "target_time_sec": 1962.666,
           "skip_reason": "same_player_consecutive_contacts"
         }
-      ]
+      ],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W6-E017",
@@ -11984,11 +12070,14 @@
           "source_match_id": "5e62625e",
           "source_event_id": "event-0072",
           "target_event_id": "event-0073",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "A03",
           "source_time_sec": 1962.565,
           "target_time_sec": 1962.666,
           "skip_reason": "same_player_consecutive_contacts"
         }
-      ]
+      ],
+      "diagnostic_signals": []
     },
     {
       "gold_event_id": "W6-E019",
@@ -12011,7 +12100,8 @@
       "nearby_contact_statuses": {},
       "nearby_pass_candidate_ids": [],
       "rejection_reasons": {},
-      "skipped_contact_pairs": []
+      "skipped_contact_pairs": [],
+      "diagnostic_signals": []
     }
   ],
   "false_positive_root_causes": [
@@ -12021,9 +12111,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 10.511,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-026",
-      "nearest_gold_event_id": "W1-E002"
+      "nearest_gold_event_id": "W1-E002",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0004",
@@ -12031,9 +12124,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 12.279,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-027",
-      "nearest_gold_event_id": "W1-E002"
+      "nearest_gold_event_id": "W1-E002",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0005",
@@ -12041,9 +12137,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 13.814,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-028",
-      "nearest_gold_event_id": "W1-E003"
+      "nearest_gold_event_id": "W1-E003",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0007",
@@ -12051,9 +12150,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 15.516,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-029",
-      "nearest_gold_event_id": "W1-E003"
+      "nearest_gold_event_id": "W1-E003",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0008",
@@ -12061,9 +12163,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 16.85,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-030",
-      "nearest_gold_event_id": "W1-E004"
+      "nearest_gold_event_id": "W1-E004",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0010",
@@ -12071,9 +12176,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 21.955,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-031",
-      "nearest_gold_event_id": "W1-E005"
+      "nearest_gold_event_id": "W1-E005",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0019",
@@ -12081,9 +12189,13 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 31.798,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-032",
-      "nearest_gold_event_id": "W1-E010"
+      "nearest_gold_event_id": "W1-E010",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0021",
@@ -12093,7 +12205,11 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-033",
-      "nearest_gold_event_id": "W1-S001"
+      "nearest_gold_event_id": "W1-S001",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0023",
@@ -12101,9 +12217,14 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 45.512,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-034",
-      "nearest_gold_event_id": "W1-E015"
+      "nearest_gold_event_id": "W1-E015",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0024",
@@ -12111,9 +12232,13 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 46.413,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-034",
-      "nearest_gold_event_id": "W1-E015"
+      "nearest_gold_event_id": "W1-E015",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0025",
@@ -12121,9 +12246,13 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 46.88,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-034",
-      "nearest_gold_event_id": "W1-E015"
+      "nearest_gold_event_id": "W1-E015",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0026",
@@ -12131,9 +12260,13 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 47.648,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-034",
-      "nearest_gold_event_id": "W1-E015"
+      "nearest_gold_event_id": "W1-E015",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0030",
@@ -12143,7 +12276,12 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-035",
-      "nearest_gold_event_id": "W1-E017"
+      "nearest_gold_event_id": "W1-E017",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0031",
@@ -12153,7 +12291,11 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-035",
-      "nearest_gold_event_id": "W1-E017"
+      "nearest_gold_event_id": "W1-E017",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0032",
@@ -12163,7 +12305,11 @@
       "semantic_label": "CONTEST_AS_PASS",
       "root_cause": "CONTEST_AS_PASS",
       "cluster_id": "fp-cluster-036",
-      "nearest_gold_event_id": "W1-E018"
+      "nearest_gold_event_id": "W1-E018",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0173",
@@ -12171,9 +12317,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 559.726,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-037",
-      "nearest_gold_event_id": "W2-E002"
+      "nearest_gold_event_id": "W2-E002",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0177",
@@ -12183,7 +12332,11 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-038",
-      "nearest_gold_event_id": "W2-E004"
+      "nearest_gold_event_id": "W2-E004",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0178",
@@ -12193,7 +12346,12 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-038",
-      "nearest_gold_event_id": "W2-E004"
+      "nearest_gold_event_id": "W2-E004",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0179",
@@ -12203,7 +12361,12 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-038",
-      "nearest_gold_event_id": "W2-E005"
+      "nearest_gold_event_id": "W2-E005",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0185",
@@ -12213,7 +12376,10 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-039",
-      "nearest_gold_event_id": "W2-S001"
+      "nearest_gold_event_id": "W2-S001",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0186",
@@ -12223,7 +12389,11 @@
       "semantic_label": "AMBIGUOUS_ACTION_AS_PASS",
       "root_cause": "AMBIGUOUS_ACTION_AS_PASS",
       "cluster_id": "fp-cluster-040",
-      "nearest_gold_event_id": "W2-E017"
+      "nearest_gold_event_id": "W2-E017",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0187",
@@ -12233,7 +12403,12 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-041",
-      "nearest_gold_event_id": "W2-E018"
+      "nearest_gold_event_id": "W2-E018",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0188",
@@ -12243,7 +12418,12 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-041",
-      "nearest_gold_event_id": "W2-S002"
+      "nearest_gold_event_id": "W2-S002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0189",
@@ -12253,7 +12433,12 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-041",
-      "nearest_gold_event_id": "W2-S002"
+      "nearest_gold_event_id": "W2-S002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0190",
@@ -12261,9 +12446,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 607.674,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-042",
-      "nearest_gold_event_id": "W2-E019"
+      "nearest_gold_event_id": "W2-E019",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "9c7485e4:pass-0191",
@@ -12271,9 +12459,12 @@
       "source_match_id": "9c7485e4",
       "merged_release_time_sec": 611.078,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-043",
-      "nearest_gold_event_id": "W2-E019"
+      "nearest_gold_event_id": "W2-E019",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0025",
@@ -12281,9 +12472,12 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1270.815,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-015",
-      "nearest_gold_event_id": "W3-E001"
+      "nearest_gold_event_id": "W3-E001",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0031",
@@ -12291,9 +12485,13 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1314.124,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-016",
-      "nearest_gold_event_id": "W3-E012"
+      "nearest_gold_event_id": "W3-E012",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0032",
@@ -12301,9 +12499,13 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1314.625,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-016",
-      "nearest_gold_event_id": "W3-E012"
+      "nearest_gold_event_id": "W3-E012",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0034",
@@ -12313,7 +12515,10 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-017",
-      "nearest_gold_event_id": "W3-E015"
+      "nearest_gold_event_id": "W3-E015",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0035",
@@ -12321,9 +12526,12 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1325.87,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-018",
-      "nearest_gold_event_id": "W3-E015"
+      "nearest_gold_event_id": "W3-E015",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0039",
@@ -12331,9 +12539,13 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1330.007,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-019",
-      "nearest_gold_event_id": "W3-E017"
+      "nearest_gold_event_id": "W3-E017",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0040",
@@ -12341,9 +12553,13 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1335.679,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-020",
-      "nearest_gold_event_id": "W3-E018"
+      "nearest_gold_event_id": "W3-E018",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0041",
@@ -12351,9 +12567,13 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1335.98,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-020",
-      "nearest_gold_event_id": "W3-E018"
+      "nearest_gold_event_id": "W3-E018",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0042",
@@ -12361,9 +12581,14 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1336.28,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-020",
-      "nearest_gold_event_id": "W3-E018"
+      "nearest_gold_event_id": "W3-E018",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0055",
@@ -12373,7 +12598,11 @@
       "semantic_label": "CONTEST_AS_PASS",
       "root_cause": "CONTEST_AS_PASS",
       "cluster_id": "fp-cluster-021",
-      "nearest_gold_event_id": "W4-E002"
+      "nearest_gold_event_id": "W4-E002",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0065",
@@ -12381,9 +12610,13 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1360.704,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-022",
-      "nearest_gold_event_id": "W4-E010"
+      "nearest_gold_event_id": "W4-E010",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0068",
@@ -12391,9 +12624,12 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1365.109,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-023",
-      "nearest_gold_event_id": "W4-E012"
+      "nearest_gold_event_id": "W4-E012",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0076",
@@ -12401,9 +12637,12 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1416.594,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-024",
-      "nearest_gold_event_id": "W4-E019"
+      "nearest_gold_event_id": "W4-E019",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "6d8fc20c:pass-0079",
@@ -12411,9 +12650,12 @@
       "source_match_id": "6d8fc20c",
       "merged_release_time_sec": 1421.565,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-025",
-      "nearest_gold_event_id": "W4-E019"
+      "nearest_gold_event_id": "W4-E019",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0002",
@@ -12423,7 +12665,11 @@
       "semantic_label": "AMBIGUOUS_ACTION_AS_PASS",
       "root_cause": "AMBIGUOUS_ACTION_AS_PASS",
       "cluster_id": "fp-cluster-001",
-      "nearest_gold_event_id": "W5-E001"
+      "nearest_gold_event_id": "W5-E001",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0003",
@@ -12433,7 +12679,12 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-001",
-      "nearest_gold_event_id": "W5-S002"
+      "nearest_gold_event_id": "W5-S002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0004",
@@ -12443,7 +12694,12 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-001",
-      "nearest_gold_event_id": "W5-S002"
+      "nearest_gold_event_id": "W5-S002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0005",
@@ -12453,7 +12709,12 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-001",
-      "nearest_gold_event_id": "W5-S002"
+      "nearest_gold_event_id": "W5-S002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0007",
@@ -12463,7 +12724,12 @@
       "semantic_label": "AMBIGUOUS_ACTION_AS_PASS",
       "root_cause": "AMBIGUOUS_ACTION_AS_PASS",
       "cluster_id": "fp-cluster-001",
-      "nearest_gold_event_id": "W5-E002"
+      "nearest_gold_event_id": "W5-E002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0008",
@@ -12473,7 +12739,11 @@
       "semantic_label": "AMBIGUOUS_ACTION_AS_PASS",
       "root_cause": "AMBIGUOUS_ACTION_AS_PASS",
       "cluster_id": "fp-cluster-001",
-      "nearest_gold_event_id": "W5-E002"
+      "nearest_gold_event_id": "W5-E002",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0009",
@@ -12483,7 +12753,10 @@
       "semantic_label": "CONTROL_AS_PASS",
       "root_cause": "CONTROL_AS_PASS",
       "cluster_id": "fp-cluster-002",
-      "nearest_gold_event_id": "W5-E003"
+      "nearest_gold_event_id": "W5-E003",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0010",
@@ -12493,7 +12766,11 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-003",
-      "nearest_gold_event_id": "W5-S003"
+      "nearest_gold_event_id": "W5-S003",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0011",
@@ -12501,9 +12778,12 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1812.4,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-004",
-      "nearest_gold_event_id": "W5-E005"
+      "nearest_gold_event_id": "W5-E005",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0014",
@@ -12511,9 +12791,14 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1819.642,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-005",
-      "nearest_gold_event_id": "W5-E008"
+      "nearest_gold_event_id": "W5-E008",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0015",
@@ -12521,9 +12806,14 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1819.775,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-005",
-      "nearest_gold_event_id": "W5-E008"
+      "nearest_gold_event_id": "W5-E008",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0016",
@@ -12531,9 +12821,14 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1819.975,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-005",
-      "nearest_gold_event_id": "W5-E008"
+      "nearest_gold_event_id": "W5-E008",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0017",
@@ -12541,9 +12836,14 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1820.676,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-005",
-      "nearest_gold_event_id": "W5-E008"
+      "nearest_gold_event_id": "W5-E008",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0021",
@@ -12551,9 +12851,13 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1830.821,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-006",
-      "nearest_gold_event_id": "W5-E011"
+      "nearest_gold_event_id": "W5-E011",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0023",
@@ -12563,7 +12867,12 @@
       "semantic_label": "INTERVENTION_AS_PASS",
       "root_cause": "INTERVENTION_AS_PASS",
       "cluster_id": "fp-cluster-007",
-      "nearest_gold_event_id": "W5-E012"
+      "nearest_gold_event_id": "W5-E012",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0024",
@@ -12573,7 +12882,12 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-007",
-      "nearest_gold_event_id": "W5-S004"
+      "nearest_gold_event_id": "W5-S004",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0025",
@@ -12583,7 +12897,11 @@
       "semantic_label": "SHOT_AS_PASS",
       "root_cause": "SHOT_AS_PASS",
       "cluster_id": "fp-cluster-007",
-      "nearest_gold_event_id": "W5-S004"
+      "nearest_gold_event_id": "W5-S004",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0039",
@@ -12591,9 +12909,12 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1942.377,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-008",
-      "nearest_gold_event_id": "W6-E009"
+      "nearest_gold_event_id": "W6-E009",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0040",
@@ -12601,9 +12922,13 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1956.559,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-009",
-      "nearest_gold_event_id": "W6-E013"
+      "nearest_gold_event_id": "W6-E013",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0042",
@@ -12611,9 +12936,12 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1958.227,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-010",
-      "nearest_gold_event_id": "W6-E013"
+      "nearest_gold_event_id": "W6-E013",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0043",
@@ -12623,7 +12951,11 @@
       "semantic_label": "CONTROL_AS_PASS",
       "root_cause": "CONTROL_AS_PASS",
       "cluster_id": "fp-cluster-011",
-      "nearest_gold_event_id": "W6-E015"
+      "nearest_gold_event_id": "W6-E015",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0045",
@@ -12631,9 +12963,14 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1964.501,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-012",
-      "nearest_gold_event_id": "W6-E017"
+      "nearest_gold_event_id": "W6-E017",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT",
+        "CONTESTED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0046",
@@ -12641,9 +12978,13 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1964.634,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-012",
-      "nearest_gold_event_id": "W6-E017"
+      "nearest_gold_event_id": "W6-E017",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0047",
@@ -12651,9 +12992,13 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1964.734,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-012",
-      "nearest_gold_event_id": "W6-E017"
+      "nearest_gold_event_id": "W6-E017",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0048",
@@ -12661,9 +13006,13 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1967.571,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-013",
-      "nearest_gold_event_id": "W6-E018"
+      "nearest_gold_event_id": "W6-E018",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0049",
@@ -12671,9 +13020,13 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1968.172,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "REPEATED_CANDIDATE_CLUSTER",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-013",
-      "nearest_gold_event_id": "W6-E018"
+      "nearest_gold_event_id": "W6-E018",
+      "diagnostic_signals": [
+        "FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER",
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     },
     {
       "candidate_ref": "5e62625e:pass-0050",
@@ -12681,9 +13034,12 @@
       "source_match_id": "5e62625e",
       "merged_release_time_sec": 1978.016,
       "semantic_label": "UNMATCHED_PASS_CANDIDATE",
-      "root_cause": "CONTINUED_CONTROL_EVIDENCE",
+      "root_cause": "UNEXPLAINED_FALSE_POSITIVE",
       "cluster_id": "fp-cluster-014",
-      "nearest_gold_event_id": "W6-E018"
+      "nearest_gold_event_id": "W6-E018",
+      "diagnostic_signals": [
+        "CONTROLLED_FRAMES_PRESENT"
+      ]
     }
   ],
   "false_positive_clusters": [
@@ -12709,12 +13065,55 @@
         "pass-0007",
         "pass-0008"
       ],
+      "timestamps_sec": [
+        1785.137,
+        1786.071,
+        1786.171,
+        1786.271,
+        1786.772,
+        1787.339
+      ],
       "labels": {
         "AMBIGUOUS_ACTION_AS_PASS": 3,
         "SHOT_AS_PASS": 3
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 6,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0002",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0003",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0004",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0005",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0007",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0008",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B05"
+        }
       ]
     },
     {
@@ -12729,11 +13128,24 @@
       "candidate_ids": [
         "pass-0009"
       ],
+      "timestamps_sec": [
+        1788.374
+      ],
       "labels": {
         "CONTROL_AS_PASS": 1
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0009",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "A06"
+        }
       ]
     },
     {
@@ -12748,11 +13160,24 @@
       "candidate_ids": [
         "pass-0010"
       ],
+      "timestamps_sec": [
+        1791.144
+      ],
       "labels": {
         "SHOT_AS_PASS": 1
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0010",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "B02"
+        }
       ]
     },
     {
@@ -12767,11 +13192,24 @@
       "candidate_ids": [
         "pass-0011"
       ],
+      "timestamps_sec": [
+        1812.4
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0011",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "B04"
+        }
       ]
     },
     {
@@ -12792,11 +13230,42 @@
         "pass-0016",
         "pass-0017"
       ],
+      "timestamps_sec": [
+        1819.642,
+        1819.775,
+        1819.975,
+        1820.676
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 4
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 4,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0014",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0015",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0016",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0017",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "A07"
+        }
       ]
     },
     {
@@ -12811,11 +13280,24 @@
       "candidate_ids": [
         "pass-0021"
       ],
+      "timestamps_sec": [
+        1830.821
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0021",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B03"
+        }
       ]
     },
     {
@@ -12834,12 +13316,37 @@
         "pass-0024",
         "pass-0025"
       ],
+      "timestamps_sec": [
+        1831.955,
+        1832.789,
+        1832.99
+      ],
       "labels": {
         "INTERVENTION_AS_PASS": 1,
         "SHOT_AS_PASS": 2
       },
       "window_ids": [
         "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0023",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A03"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0024",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "B05"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0025",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "B02"
+        }
       ]
     },
     {
@@ -12854,11 +13361,24 @@
       "candidate_ids": [
         "pass-0039"
       ],
+      "timestamps_sec": [
+        1942.377
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0039",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A11"
+        }
       ]
     },
     {
@@ -12873,11 +13393,24 @@
       "candidate_ids": [
         "pass-0040"
       ],
+      "timestamps_sec": [
+        1956.559
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0040",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "A05"
+        }
       ]
     },
     {
@@ -12892,11 +13425,24 @@
       "candidate_ids": [
         "pass-0042"
       ],
+      "timestamps_sec": [
+        1958.227
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0042",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B13"
+        }
       ]
     },
     {
@@ -12911,11 +13457,24 @@
       "candidate_ids": [
         "pass-0043"
       ],
+      "timestamps_sec": [
+        1960.897
+      ],
       "labels": {
         "CONTROL_AS_PASS": 1
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0043",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "A03"
+        }
       ]
     },
     {
@@ -12934,11 +13493,36 @@
         "pass-0046",
         "pass-0047"
       ],
+      "timestamps_sec": [
+        1964.501,
+        1964.634,
+        1964.734
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 3
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0045",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B03"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0046",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0047",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A04"
+        }
       ]
     },
     {
@@ -12955,11 +13539,30 @@
         "pass-0048",
         "pass-0049"
       ],
+      "timestamps_sec": [
+        1967.571,
+        1968.172
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 2
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 2,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0048",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B13"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0049",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "A09"
+        }
       ]
     },
     {
@@ -12974,11 +13577,24 @@
       "candidate_ids": [
         "pass-0050"
       ],
+      "timestamps_sec": [
+        1978.016
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0050",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B13"
+        }
       ]
     },
     {
@@ -12993,11 +13609,24 @@
       "candidate_ids": [
         "pass-0025"
       ],
+      "timestamps_sec": [
+        1270.815
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0025",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A06"
+        }
       ]
     },
     {
@@ -13014,11 +13643,30 @@
         "pass-0031",
         "pass-0032"
       ],
+      "timestamps_sec": [
+        1314.124,
+        1314.625
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 2
       },
       "window_ids": [
         "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 2,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0031",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0032",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "B12"
+        }
       ]
     },
     {
@@ -13033,11 +13681,24 @@
       "candidate_ids": [
         "pass-0034"
       ],
+      "timestamps_sec": [
+        1324.502
+      ],
       "labels": {
         "INTERVENTION_AS_PASS": 1
       },
       "window_ids": [
         "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0034",
+          "source_stable_player_id": "B12",
+          "target_stable_player_id": "A08"
+        }
       ]
     },
     {
@@ -13052,11 +13713,24 @@
       "candidate_ids": [
         "pass-0035"
       ],
+      "timestamps_sec": [
+        1325.87
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0035",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A04"
+        }
       ]
     },
     {
@@ -13071,11 +13745,24 @@
       "candidate_ids": [
         "pass-0039"
       ],
+      "timestamps_sec": [
+        1330.007
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0039",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "B08"
+        }
       ]
     },
     {
@@ -13094,11 +13781,36 @@
         "pass-0041",
         "pass-0042"
       ],
+      "timestamps_sec": [
+        1335.679,
+        1335.98,
+        1336.28
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 3
       },
       "window_ids": [
         "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0040",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "A07"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0041",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "A03"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0042",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "A09"
+        }
       ]
     },
     {
@@ -13113,11 +13825,24 @@
       "candidate_ids": [
         "pass-0055"
       ],
+      "timestamps_sec": [
+        1351.529
+      ],
       "labels": {
         "CONTEST_AS_PASS": 1
       },
       "window_ids": [
         "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0055",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "B02"
+        }
       ]
     },
     {
@@ -13132,11 +13857,24 @@
       "candidate_ids": [
         "pass-0065"
       ],
+      "timestamps_sec": [
+        1360.704
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0065",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "A02"
+        }
       ]
     },
     {
@@ -13151,11 +13889,24 @@
       "candidate_ids": [
         "pass-0068"
       ],
+      "timestamps_sec": [
+        1365.109
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0068",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B07"
+        }
       ]
     },
     {
@@ -13170,11 +13921,24 @@
       "candidate_ids": [
         "pass-0076"
       ],
+      "timestamps_sec": [
+        1416.594
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0076",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A01"
+        }
       ]
     },
     {
@@ -13189,11 +13953,24 @@
       "candidate_ids": [
         "pass-0079"
       ],
+      "timestamps_sec": [
+        1421.565
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0079",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A10"
+        }
       ]
     },
     {
@@ -13208,11 +13985,24 @@
       "candidate_ids": [
         "pass-0002"
       ],
+      "timestamps_sec": [
+        10.511
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0002",
+          "source_stable_player_id": "B06",
+          "target_stable_player_id": "A04"
+        }
       ]
     },
     {
@@ -13227,11 +14017,24 @@
       "candidate_ids": [
         "pass-0004"
       ],
+      "timestamps_sec": [
+        12.279
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0004",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B01"
+        }
       ]
     },
     {
@@ -13246,11 +14049,24 @@
       "candidate_ids": [
         "pass-0005"
       ],
+      "timestamps_sec": [
+        13.814
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0005",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A05"
+        }
       ]
     },
     {
@@ -13265,11 +14081,24 @@
       "candidate_ids": [
         "pass-0007"
       ],
+      "timestamps_sec": [
+        15.516
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0007",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "B04"
+        }
       ]
     },
     {
@@ -13284,11 +14113,24 @@
       "candidate_ids": [
         "pass-0008"
       ],
+      "timestamps_sec": [
+        16.85
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0008",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B08"
+        }
       ]
     },
     {
@@ -13303,11 +14145,24 @@
       "candidate_ids": [
         "pass-0010"
       ],
+      "timestamps_sec": [
+        21.955
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0010",
+          "source_stable_player_id": "B06",
+          "target_stable_player_id": "B05"
+        }
       ]
     },
     {
@@ -13322,11 +14177,24 @@
       "candidate_ids": [
         "pass-0019"
       ],
+      "timestamps_sec": [
+        31.798
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0019",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "A01"
+        }
       ]
     },
     {
@@ -13341,11 +14209,24 @@
       "candidate_ids": [
         "pass-0021"
       ],
+      "timestamps_sec": [
+        43.477
+      ],
       "labels": {
         "SHOT_AS_PASS": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0021",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "B02"
+        }
       ]
     },
     {
@@ -13366,11 +14247,42 @@
         "pass-0025",
         "pass-0026"
       ],
+      "timestamps_sec": [
+        45.512,
+        46.413,
+        46.88,
+        47.648
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 4
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 4,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0023",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "B03"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0024",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B01"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0025",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0026",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "B03"
+        }
       ]
     },
     {
@@ -13387,11 +14299,30 @@
         "pass-0030",
         "pass-0031"
       ],
+      "timestamps_sec": [
+        63.163,
+        63.63
+      ],
       "labels": {
         "INTERVENTION_AS_PASS": 2
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 2,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0030",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0031",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B10"
+        }
       ]
     },
     {
@@ -13406,11 +14337,24 @@
       "candidate_ids": [
         "pass-0032"
       ],
+      "timestamps_sec": [
+        67.234
+      ],
       "labels": {
         "CONTEST_AS_PASS": 1
       },
       "window_ids": [
         "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0032",
+          "source_stable_player_id": "B10",
+          "target_stable_player_id": "A06"
+        }
       ]
     },
     {
@@ -13425,11 +14369,24 @@
       "candidate_ids": [
         "pass-0173"
       ],
+      "timestamps_sec": [
+        559.726
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0173",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "B07"
+        }
       ]
     },
     {
@@ -13448,11 +14405,36 @@
         "pass-0178",
         "pass-0179"
       ],
+      "timestamps_sec": [
+        563.33,
+        563.697,
+        564.131
+      ],
       "labels": {
         "INTERVENTION_AS_PASS": 3
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0177",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0178",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A01"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0179",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "B04"
+        }
       ]
     },
     {
@@ -13467,11 +14449,24 @@
       "candidate_ids": [
         "pass-0185"
       ],
+      "timestamps_sec": [
+        588.889
+      ],
       "labels": {
         "SHOT_AS_PASS": 1
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0185",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B02"
+        }
       ]
     },
     {
@@ -13486,11 +14481,24 @@
       "candidate_ids": [
         "pass-0186"
       ],
+      "timestamps_sec": [
+        590.591
+      ],
       "labels": {
         "AMBIGUOUS_ACTION_AS_PASS": 1
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0186",
+          "source_stable_player_id": "B02",
+          "target_stable_player_id": "A03"
+        }
       ]
     },
     {
@@ -13509,12 +14517,37 @@
         "pass-0188",
         "pass-0189"
       ],
+      "timestamps_sec": [
+        593.26,
+        593.694,
+        594.595
+      ],
       "labels": {
         "INTERVENTION_AS_PASS": 1,
         "SHOT_AS_PASS": 2
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0187",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0188",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0189",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "A03"
+        }
       ]
     },
     {
@@ -13529,11 +14562,24 @@
       "candidate_ids": [
         "pass-0190"
       ],
+      "timestamps_sec": [
+        607.674
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0190",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "B05"
+        }
       ]
     },
     {
@@ -13548,14 +14594,2291 @@
       "candidate_ids": [
         "pass-0191"
       ],
+      "timestamps_sec": [
+        611.078
+      ],
       "labels": {
         "UNMATCHED_PASS_CANDIDATE": 1
       },
       "window_ids": [
         "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0191",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "B04"
+        }
       ]
     }
   ],
+  "all_candidate_clusters": [
+    {
+      "cluster_id": "candidate-cluster-001",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1785.137,
+      "end_time_sec": 1787.339,
+      "size": 6,
+      "candidate_refs": [
+        "5e62625e:pass-0002",
+        "5e62625e:pass-0003",
+        "5e62625e:pass-0004",
+        "5e62625e:pass-0005",
+        "5e62625e:pass-0007",
+        "5e62625e:pass-0008"
+      ],
+      "candidate_ids": [
+        "pass-0002",
+        "pass-0003",
+        "pass-0004",
+        "pass-0005",
+        "pass-0007",
+        "pass-0008"
+      ],
+      "timestamps_sec": [
+        1785.137,
+        1786.071,
+        1786.171,
+        1786.271,
+        1786.772,
+        1787.339
+      ],
+      "labels": {
+        "AMBIGUOUS_ACTION_AS_PASS": 3,
+        "SHOT_AS_PASS": 3
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 6,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0002",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0003",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0004",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0005",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0007",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0008",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B05"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-002",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1788.374,
+      "end_time_sec": 1788.374,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0009"
+      ],
+      "candidate_ids": [
+        "pass-0009"
+      ],
+      "timestamps_sec": [
+        1788.374
+      ],
+      "labels": {
+        "CONTROL_AS_PASS": 1
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0009",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "A06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-003",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1791.144,
+      "end_time_sec": 1791.144,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0010"
+      ],
+      "candidate_ids": [
+        "pass-0010"
+      ],
+      "timestamps_sec": [
+        1791.144
+      ],
+      "labels": {
+        "SHOT_AS_PASS": 1
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0010",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "B02"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-004",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1812.4,
+      "end_time_sec": 1812.4,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0011"
+      ],
+      "candidate_ids": [
+        "pass-0011"
+      ],
+      "timestamps_sec": [
+        1812.4
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0011",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "B04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-005",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1815.137,
+      "end_time_sec": 1815.137,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0012"
+      ],
+      "candidate_ids": [
+        "pass-0012"
+      ],
+      "timestamps_sec": [
+        1815.137
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0012",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-006",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1818.841,
+      "end_time_sec": 1820.676,
+      "size": 5,
+      "candidate_refs": [
+        "5e62625e:pass-0013",
+        "5e62625e:pass-0014",
+        "5e62625e:pass-0015",
+        "5e62625e:pass-0016",
+        "5e62625e:pass-0017"
+      ],
+      "candidate_ids": [
+        "pass-0013",
+        "pass-0014",
+        "pass-0015",
+        "pass-0016",
+        "pass-0017"
+      ],
+      "timestamps_sec": [
+        1818.841,
+        1819.642,
+        1819.775,
+        1819.975,
+        1820.676
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 4
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 4,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0013",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B01"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0014",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0015",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0016",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0017",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "A07"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-007",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1826.215,
+      "end_time_sec": 1826.215,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0020"
+      ],
+      "candidate_ids": [
+        "pass-0020"
+      ],
+      "timestamps_sec": [
+        1826.215
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0020",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "A04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-008",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1830.821,
+      "end_time_sec": 1832.99,
+      "size": 5,
+      "candidate_refs": [
+        "5e62625e:pass-0021",
+        "5e62625e:pass-0022",
+        "5e62625e:pass-0023",
+        "5e62625e:pass-0024",
+        "5e62625e:pass-0025"
+      ],
+      "candidate_ids": [
+        "pass-0021",
+        "pass-0022",
+        "pass-0023",
+        "pass-0024",
+        "pass-0025"
+      ],
+      "timestamps_sec": [
+        1830.821,
+        1831.054,
+        1831.955,
+        1832.789,
+        1832.99
+      ],
+      "labels": {
+        "INTERVENTION_AS_PASS": 1,
+        "SHOT_AS_PASS": 2,
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W5"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 4,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0021",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B03"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0022",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B01"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0023",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A03"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0024",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "B05"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0025",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "B02"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-009",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1942.377,
+      "end_time_sec": 1942.377,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0039"
+      ],
+      "candidate_ids": [
+        "pass-0039"
+      ],
+      "timestamps_sec": [
+        1942.377
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0039",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A11"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-010",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1956.559,
+      "end_time_sec": 1956.559,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0040"
+      ],
+      "candidate_ids": [
+        "pass-0040"
+      ],
+      "timestamps_sec": [
+        1956.559
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0040",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "A05"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-011",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1957.96,
+      "end_time_sec": 1958.227,
+      "size": 2,
+      "candidate_refs": [
+        "5e62625e:pass-0041",
+        "5e62625e:pass-0042"
+      ],
+      "candidate_ids": [
+        "pass-0041",
+        "pass-0042"
+      ],
+      "timestamps_sec": [
+        1957.96,
+        1958.227
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 1,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0041",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "B03"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0042",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B13"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-012",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1960.897,
+      "end_time_sec": 1960.897,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0043"
+      ],
+      "candidate_ids": [
+        "pass-0043"
+      ],
+      "timestamps_sec": [
+        1960.897
+      ],
+      "labels": {
+        "CONTROL_AS_PASS": 1
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0043",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "A03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-013",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1964.501,
+      "end_time_sec": 1964.734,
+      "size": 3,
+      "candidate_refs": [
+        "5e62625e:pass-0045",
+        "5e62625e:pass-0046",
+        "5e62625e:pass-0047"
+      ],
+      "candidate_ids": [
+        "pass-0045",
+        "pass-0046",
+        "pass-0047"
+      ],
+      "timestamps_sec": [
+        1964.501,
+        1964.634,
+        1964.734
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 3
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0045",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "B03"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0046",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0047",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-014",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1967.571,
+      "end_time_sec": 1968.172,
+      "size": 2,
+      "candidate_refs": [
+        "5e62625e:pass-0048",
+        "5e62625e:pass-0049"
+      ],
+      "candidate_ids": [
+        "pass-0048",
+        "pass-0049"
+      ],
+      "timestamps_sec": [
+        1967.571,
+        1968.172
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 2
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 2,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0048",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B13"
+        },
+        {
+          "candidate_ref": "5e62625e:pass-0049",
+          "source_stable_player_id": "B13",
+          "target_stable_player_id": "A09"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-015",
+      "source_match_id": "5e62625e",
+      "start_time_sec": 1978.016,
+      "end_time_sec": 1978.016,
+      "size": 1,
+      "candidate_refs": [
+        "5e62625e:pass-0050"
+      ],
+      "candidate_ids": [
+        "pass-0050"
+      ],
+      "timestamps_sec": [
+        1978.016
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W6"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "5e62625e:pass-0050",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B13"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-016",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1270.815,
+      "end_time_sec": 1270.815,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0025"
+      ],
+      "candidate_ids": [
+        "pass-0025"
+      ],
+      "timestamps_sec": [
+        1270.815
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0025",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-017",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1279.89,
+      "end_time_sec": 1279.89,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0027"
+      ],
+      "candidate_ids": [
+        "pass-0027"
+      ],
+      "timestamps_sec": [
+        1279.89
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0027",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "A08"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-018",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1293.737,
+      "end_time_sec": 1293.737,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0028"
+      ],
+      "candidate_ids": [
+        "pass-0028"
+      ],
+      "timestamps_sec": [
+        1293.737
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0028",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "A06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-019",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1314.124,
+      "end_time_sec": 1314.625,
+      "size": 2,
+      "candidate_refs": [
+        "6d8fc20c:pass-0031",
+        "6d8fc20c:pass-0032"
+      ],
+      "candidate_ids": [
+        "pass-0031",
+        "pass-0032"
+      ],
+      "timestamps_sec": [
+        1314.124,
+        1314.625
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 2
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 2,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0031",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0032",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "B12"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-020",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1324.502,
+      "end_time_sec": 1324.502,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0034"
+      ],
+      "candidate_ids": [
+        "pass-0034"
+      ],
+      "timestamps_sec": [
+        1324.502
+      ],
+      "labels": {
+        "INTERVENTION_AS_PASS": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0034",
+          "source_stable_player_id": "B12",
+          "target_stable_player_id": "A08"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-021",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1325.87,
+      "end_time_sec": 1325.87,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0035"
+      ],
+      "candidate_ids": [
+        "pass-0035"
+      ],
+      "timestamps_sec": [
+        1325.87
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0035",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-022",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1327.238,
+      "end_time_sec": 1327.238,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0036"
+      ],
+      "candidate_ids": [
+        "pass-0036"
+      ],
+      "timestamps_sec": [
+        1327.238
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0036",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "A06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-023",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1330.007,
+      "end_time_sec": 1330.007,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0039"
+      ],
+      "candidate_ids": [
+        "pass-0039"
+      ],
+      "timestamps_sec": [
+        1330.007
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0039",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "B08"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-024",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1335.679,
+      "end_time_sec": 1336.28,
+      "size": 3,
+      "candidate_refs": [
+        "6d8fc20c:pass-0040",
+        "6d8fc20c:pass-0041",
+        "6d8fc20c:pass-0042"
+      ],
+      "candidate_ids": [
+        "pass-0040",
+        "pass-0041",
+        "pass-0042"
+      ],
+      "timestamps_sec": [
+        1335.679,
+        1335.98,
+        1336.28
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 3
+      },
+      "window_ids": [
+        "W3"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0040",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "A07"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0041",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "A03"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0042",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "A09"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-025",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1351.529,
+      "end_time_sec": 1351.529,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0055"
+      ],
+      "candidate_ids": [
+        "pass-0055"
+      ],
+      "timestamps_sec": [
+        1351.529
+      ],
+      "labels": {
+        "CONTEST_AS_PASS": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0055",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "B02"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-026",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1352.93,
+      "end_time_sec": 1353.364,
+      "size": 2,
+      "candidate_refs": [
+        "6d8fc20c:pass-0056",
+        "6d8fc20c:pass-0057"
+      ],
+      "candidate_ids": [
+        "pass-0056",
+        "pass-0057"
+      ],
+      "timestamps_sec": [
+        1352.93,
+        1353.364
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 2
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 2,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0056",
+          "source_stable_player_id": "B02",
+          "target_stable_player_id": "A08"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0057",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A07"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-027",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1355.332,
+      "end_time_sec": 1355.599,
+      "size": 2,
+      "candidate_refs": [
+        "6d8fc20c:pass-0060",
+        "6d8fc20c:pass-0061"
+      ],
+      "candidate_ids": [
+        "pass-0060",
+        "pass-0061"
+      ],
+      "timestamps_sec": [
+        1355.332,
+        1355.599
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 2
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 2,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0060",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "B12"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0061",
+          "source_stable_player_id": "B12",
+          "target_stable_player_id": "A07"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-028",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1358.836,
+      "end_time_sec": 1358.836,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0064"
+      ],
+      "candidate_ids": [
+        "pass-0064"
+      ],
+      "timestamps_sec": [
+        1358.836
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0064",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B07"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-029",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1360.704,
+      "end_time_sec": 1360.905,
+      "size": 2,
+      "candidate_refs": [
+        "6d8fc20c:pass-0065",
+        "6d8fc20c:pass-0066"
+      ],
+      "candidate_ids": [
+        "pass-0065",
+        "pass-0066"
+      ],
+      "timestamps_sec": [
+        1360.704,
+        1360.905
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 1,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0065",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "A02"
+        },
+        {
+          "candidate_ref": "6d8fc20c:pass-0066",
+          "source_stable_player_id": "A02",
+          "target_stable_player_id": "B02"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-030",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1362.74,
+      "end_time_sec": 1362.74,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0067"
+      ],
+      "candidate_ids": [
+        "pass-0067"
+      ],
+      "timestamps_sec": [
+        1362.74
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0067",
+          "source_stable_player_id": "B02",
+          "target_stable_player_id": "B03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-031",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1365.109,
+      "end_time_sec": 1365.109,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0068"
+      ],
+      "candidate_ids": [
+        "pass-0068"
+      ],
+      "timestamps_sec": [
+        1365.109
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0068",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B07"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-032",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1366.11,
+      "end_time_sec": 1366.11,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0071"
+      ],
+      "candidate_ids": [
+        "pass-0071"
+      ],
+      "timestamps_sec": [
+        1366.11
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0071",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "B12"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-033",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1416.594,
+      "end_time_sec": 1416.594,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0076"
+      ],
+      "candidate_ids": [
+        "pass-0076"
+      ],
+      "timestamps_sec": [
+        1416.594
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0076",
+          "source_stable_player_id": "A08",
+          "target_stable_player_id": "A01"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-034",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1417.862,
+      "end_time_sec": 1417.862,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0077"
+      ],
+      "candidate_ids": [
+        "pass-0077"
+      ],
+      "timestamps_sec": [
+        1417.862
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0077",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "A08"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-035",
+      "source_match_id": "6d8fc20c",
+      "start_time_sec": 1421.565,
+      "end_time_sec": 1421.565,
+      "size": 1,
+      "candidate_refs": [
+        "6d8fc20c:pass-0079"
+      ],
+      "candidate_ids": [
+        "pass-0079"
+      ],
+      "timestamps_sec": [
+        1421.565
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W4"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "6d8fc20c:pass-0079",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A10"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-036",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 3.37,
+      "end_time_sec": 3.37,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0001"
+      ],
+      "candidate_ids": [
+        "pass-0001"
+      ],
+      "timestamps_sec": [
+        3.37
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0001",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-037",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 10.511,
+      "end_time_sec": 10.711,
+      "size": 2,
+      "candidate_refs": [
+        "9c7485e4:pass-0002",
+        "9c7485e4:pass-0003"
+      ],
+      "candidate_ids": [
+        "pass-0002",
+        "pass-0003"
+      ],
+      "timestamps_sec": [
+        10.511,
+        10.711
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 1,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0002",
+          "source_stable_player_id": "B06",
+          "target_stable_player_id": "A04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0003",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-038",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 12.279,
+      "end_time_sec": 12.279,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0004"
+      ],
+      "candidate_ids": [
+        "pass-0004"
+      ],
+      "timestamps_sec": [
+        12.279
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0004",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B01"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-039",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 13.814,
+      "end_time_sec": 15.516,
+      "size": 3,
+      "candidate_refs": [
+        "9c7485e4:pass-0005",
+        "9c7485e4:pass-0006",
+        "9c7485e4:pass-0007"
+      ],
+      "candidate_ids": [
+        "pass-0005",
+        "pass-0006",
+        "pass-0007"
+      ],
+      "timestamps_sec": [
+        13.814,
+        14.615,
+        15.516
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 2
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 2,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0005",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0006",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "B08"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0007",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "B04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-040",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 16.85,
+      "end_time_sec": 16.85,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0008"
+      ],
+      "candidate_ids": [
+        "pass-0008"
+      ],
+      "timestamps_sec": [
+        16.85
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0008",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B08"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-041",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 18.318,
+      "end_time_sec": 18.318,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0009"
+      ],
+      "candidate_ids": [
+        "pass-0009"
+      ],
+      "timestamps_sec": [
+        18.318
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0009",
+          "source_stable_player_id": "B08",
+          "target_stable_player_id": "B06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-042",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 21.955,
+      "end_time_sec": 21.955,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0010"
+      ],
+      "candidate_ids": [
+        "pass-0010"
+      ],
+      "timestamps_sec": [
+        21.955
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0010",
+          "source_stable_player_id": "B06",
+          "target_stable_player_id": "B05"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-043",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 25.792,
+      "end_time_sec": 26.159,
+      "size": 2,
+      "candidate_refs": [
+        "9c7485e4:pass-0013",
+        "9c7485e4:pass-0014"
+      ],
+      "candidate_ids": [
+        "pass-0013",
+        "pass-0014"
+      ],
+      "timestamps_sec": [
+        25.792,
+        26.159
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 2
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 2,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0013",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0014",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-044",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 27.16,
+      "end_time_sec": 27.794,
+      "size": 2,
+      "candidate_refs": [
+        "9c7485e4:pass-0015",
+        "9c7485e4:pass-0016"
+      ],
+      "candidate_ids": [
+        "pass-0015",
+        "pass-0016"
+      ],
+      "timestamps_sec": [
+        27.16,
+        27.794
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 2
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 2,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0015",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0016",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-045",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 30.931,
+      "end_time_sec": 31.798,
+      "size": 2,
+      "candidate_refs": [
+        "9c7485e4:pass-0018",
+        "9c7485e4:pass-0019"
+      ],
+      "candidate_ids": [
+        "pass-0018",
+        "pass-0019"
+      ],
+      "timestamps_sec": [
+        30.931,
+        31.798
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 1,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0018",
+          "source_stable_player_id": "B06",
+          "target_stable_player_id": "A06"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0019",
+          "source_stable_player_id": "A06",
+          "target_stable_player_id": "A01"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-046",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 43.477,
+      "end_time_sec": 43.477,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0021"
+      ],
+      "candidate_ids": [
+        "pass-0021"
+      ],
+      "timestamps_sec": [
+        43.477
+      ],
+      "labels": {
+        "SHOT_AS_PASS": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0021",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "B02"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-047",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 45.512,
+      "end_time_sec": 47.648,
+      "size": 4,
+      "candidate_refs": [
+        "9c7485e4:pass-0023",
+        "9c7485e4:pass-0024",
+        "9c7485e4:pass-0025",
+        "9c7485e4:pass-0026"
+      ],
+      "candidate_ids": [
+        "pass-0023",
+        "pass-0024",
+        "pass-0025",
+        "pass-0026"
+      ],
+      "timestamps_sec": [
+        45.512,
+        46.413,
+        46.88,
+        47.648
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 4
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 4,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0023",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "B03"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0024",
+          "source_stable_player_id": "B03",
+          "target_stable_player_id": "B01"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0025",
+          "source_stable_player_id": "B01",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0026",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "B03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-048",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 63.163,
+      "end_time_sec": 63.63,
+      "size": 2,
+      "candidate_refs": [
+        "9c7485e4:pass-0030",
+        "9c7485e4:pass-0031"
+      ],
+      "candidate_ids": [
+        "pass-0030",
+        "pass-0031"
+      ],
+      "timestamps_sec": [
+        63.163,
+        63.63
+      ],
+      "labels": {
+        "INTERVENTION_AS_PASS": 2
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 2,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0030",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0031",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B10"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-049",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 67.234,
+      "end_time_sec": 67.234,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0032"
+      ],
+      "candidate_ids": [
+        "pass-0032"
+      ],
+      "timestamps_sec": [
+        67.234
+      ],
+      "labels": {
+        "CONTEST_AS_PASS": 1
+      },
+      "window_ids": [
+        "W1"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0032",
+          "source_stable_player_id": "B10",
+          "target_stable_player_id": "A06"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-050",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 559.726,
+      "end_time_sec": 560.227,
+      "size": 2,
+      "candidate_refs": [
+        "9c7485e4:pass-0173",
+        "9c7485e4:pass-0174"
+      ],
+      "candidate_ids": [
+        "pass-0173",
+        "pass-0174"
+      ],
+      "timestamps_sec": [
+        559.726,
+        560.227
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1,
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 1,
+      "composition": "MIXED",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0173",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "B07"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0174",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "B04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-051",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 563.33,
+      "end_time_sec": 564.131,
+      "size": 3,
+      "candidate_refs": [
+        "9c7485e4:pass-0177",
+        "9c7485e4:pass-0178",
+        "9c7485e4:pass-0179"
+      ],
+      "candidate_ids": [
+        "pass-0177",
+        "pass-0178",
+        "pass-0179"
+      ],
+      "timestamps_sec": [
+        563.33,
+        563.697,
+        564.131
+      ],
+      "labels": {
+        "INTERVENTION_AS_PASS": 3
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0177",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "A05"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0178",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A01"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0179",
+          "source_stable_player_id": "A01",
+          "target_stable_player_id": "B04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-052",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 565.165,
+      "end_time_sec": 565.165,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0180"
+      ],
+      "candidate_ids": [
+        "pass-0180"
+      ],
+      "timestamps_sec": [
+        565.165
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0180",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "B07"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-053",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 580.581,
+      "end_time_sec": 580.581,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0183"
+      ],
+      "candidate_ids": [
+        "pass-0183"
+      ],
+      "timestamps_sec": [
+        580.581
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0183",
+          "source_stable_player_id": "A07",
+          "target_stable_player_id": "A05"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-054",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 582.282,
+      "end_time_sec": 582.282,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0184"
+      ],
+      "candidate_ids": [
+        "pass-0184"
+      ],
+      "timestamps_sec": [
+        582.282
+      ],
+      "labels": {
+        "TRUE_PASS_MATCH": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 1,
+      "false_positive_count": 0,
+      "composition": "TRUE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0184",
+          "source_stable_player_id": "A05",
+          "target_stable_player_id": "A04"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-055",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 588.889,
+      "end_time_sec": 588.889,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0185"
+      ],
+      "candidate_ids": [
+        "pass-0185"
+      ],
+      "timestamps_sec": [
+        588.889
+      ],
+      "labels": {
+        "SHOT_AS_PASS": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0185",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "B02"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-056",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 590.591,
+      "end_time_sec": 590.591,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0186"
+      ],
+      "candidate_ids": [
+        "pass-0186"
+      ],
+      "timestamps_sec": [
+        590.591
+      ],
+      "labels": {
+        "AMBIGUOUS_ACTION_AS_PASS": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0186",
+          "source_stable_player_id": "B02",
+          "target_stable_player_id": "A03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-057",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 593.26,
+      "end_time_sec": 594.595,
+      "size": 3,
+      "candidate_refs": [
+        "9c7485e4:pass-0187",
+        "9c7485e4:pass-0188",
+        "9c7485e4:pass-0189"
+      ],
+      "candidate_ids": [
+        "pass-0187",
+        "pass-0188",
+        "pass-0189"
+      ],
+      "timestamps_sec": [
+        593.26,
+        593.694,
+        594.595
+      ],
+      "labels": {
+        "INTERVENTION_AS_PASS": 1,
+        "SHOT_AS_PASS": 2
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 3,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0187",
+          "source_stable_player_id": "A03",
+          "target_stable_player_id": "B04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0188",
+          "source_stable_player_id": "B04",
+          "target_stable_player_id": "A04"
+        },
+        {
+          "candidate_ref": "9c7485e4:pass-0189",
+          "source_stable_player_id": "A04",
+          "target_stable_player_id": "A03"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-058",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 607.674,
+      "end_time_sec": 607.674,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0190"
+      ],
+      "candidate_ids": [
+        "pass-0190"
+      ],
+      "timestamps_sec": [
+        607.674
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0190",
+          "source_stable_player_id": "B07",
+          "target_stable_player_id": "B05"
+        }
+      ]
+    },
+    {
+      "cluster_id": "candidate-cluster-059",
+      "source_match_id": "9c7485e4",
+      "start_time_sec": 611.078,
+      "end_time_sec": 611.078,
+      "size": 1,
+      "candidate_refs": [
+        "9c7485e4:pass-0191"
+      ],
+      "candidate_ids": [
+        "pass-0191"
+      ],
+      "timestamps_sec": [
+        611.078
+      ],
+      "labels": {
+        "UNMATCHED_PASS_CANDIDATE": 1
+      },
+      "window_ids": [
+        "W2"
+      ],
+      "true_pass_count": 0,
+      "false_positive_count": 1,
+      "composition": "FALSE_ONLY",
+      "player_identities": [
+        {
+          "candidate_ref": "9c7485e4:pass-0191",
+          "source_stable_player_id": "B05",
+          "target_stable_player_id": "B04"
+        }
+      ]
+    }
+  ],
+  "all_candidate_cluster_summary": {
+    "multi_candidate_clusters": 21,
+    "TRUE_ONLY": 4,
+    "FALSE_ONLY": 9,
+    "MIXED": 8,
+    "true_candidates_in_multi_clusters": 16,
+    "false_candidates_in_multi_clusters": 43,
+    "by_window": {
+      "W1": {
+        "multi_candidate_clusters": 7,
+        "TRUE_ONLY": 2,
+        "FALSE_ONLY": 2,
+        "MIXED": 3,
+        "true_candidates": 7,
+        "false_candidates": 10
+      },
+      "W2": {
+        "multi_candidate_clusters": 3,
+        "TRUE_ONLY": 0,
+        "FALSE_ONLY": 2,
+        "MIXED": 1,
+        "true_candidates": 1,
+        "false_candidates": 7
+      },
+      "W3": {
+        "multi_candidate_clusters": 2,
+        "TRUE_ONLY": 0,
+        "FALSE_ONLY": 2,
+        "MIXED": 0,
+        "true_candidates": 0,
+        "false_candidates": 5
+      },
+      "W4": {
+        "multi_candidate_clusters": 3,
+        "TRUE_ONLY": 2,
+        "FALSE_ONLY": 0,
+        "MIXED": 1,
+        "true_candidates": 5,
+        "false_candidates": 1
+      },
+      "W5": {
+        "multi_candidate_clusters": 3,
+        "TRUE_ONLY": 0,
+        "FALSE_ONLY": 1,
+        "MIXED": 2,
+        "true_candidates": 2,
+        "false_candidates": 14
+      },
+      "W6": {
+        "multi_candidate_clusters": 3,
+        "TRUE_ONLY": 0,
+        "FALSE_ONLY": 2,
+        "MIXED": 1,
+        "true_candidates": 1,
+        "false_candidates": 6
+      }
+    }
+  },
   "team_bias_decomposition": {
     "missed_by_gold_team": {
       "Corgi": 9,
@@ -13743,11 +17066,11 @@
   },
   "candidate_v3_hypotheses": [
     {
-      "name": "Collapse repeated candidate pairs around one short contact cluster",
-      "physical_interpretation": "Several generated source→target pairs can describe one rebound, shot or fragmented contact action.",
-      "runtime_evidence": "Existing pass candidate timestamps and consecutive-contact identifiers only.",
-      "why_it_should_remove_false_positives": "The audit finds repeated false-positive candidates within one documented diagnostic time cluster.",
-      "genuine_pass_risk": "Fast one-touch passing sequences can also be dense; preserve distinct player-to-player releases.",
+      "name": "Specify an identity-aware consolidation rule before any controlled shadow experiment",
+      "physical_interpretation": "Some false-only clusters may be duplicate representations of one physical chain, but rapid genuine passes are also temporally dense.",
+      "runtime_evidence": "Existing ordered source/target contact IDs, stable-player identities and candidate timestamps; no gold label would be available at runtime.",
+      "why_it_should_remove_false_positives": "Observational only: false-only clusters exist, but a generic time-gap consolidation is unsafe because other dense clusters contain genuine passes.",
+      "genuine_pass_risk": "High: #171's generic dense-contact/scramble suppression removed true passes together with false positives.",
       "supporting_windows": [
         "W1",
         "W2",
@@ -13755,32 +17078,14 @@
         "W5",
         "W6"
       ],
-      "contradicting_windows": [
-        "W4"
-      ],
-      "measured_support": "35 false-positive candidates occur in multi-candidate diagnostic clusters; true clustered count not inferred as football truth (0)."
-    },
-    {
-      "name": "Trace same-player skip chains to a later distinct receiver before discarding a release",
-      "physical_interpretation": "The consecutive-contact builder can observe several contacts under one stable identity while a gold pass is anchored in the same sequence.",
-      "runtime_evidence": "Existing ordered contact IDs, stable-player IDs, skipped-pair reason and release trajectory evidence.",
-      "why_it_should_remove_false_positives": "This is a recall hypothesis rather than a false-positive filter: it targets a dominant documented construction loss without changing contact detection.",
-      "genuine_pass_risk": "Most same-player chains are continued control; any shadow rule must require a later distinct receiver and visible free-flight evidence.",
-      "supporting_windows": [
-        "W1",
-        "W3",
-        "W4",
-        "W6"
-      ],
-      "contradicting_windows": [
-        "W2",
-        "W5"
-      ],
-      "measured_support": "9 of 18 missed gold passes trace to a recorded same_player_consecutive_contacts skip."
+      "contradicting_windows": [],
+      "no_evidence_windows": [],
+      "measured_support": "all-candidate multi-clusters=21; FALSE_ONLY=9; MIXED=8; TRUE_ONLY=4; true candidates inside=16; false candidates inside=43.",
+      "readiness": "INSUFFICIENT_FOR_SHADOW_RULE"
     }
   ],
-  "final_conclusion": "EVIDENCE_SUFFICIENT_FOR_V3",
-  "recommended_next_experiment": "Collapse repeated candidate pairs around one short contact cluster",
+  "final_conclusion": "EVIDENCE_INCONCLUSIVE",
+  "recommended_next_experiment": null,
   "source_tree_snapshot": [
     {
       "source_match_id": "5e62625e",

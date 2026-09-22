@@ -8,6 +8,8 @@ from pathlib import Path
 from evaluation.open_play_pass_evidence_audit import (
     _completion_bias,
     _distribution,
+    _all_candidate_cluster_summary,
+    _all_candidate_clusters,
     _false_positive_clusters,
     _missed_gold_pass_root_causes,
     _oracle_diagnostics,
@@ -106,13 +108,34 @@ class OpenPlayPassEvidenceAuditTests(unittest.TestCase):
         self.assertEqual(result[0]["root_cause"], "EXCLUDED_BY_RELEASE_POLICY")
         self.assertEqual(result[0]["rejection_reasons"], {"excluded": ["ball_path_too_short"]})
 
-    def test_miss_root_cause_traces_same_player_skip(self) -> None:
+    def test_nearby_same_player_skip_is_diagnostic_not_causal_without_chain(self) -> None:
         gold = _gold("miss", 5.0)
         result = _missed_gold_pass_root_causes(
             [gold],
             {"event": [{"event_id": "contact", "event_type": "ball_contact", "merged_start_time_sec": 5.0, "review_status": "accepted"}]},
             [],
             [{"source_time_sec": 5.0, "skip_reason": "same_player_consecutive_contacts"}],
+        )
+        self.assertEqual(result[0]["root_cause"], "UNKNOWN")
+        self.assertEqual(result[0]["diagnostic_signals"], ["NEARBY_SAME_PLAYER_SKIP", "SINGLE_NEARBY_CONTACT"])
+
+    def test_structural_same_player_skip_requires_later_distinct_receiver_context(self) -> None:
+        gold = _gold("miss", 5.0)
+        events = [
+            {"event_id": "source", "event_type": "ball_contact", "merged_start_time_sec": 5.0, "stable_player_id": "A01"},
+            {"event_id": "same-player", "event_type": "ball_contact", "merged_start_time_sec": 5.2, "stable_player_id": "A01"},
+            {"event_id": "receiver", "event_type": "ball_contact", "merged_start_time_sec": 5.3, "stable_player_id": "B02"},
+        ]
+        result = _missed_gold_pass_root_causes(
+            [gold],
+            {"event": events},
+            [],
+            [{
+                "source_event_id": "source", "target_event_id": "same-player",
+                "source_time_sec": 5.0, "target_time_sec": 5.2,
+                "source_stable_player_id": "A01", "target_stable_player_id": "A01",
+                "skip_reason": "same_player_consecutive_contacts",
+            }],
         )
         self.assertEqual(result[0]["root_cause"], "SAME_PLAYER_SKIP")
 
@@ -126,12 +149,58 @@ class OpenPlayPassEvidenceAuditTests(unittest.TestCase):
         self.assertEqual([row["size"] for row in clusters], [2, 1])
         self.assertEqual(clusters[0]["candidate_ids"], ["a", "b"])
 
+    def test_all_candidate_clusters_expose_true_false_and_mixed_composition(self) -> None:
+        rows = [
+            {"candidate_ref": "s:t1", "candidate_id": "t1", "source_match_id": "s", "merged_release_time_sec": 1.0, "evaluation_label": "TRUE_PASS_MATCH", "window_id": "W1"},
+            {"candidate_ref": "s:t2", "candidate_id": "t2", "source_match_id": "s", "merged_release_time_sec": 1.5, "evaluation_label": "TRUE_PASS_MATCH", "window_id": "W1"},
+            {"candidate_ref": "s:f1", "candidate_id": "f1", "source_match_id": "s", "merged_release_time_sec": 4.0, "evaluation_label": "UNMATCHED_PASS_CANDIDATE", "window_id": "W1"},
+            {"candidate_ref": "s:f2", "candidate_id": "f2", "source_match_id": "s", "merged_release_time_sec": 4.5, "evaluation_label": "SHOT_AS_PASS", "window_id": "W1"},
+            {"candidate_ref": "s:m1", "candidate_id": "m1", "source_match_id": "s", "merged_release_time_sec": 7.0, "evaluation_label": "TRUE_PASS_MATCH", "window_id": "W2"},
+            {"candidate_ref": "s:m2", "candidate_id": "m2", "source_match_id": "s", "merged_release_time_sec": 7.5, "evaluation_label": "UNMATCHED_PASS_CANDIDATE", "window_id": "W2"},
+        ]
+        clusters = _all_candidate_clusters(rows)
+        summary = _all_candidate_cluster_summary(clusters)
+        self.assertEqual([row["composition"] for row in clusters], ["TRUE_ONLY", "FALSE_ONLY", "MIXED"])
+        self.assertEqual(summary["multi_candidate_clusters"], 3)
+        self.assertEqual((summary["TRUE_ONLY"], summary["FALSE_ONLY"], summary["MIXED"]), (1, 1, 1))
+        self.assertEqual((summary["true_candidates_in_multi_clusters"], summary["false_candidates_in_multi_clusters"]), (3, 3))
+
+    def test_controlled_frames_are_diagnostic_signal_not_false_positive_cause(self) -> None:
+        candidate = _candidate("fp", 5.0)
+        report = audit_open_play_pass_evidence({"windows": [_window()], "game_state_intervals": [], "events": []}, _documents([candidate]))
+        root = report["false_positive_root_causes"][0]
+        self.assertEqual(root["root_cause"], "UNEXPLAINED_FALSE_POSITIVE")
+        self.assertIn("CONTROLLED_FRAMES_PRESENT", root["diagnostic_signals"])
+        self.assertNotEqual(root["root_cause"], "CONTINUED_CONTROL_EVIDENCE")
+
     def test_oracles_do_not_mutate_source_candidates(self) -> None:
         gold = [_gold("a", 5.0)]
         candidates = [_candidate("a", 5.0)]
         before = copy.deepcopy(candidates)
         matches = [{"candidate_source_match_id": "source", "candidate_id": "a", "expected_broad_outcome": "failed_pass", "expected_actor_team": "Verisk"}]
         _oracle_diagnostics(gold, candidates, matches, [])
+        self.assertEqual(candidates, before)
+
+    def test_oracle_outcome_correction_changes_asymmetric_completion_without_mutating_candidates(self) -> None:
+        gold = [_gold("a", 5.0, outcome="INTERCEPTED")]
+        candidates = [_candidate("a", 5.0, outcome="completed_pass")]
+        candidates[0]["source_match_id"] = "source"
+        before = copy.deepcopy(candidates)
+        matches = [{"candidate_source_match_id": "source", "candidate_id": "a", "expected_broad_outcome": "failed_pass", "expected_actor_team": "Corgi"}]
+        result = _oracle_diagnostics(gold, candidates, matches, [])
+        self.assertEqual(result["B_PERFECT_OUTCOME_ON_MATCHED_EVENTS"]["aggregate"]["completion_rate"], 0.0)
+        self.assertEqual(candidates, before)
+
+    def test_oracle_team_correction_changes_asymmetric_team_share_without_mutating_candidates(self) -> None:
+        gold = [_gold("a", 5.0, team="Verisk")]
+        candidates = [_candidate("a", 5.0, team="Corgi")]
+        candidates[0]["source_match_id"] = "source"
+        before = copy.deepcopy(candidates)
+        matches = [{"candidate_source_match_id": "source", "candidate_id": "a", "expected_broad_outcome": "completed_pass", "expected_actor_team": "Verisk"}]
+        result = _oracle_diagnostics(gold, candidates, matches, [])
+        teams = result["C_PERFECT_TEAM_ATTRIBUTION_ON_MATCHED_EVENTS"]["aggregate"]["teams"]
+        self.assertEqual(teams["Corgi"]["share"], 0.0)
+        self.assertEqual(teams["Verisk"]["share"], 1.0)
         self.assertEqual(candidates, before)
 
     def test_real_goldset_keeps_v171_primary_count(self) -> None:

@@ -3,8 +3,8 @@
 ## Executive summary
 
 This is a read-only forensic audit of regenerated v1 candidates. Gold labels are applied only after candidate generation and never enter runtime pass statistics.
-- Conclusion: **EVIDENCE_SUFFICIENT_FOR_V3**
-- Recommended next experiment: **Collapse repeated candidate pairs around one short contact cluster**
+- Conclusion: **EVIDENCE_INCONCLUSIVE**
+- Recommended next experiment: **none**
 
 ## Current error budget
 
@@ -35,20 +35,9 @@ This is a read-only forensic audit of regenerated v1 candidates. Gold labels are
 - False-positive outcomes: `{'completed_pass': 29, 'failed_pass': 38}`
 - False-positive outcomes by team: `{'Corgi': {'completed_pass': 14, 'failed_pass': 18}, 'Verisk': {'completed_pass': 15, 'failed_pass': 20}, 'unknown': {}}`
 
-## Top separating evidence
-
-| Feature | True median | All-FP median | True n | FP n |
-| --- | ---: | ---: | ---: | ---: |
-| trajectory.sampled_frames | 21.0 | 15.0 | 30 | 67 |
-| derived.free_frame_count | 15.0 | 11.0 | 30 | 67 |
-| trajectory.ball_path_distance_m | 6.1815 | 4.329 | 30 | 67 |
-| distance_m | 5.144 | 3.782 | 30 | 67 |
-| trajectory.ball_displacement_m | 5.091 | 3.85 | 30 | 67 |
-| release.source_clearance_m | 5.6015 | 4.957 | 30 | 67 |
-| receiver.min_distance_m | 0.5635 | 1.14 | 30 | 67 |
-| trajectory.mean_ball_speed_mps | 9.274 | 9.82 | 30 | 67 |
-
 ## Evidence distributions
+
+Raw medians and quantiles below are descriptive only. They are intentionally not ranked across features because their units differ (frames, metres, seconds and ratios).
 
 ### duration_sec
 
@@ -523,38 +512,41 @@ This is a read-only forensic audit of regenerated v1 candidates. Gold labels are
 | UNMATCHED_PASS_CANDIDATE | unknown | 171 | 14.97% |
 
 
-## Missed gold passes — root causes
+## Missed gold passes — conservative attribution
 
-- `W1-E005` @ 21.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}`
-- `W1-E013` @ 42.0s · **SAME_PLAYER_SKIP** · contacts `['event-0030', 'event-0031']` · pairs `[]` · rejections `{}`
-- `W2-E019` @ 615.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}`
-- `W3-E002` @ 1273.3s · **SAME_PLAYER_SKIP** · contacts `['event-0051']` · pairs `[]` · rejections `{}`
-- `W3-E014` @ 1323.3s · **SAME_PLAYER_SKIP** · contacts `['event-0072', 'event-0073', 'event-0074']` · pairs `[]` · rejections `{}`
-- `W3-E017` @ 1331.3s · **SAME_PLAYER_SKIP** · contacts `['event-0081', 'event-0082']` · pairs `[]` · rejections `{}`
-- `W4-E007` @ 1357.0s · **SAME_PLAYER_SKIP** · contacts `['event-0110', 'event-0111']` · pairs `[]` · rejections `{}`
-- `W4-E008` @ 1358.0s · **EXCLUDED_BY_RELEASE_POLICY** · contacts `['event-0111', 'event-0112', 'event-0113', 'event-0114', 'event-0115', 'event-0116']` · pairs `['pass-0062', 'pass-0063', 'pass-0064']` · rejections `{'pass-0062': ['ball_displacement_too_short', 'ball_path_too_short', 'ball_never_left_source_player', 'immediate_contested_tackle'], 'pass-0063': ['release_too_short', 'ball_displacement_too_short', 'ball_path_too_short', 'immediate_contested_tackle']}`
-- `W4-E017` @ 1413.0s · **SAME_PLAYER_SKIP** · contacts `['event-0137']` · pairs `[]` · rejections `{}`
-- `W4-E018` @ 1415.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}`
-- `W5-E006` @ 1817.0s · **SOURCE_CONTACT_PRESENT_TARGET_MISSING** · contacts `['event-0022']` · pairs `[]` · rejections `{}`
-- `W6-E001` @ 1913.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}`
-- `W6-E010` @ 1950.0s · **SAME_PLAYER_SKIP** · contacts `['event-0063']` · pairs `[]` · rejections `{}`
-- `W6-E011` @ 1954.0s · **SAME_PLAYER_SKIP** · contacts `['event-0064', 'event-0065', 'event-0066']` · pairs `[]` · rejections `{}`
-- `W6-E012` @ 1955.0s · **SAME_PLAYER_SKIP** · contacts `['event-0065', 'event-0066', 'event-0067']` · pairs `[]` · rejections `{}`
-- `W6-E016` @ 1962.0s · **EXCLUDED_BY_RELEASE_POLICY** · contacts `['event-0072', 'event-0073', 'event-0074']` · pairs `['pass-0044']` · rejections `{'pass-0044': ['ball_displacement_too_short']}`
-- `W6-E017` @ 1963.0s · **EXCLUDED_BY_RELEASE_POLICY** · contacts `['event-0072', 'event-0073', 'event-0074']` · pairs `['pass-0044']` · rejections `{'pass-0044': ['ball_displacement_too_short']}`
-- `W6-E019` @ 1986.5s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}`
+- `W1-E005` @ 21.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}` · signals `[]`
+- `W1-E013` @ 42.0s · **UNKNOWN** · contacts `['event-0030', 'event-0031']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP']`
+- `W2-E019` @ 615.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}` · signals `[]`
+- `W3-E002` @ 1273.3s · **UNKNOWN** · contacts `['event-0051']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP', 'SINGLE_NEARBY_CONTACT']`
+- `W3-E014` @ 1323.3s · **UNKNOWN** · contacts `['event-0072', 'event-0073', 'event-0074']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP', 'MULTIPLE_NEARBY_CONTACTS']`
+- `W3-E017` @ 1331.3s · **UNKNOWN** · contacts `['event-0081', 'event-0082']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP']`
+- `W4-E007` @ 1357.0s · **UNKNOWN** · contacts `['event-0110', 'event-0111']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP']`
+- `W4-E008` @ 1358.0s · **EXCLUDED_BY_RELEASE_POLICY** · contacts `['event-0111', 'event-0112', 'event-0113', 'event-0114', 'event-0115', 'event-0116']` · pairs `['pass-0062', 'pass-0063', 'pass-0064']` · rejections `{'pass-0062': ['ball_displacement_too_short', 'ball_path_too_short', 'ball_never_left_source_player', 'immediate_contested_tackle'], 'pass-0063': ['release_too_short', 'ball_displacement_too_short', 'ball_path_too_short', 'immediate_contested_tackle']}` · signals `[]`
+- `W4-E017` @ 1413.0s · **UNKNOWN** · contacts `['event-0137']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP', 'SINGLE_NEARBY_CONTACT']`
+- `W4-E018` @ 1415.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}` · signals `[]`
+- `W5-E006` @ 1817.0s · **UNKNOWN** · contacts `['event-0022']` · pairs `[]` · rejections `{}` · signals `['SINGLE_NEARBY_CONTACT']`
+- `W6-E001` @ 1913.0s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}` · signals `[]`
+- `W6-E010` @ 1950.0s · **UNKNOWN** · contacts `['event-0063']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP', 'SINGLE_NEARBY_CONTACT']`
+- `W6-E011` @ 1954.0s · **UNKNOWN** · contacts `['event-0064', 'event-0065', 'event-0066']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP', 'MULTIPLE_NEARBY_CONTACTS']`
+- `W6-E012` @ 1955.0s · **UNKNOWN** · contacts `['event-0065', 'event-0066', 'event-0067']` · pairs `[]` · rejections `{}` · signals `['NEARBY_SAME_PLAYER_SKIP', 'MULTIPLE_NEARBY_CONTACTS']`
+- `W6-E016` @ 1962.0s · **EXCLUDED_BY_RELEASE_POLICY** · contacts `['event-0072', 'event-0073', 'event-0074']` · pairs `['pass-0044']` · rejections `{'pass-0044': ['ball_displacement_too_short']}` · signals `[]`
+- `W6-E017` @ 1963.0s · **EXCLUDED_BY_RELEASE_POLICY** · contacts `['event-0072', 'event-0073', 'event-0074']` · pairs `['pass-0044']` · rejections `{'pass-0044': ['ball_displacement_too_short']}` · signals `[]`
+- `W6-E019` @ 1986.5s · **NO_SOURCE_CONTACT** · contacts `[]` · pairs `[]` · rejections `{}` · signals `[]`
 
 ## False-positive root causes
 
 - `AMBIGUOUS_ACTION_AS_PASS`: **4**
 - `CONTEST_AS_PASS`: **2**
-- `CONTINUED_CONTROL_EVIDENCE`: **23**
 - `CONTROL_AS_PASS`: **2**
 - `INTERVENTION_AS_PASS`: **8**
-- `REPEATED_CANDIDATE_CLUSTER`: **18**
 - `SHOT_AS_PASS`: **10**
+- `UNEXPLAINED_FALSE_POSITIVE`: **41**
+- Diagnostic signals below are observations, not asserted causes:
+  - `CONTESTED_FRAMES_PRESENT`: **30**
+  - `CONTROLLED_FRAMES_PRESENT`: **67**
+  - `FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER`: **35**
 
-## False-positive clusters
+## False-positive-only diagnostic clusters
 
 - Diagnostic clustering gap: **1.0s** within one physical source match.
 - False-positive candidates / clusters: **67 / 43**
@@ -570,6 +562,42 @@ This is a read-only forensic audit of regenerated v1 candidates. Gold labels are
 - `fp-cluster-035` · 9c7485e4 · 63.163–63.63s · size 2 · `['pass-0030', 'pass-0031']`
 - `fp-cluster-038` · 9c7485e4 · 563.33–564.131s · size 3 · `['pass-0177', 'pass-0178', 'pass-0179']`
 - `fp-cluster-041` · 9c7485e4 · 593.26–594.595s · size 3 · `['pass-0187', 'pass-0188', 'pass-0189']`
+
+## All-candidate cluster composition
+
+- Same documented adjacency gap: **1.0s** within one physical source match.
+- Multi-candidate clusters: **21** · TRUE_ONLY: **4** · FALSE_ONLY: **9** · MIXED: **8** · true candidates inside: **16** · false candidates inside: **43**.
+- Dense candidate clusters include genuine fast passing, so temporal density alone is not a safe consolidation rule.
+
+| Window | Multi clusters | TRUE_ONLY | FALSE_ONLY | MIXED | True candidates | False candidates |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| W1 | 7 | 2 | 2 | 3 | 7 | 10 |
+| W2 | 3 | 0 | 2 | 1 | 1 | 7 |
+| W3 | 2 | 0 | 2 | 0 | 0 | 5 |
+| W4 | 3 | 2 | 0 | 1 | 5 | 1 |
+| W5 | 3 | 0 | 1 | 2 | 2 | 14 |
+| W6 | 3 | 0 | 2 | 1 | 1 | 6 |
+- `candidate-cluster-001` · 5e62625e · 1785.137–1787.339s · FALSE_ONLY · true=0 false=6 · refs `['5e62625e:pass-0002', '5e62625e:pass-0003', '5e62625e:pass-0004', '5e62625e:pass-0005', '5e62625e:pass-0007', '5e62625e:pass-0008']` · labels `{'AMBIGUOUS_ACTION_AS_PASS': 3, 'SHOT_AS_PASS': 3}` · identities `[{'candidate_ref': '5e62625e:pass-0002', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'B04'}, {'candidate_ref': '5e62625e:pass-0003', 'source_stable_player_id': 'B04', 'target_stable_player_id': 'A02'}, {'candidate_ref': '5e62625e:pass-0004', 'source_stable_player_id': 'A02', 'target_stable_player_id': 'A08'}, {'candidate_ref': '5e62625e:pass-0005', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'A05'}, {'candidate_ref': '5e62625e:pass-0007', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'B04'}, {'candidate_ref': '5e62625e:pass-0008', 'source_stable_player_id': 'B04', 'target_stable_player_id': 'B05'}]`
+- `candidate-cluster-006` · 5e62625e · 1818.841–1820.676s · MIXED · true=1 false=4 · refs `['5e62625e:pass-0013', '5e62625e:pass-0014', '5e62625e:pass-0015', '5e62625e:pass-0016', '5e62625e:pass-0017']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 4}` · identities `[{'candidate_ref': '5e62625e:pass-0013', 'source_stable_player_id': 'B03', 'target_stable_player_id': 'B01'}, {'candidate_ref': '5e62625e:pass-0014', 'source_stable_player_id': 'B01', 'target_stable_player_id': 'A02'}, {'candidate_ref': '5e62625e:pass-0015', 'source_stable_player_id': 'A02', 'target_stable_player_id': 'A08'}, {'candidate_ref': '5e62625e:pass-0016', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'B08'}, {'candidate_ref': '5e62625e:pass-0017', 'source_stable_player_id': 'B08', 'target_stable_player_id': 'A07'}]`
+- `candidate-cluster-008` · 5e62625e · 1830.821–1832.99s · MIXED · true=1 false=4 · refs `['5e62625e:pass-0021', '5e62625e:pass-0022', '5e62625e:pass-0023', '5e62625e:pass-0024', '5e62625e:pass-0025']` · labels `{'INTERVENTION_AS_PASS': 1, 'SHOT_AS_PASS': 2, 'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 1}` · identities `[{'candidate_ref': '5e62625e:pass-0021', 'source_stable_player_id': 'A04', 'target_stable_player_id': 'B03'}, {'candidate_ref': '5e62625e:pass-0022', 'source_stable_player_id': 'B03', 'target_stable_player_id': 'B01'}, {'candidate_ref': '5e62625e:pass-0023', 'source_stable_player_id': 'B01', 'target_stable_player_id': 'A03'}, {'candidate_ref': '5e62625e:pass-0024', 'source_stable_player_id': 'A03', 'target_stable_player_id': 'B05'}, {'candidate_ref': '5e62625e:pass-0025', 'source_stable_player_id': 'B05', 'target_stable_player_id': 'B02'}]`
+- `candidate-cluster-011` · 5e62625e · 1957.96–1958.227s · MIXED · true=1 false=1 · refs `['5e62625e:pass-0041', '5e62625e:pass-0042']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 1}` · identities `[{'candidate_ref': '5e62625e:pass-0041', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'B03'}, {'candidate_ref': '5e62625e:pass-0042', 'source_stable_player_id': 'B03', 'target_stable_player_id': 'B13'}]`
+- `candidate-cluster-013` · 5e62625e · 1964.501–1964.734s · FALSE_ONLY · true=0 false=3 · refs `['5e62625e:pass-0045', '5e62625e:pass-0046', '5e62625e:pass-0047']` · labels `{'UNMATCHED_PASS_CANDIDATE': 3}` · identities `[{'candidate_ref': '5e62625e:pass-0045', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'B03'}, {'candidate_ref': '5e62625e:pass-0046', 'source_stable_player_id': 'B03', 'target_stable_player_id': 'A08'}, {'candidate_ref': '5e62625e:pass-0047', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'A04'}]`
+- `candidate-cluster-014` · 5e62625e · 1967.571–1968.172s · FALSE_ONLY · true=0 false=2 · refs `['5e62625e:pass-0048', '5e62625e:pass-0049']` · labels `{'UNMATCHED_PASS_CANDIDATE': 2}` · identities `[{'candidate_ref': '5e62625e:pass-0048', 'source_stable_player_id': 'A04', 'target_stable_player_id': 'B13'}, {'candidate_ref': '5e62625e:pass-0049', 'source_stable_player_id': 'B13', 'target_stable_player_id': 'A09'}]`
+- `candidate-cluster-019` · 6d8fc20c · 1314.124–1314.625s · FALSE_ONLY · true=0 false=2 · refs `['6d8fc20c:pass-0031', '6d8fc20c:pass-0032']` · labels `{'UNMATCHED_PASS_CANDIDATE': 2}` · identities `[{'candidate_ref': '6d8fc20c:pass-0031', 'source_stable_player_id': 'B07', 'target_stable_player_id': 'A02'}, {'candidate_ref': '6d8fc20c:pass-0032', 'source_stable_player_id': 'A02', 'target_stable_player_id': 'B12'}]`
+- `candidate-cluster-024` · 6d8fc20c · 1335.679–1336.28s · FALSE_ONLY · true=0 false=3 · refs `['6d8fc20c:pass-0040', '6d8fc20c:pass-0041', '6d8fc20c:pass-0042']` · labels `{'UNMATCHED_PASS_CANDIDATE': 3}` · identities `[{'candidate_ref': '6d8fc20c:pass-0040', 'source_stable_player_id': 'B08', 'target_stable_player_id': 'A07'}, {'candidate_ref': '6d8fc20c:pass-0041', 'source_stable_player_id': 'A07', 'target_stable_player_id': 'A03'}, {'candidate_ref': '6d8fc20c:pass-0042', 'source_stable_player_id': 'A03', 'target_stable_player_id': 'A09'}]`
+- `candidate-cluster-026` · 6d8fc20c · 1352.93–1353.364s · TRUE_ONLY · true=2 false=0 · refs `['6d8fc20c:pass-0056', '6d8fc20c:pass-0057']` · labels `{'TRUE_PASS_MATCH': 2}` · identities `[{'candidate_ref': '6d8fc20c:pass-0056', 'source_stable_player_id': 'B02', 'target_stable_player_id': 'A08'}, {'candidate_ref': '6d8fc20c:pass-0057', 'source_stable_player_id': 'A08', 'target_stable_player_id': 'A07'}]`
+- `candidate-cluster-027` · 6d8fc20c · 1355.332–1355.599s · TRUE_ONLY · true=2 false=0 · refs `['6d8fc20c:pass-0060', '6d8fc20c:pass-0061']` · labels `{'TRUE_PASS_MATCH': 2}` · identities `[{'candidate_ref': '6d8fc20c:pass-0060', 'source_stable_player_id': 'A07', 'target_stable_player_id': 'B12'}, {'candidate_ref': '6d8fc20c:pass-0061', 'source_stable_player_id': 'B12', 'target_stable_player_id': 'A07'}]`
+- `candidate-cluster-029` · 6d8fc20c · 1360.704–1360.905s · MIXED · true=1 false=1 · refs `['6d8fc20c:pass-0065', '6d8fc20c:pass-0066']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 1}` · identities `[{'candidate_ref': '6d8fc20c:pass-0065', 'source_stable_player_id': 'B07', 'target_stable_player_id': 'A02'}, {'candidate_ref': '6d8fc20c:pass-0066', 'source_stable_player_id': 'A02', 'target_stable_player_id': 'B02'}]`
+- `candidate-cluster-037` · 9c7485e4 · 10.511–10.711s · MIXED · true=1 false=1 · refs `['9c7485e4:pass-0002', '9c7485e4:pass-0003']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 1}` · identities `[{'candidate_ref': '9c7485e4:pass-0002', 'source_stable_player_id': 'B06', 'target_stable_player_id': 'A04'}, {'candidate_ref': '9c7485e4:pass-0003', 'source_stable_player_id': 'A04', 'target_stable_player_id': 'B03'}]`
+- `candidate-cluster-039` · 9c7485e4 · 13.814–15.516s · MIXED · true=1 false=2 · refs `['9c7485e4:pass-0005', '9c7485e4:pass-0006', '9c7485e4:pass-0007']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 2}` · identities `[{'candidate_ref': '9c7485e4:pass-0005', 'source_stable_player_id': 'B01', 'target_stable_player_id': 'A05'}, {'candidate_ref': '9c7485e4:pass-0006', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'B08'}, {'candidate_ref': '9c7485e4:pass-0007', 'source_stable_player_id': 'B08', 'target_stable_player_id': 'B04'}]`
+- `candidate-cluster-043` · 9c7485e4 · 25.792–26.159s · TRUE_ONLY · true=2 false=0 · refs `['9c7485e4:pass-0013', '9c7485e4:pass-0014']` · labels `{'TRUE_PASS_MATCH': 2}` · identities `[{'candidate_ref': '9c7485e4:pass-0013', 'source_stable_player_id': 'A04', 'target_stable_player_id': 'A05'}, {'candidate_ref': '9c7485e4:pass-0014', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'A06'}]`
+- `candidate-cluster-044` · 9c7485e4 · 27.16–27.794s · TRUE_ONLY · true=2 false=0 · refs `['9c7485e4:pass-0015', '9c7485e4:pass-0016']` · labels `{'TRUE_PASS_MATCH': 2}` · identities `[{'candidate_ref': '9c7485e4:pass-0015', 'source_stable_player_id': 'A06', 'target_stable_player_id': 'A05'}, {'candidate_ref': '9c7485e4:pass-0016', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'A04'}]`
+- `candidate-cluster-045` · 9c7485e4 · 30.931–31.798s · MIXED · true=1 false=1 · refs `['9c7485e4:pass-0018', '9c7485e4:pass-0019']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 1}` · identities `[{'candidate_ref': '9c7485e4:pass-0018', 'source_stable_player_id': 'B06', 'target_stable_player_id': 'A06'}, {'candidate_ref': '9c7485e4:pass-0019', 'source_stable_player_id': 'A06', 'target_stable_player_id': 'A01'}]`
+- `candidate-cluster-047` · 9c7485e4 · 45.512–47.648s · FALSE_ONLY · true=0 false=4 · refs `['9c7485e4:pass-0023', '9c7485e4:pass-0024', '9c7485e4:pass-0025', '9c7485e4:pass-0026']` · labels `{'UNMATCHED_PASS_CANDIDATE': 4}` · identities `[{'candidate_ref': '9c7485e4:pass-0023', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'B03'}, {'candidate_ref': '9c7485e4:pass-0024', 'source_stable_player_id': 'B03', 'target_stable_player_id': 'B01'}, {'candidate_ref': '9c7485e4:pass-0025', 'source_stable_player_id': 'B01', 'target_stable_player_id': 'A05'}, {'candidate_ref': '9c7485e4:pass-0026', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'B03'}]`
+- `candidate-cluster-048` · 9c7485e4 · 63.163–63.63s · FALSE_ONLY · true=0 false=2 · refs `['9c7485e4:pass-0030', '9c7485e4:pass-0031']` · labels `{'INTERVENTION_AS_PASS': 2}` · identities `[{'candidate_ref': '9c7485e4:pass-0030', 'source_stable_player_id': 'A04', 'target_stable_player_id': 'B04'}, {'candidate_ref': '9c7485e4:pass-0031', 'source_stable_player_id': 'B04', 'target_stable_player_id': 'B10'}]`
+- `candidate-cluster-050` · 9c7485e4 · 559.726–560.227s · MIXED · true=1 false=1 · refs `['9c7485e4:pass-0173', '9c7485e4:pass-0174']` · labels `{'TRUE_PASS_MATCH': 1, 'UNMATCHED_PASS_CANDIDATE': 1}` · identities `[{'candidate_ref': '9c7485e4:pass-0173', 'source_stable_player_id': 'A03', 'target_stable_player_id': 'B07'}, {'candidate_ref': '9c7485e4:pass-0174', 'source_stable_player_id': 'B07', 'target_stable_player_id': 'B04'}]`
+- `candidate-cluster-051` · 9c7485e4 · 563.33–564.131s · FALSE_ONLY · true=0 false=3 · refs `['9c7485e4:pass-0177', '9c7485e4:pass-0178', '9c7485e4:pass-0179']` · labels `{'INTERVENTION_AS_PASS': 3}` · identities `[{'candidate_ref': '9c7485e4:pass-0177', 'source_stable_player_id': 'A01', 'target_stable_player_id': 'A05'}, {'candidate_ref': '9c7485e4:pass-0178', 'source_stable_player_id': 'A05', 'target_stable_player_id': 'A01'}, {'candidate_ref': '9c7485e4:pass-0179', 'source_stable_player_id': 'A01', 'target_stable_player_id': 'B04'}]`
+- `candidate-cluster-057` · 9c7485e4 · 593.26–594.595s · FALSE_ONLY · true=0 false=3 · refs `['9c7485e4:pass-0187', '9c7485e4:pass-0188', '9c7485e4:pass-0189']` · labels `{'INTERVENTION_AS_PASS': 1, 'SHOT_AS_PASS': 2}` · identities `[{'candidate_ref': '9c7485e4:pass-0187', 'source_stable_player_id': 'A03', 'target_stable_player_id': 'B04'}, {'candidate_ref': '9c7485e4:pass-0188', 'source_stable_player_id': 'B04', 'target_stable_player_id': 'A04'}, {'candidate_ref': '9c7485e4:pass-0189', 'source_stable_player_id': 'A04', 'target_stable_player_id': 'A03'}]`
 
 ## Oracle diagnostics — impossible / evaluation-only
 
@@ -595,20 +623,12 @@ This is a read-only forensic audit of regenerated v1 candidates. Gold labels are
 
 ## Candidate v3 hypotheses
 
-### Collapse repeated candidate pairs around one short contact cluster
+### Specify an identity-aware consolidation rule before any controlled shadow experiment
 
-- Physical interpretation: Several generated source→target pairs can describe one rebound, shot or fragmented contact action.
-- Runtime evidence: Existing pass candidate timestamps and consecutive-contact identifiers only.
-- Supporting windows: `['W1', 'W2', 'W3', 'W5', 'W6']`; contradicting windows: `['W4']`
-- Genuine pass types at risk: Fast one-touch passing sequences can also be dense; preserve distinct player-to-player releases.
-- Measured support: 35 false-positive candidates occur in multi-candidate diagnostic clusters; true clustered count not inferred as football truth (0).
+- Physical interpretation: Some false-only clusters may be duplicate representations of one physical chain, but rapid genuine passes are also temporally dense.
+- Runtime evidence: Existing ordered source/target contact IDs, stable-player identities and candidate timestamps; no gold label would be available at runtime.
+- Supporting windows: `['W1', 'W2', 'W3', 'W5', 'W6']`; contradicting windows: `[]`; no-evidence windows: `[]`
+- Genuine pass types at risk: High: #171's generic dense-contact/scramble suppression removed true passes together with false positives.
+- Measured support: all-candidate multi-clusters=21; FALSE_ONLY=9; MIXED=8; TRUE_ONLY=4; true candidates inside=16; false candidates inside=43.
 
-### Trace same-player skip chains to a later distinct receiver before discarding a release
-
-- Physical interpretation: The consecutive-contact builder can observe several contacts under one stable identity while a gold pass is anchored in the same sequence.
-- Runtime evidence: Existing ordered contact IDs, stable-player IDs, skipped-pair reason and release trajectory evidence.
-- Supporting windows: `['W1', 'W3', 'W4', 'W6']`; contradicting windows: `['W2', 'W5']`
-- Genuine pass types at risk: Most same-player chains are continued control; any shadow rule must require a later distinct receiver and visible free-flight evidence.
-- Measured support: 9 of 18 missed gold passes trace to a recorded same_player_consecutive_contacts skip.
-
-No hypothesis in this report is implemented or promoted. Production remains Pass Policy v1.
+The evidence is sufficient to retain candidate observations for a future controlled shadow design, but not to specify or promote a production v3 policy. Production remains Pass Policy v1.

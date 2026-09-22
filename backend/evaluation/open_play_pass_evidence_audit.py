@@ -111,13 +111,15 @@ def audit_open_play_pass_evidence(
         row["window_id"] = _window_for_time(windows, _number(row.get("merged_release_time_sec")))
         if row.get("matched_gold_event_id"):
             row["gold_subgroups"] = _gold_subgroups(gold_by_id.get(str(row["matched_gold_event_id"])))
-    clusters = _false_positive_clusters(evidence_rows)
-    cluster_by_ref = {
+    false_positive_clusters = _false_positive_clusters(evidence_rows)
+    false_cluster_by_ref = {
         reference: cluster
-        for cluster in clusters
+        for cluster in false_positive_clusters
         for reference in cluster["candidate_refs"]
     }
-    false_positive_roots = _false_positive_root_causes(evidence_rows, fp_by_candidate, cluster_by_ref)
+    all_candidate_clusters = _all_candidate_clusters(evidence_rows)
+    all_candidate_cluster_summary = _all_candidate_cluster_summary(all_candidate_clusters)
+    false_positive_roots = _false_positive_root_causes(evidence_rows, fp_by_candidate, false_cluster_by_ref)
     for row in evidence_rows:
         root = false_positive_roots.get(row["candidate_ref"])
         if root:
@@ -136,8 +138,10 @@ def audit_open_play_pass_evidence(
     team_bias = _team_bias(active_gold, match_rows, evidence_rows, missing_indexes)
     completion_bias = _completion_bias(active_gold, candidates, match_rows, evidence_rows)
     oracles = _oracle_diagnostics(active_gold, candidates, match_rows, evidence_rows)
-    hypotheses = _candidate_v3_hypotheses(evidence_rows, missed, clusters, distributions)
-    conclusion = "EVIDENCE_SUFFICIENT_FOR_V3" if hypotheses else "EVIDENCE_INCONCLUSIVE"
+    hypotheses = _candidate_v3_hypotheses(
+        evidence_rows, missed, all_candidate_clusters, all_candidate_cluster_summary, distributions,
+    )
+    conclusion = "EVIDENCE_INCONCLUSIVE"
     return {
         "schema_version": SCHEMA_VERSION,
         "evaluation_layer": {
@@ -159,13 +163,15 @@ def audit_open_play_pass_evidence(
         "categorical_distributions": categorical_distributions,
         "missed_gold_pass_root_causes": missed,
         "false_positive_root_causes": list(false_positive_roots.values()),
-        "false_positive_clusters": clusters,
+        "false_positive_clusters": false_positive_clusters,
+        "all_candidate_clusters": all_candidate_clusters,
+        "all_candidate_cluster_summary": all_candidate_cluster_summary,
         "team_bias_decomposition": team_bias,
         "completion_bias_decomposition": completion_bias,
         "oracle_diagnostics": oracles,
         "candidate_v3_hypotheses": hypotheses,
         "final_conclusion": conclusion,
-        "recommended_next_experiment": hypotheses[0]["name"] if hypotheses else None,
+        "recommended_next_experiment": None,
     }
 
 
@@ -197,12 +203,10 @@ def render_open_play_pass_evidence_audit_markdown(report: Mapping[str, Any]) -> 
     lines.extend([
         "", f"- False-positive outcomes: `{completion.get('false_positive_outcomes')}`",
         f"- False-positive outcomes by team: `{completion.get('false_positive_outcomes_by_team')}`", "",
-        "## Top separating evidence", "",
-        "| Feature | True median | All-FP median | True n | FP n |", "| --- | ---: | ---: | ---: | ---: |",
+        "## Evidence distributions", "",
+        "Raw medians and quantiles below are descriptive only. They are intentionally not ranked across features because their units differ (frames, metres, seconds and ratios).",
+        "",
     ])
-    for row in _top_separating_features(_mapping(report.get("feature_distributions"))):
-        lines.append(f"| {row['feature']} | {_display(row['true_median'])} | {_display(row['fp_median'])} | {row['true_n']} | {row['fp_n']} |")
-    lines.extend(["", "## Evidence distributions", ""])
     for feature, groups in _mapping(report.get("feature_distributions")).items():
         lines.append(f"### {feature}")
         lines.append("")
@@ -217,20 +221,29 @@ def render_open_play_pass_evidence_audit_markdown(report: Mapping[str, Any]) -> 
             for value, stats in _mapping(values).items():
                 lines.append(f"| {group} | {value} | {_mapping(stats).get('count', 0)} | {_percent(_mapping(stats).get('proportion'))} |")
         lines.append("")
-    lines.extend(["", "## Missed gold passes — root causes", ""])
+    lines.extend(["", "## Missed gold passes — conservative attribution", ""])
     for row in report.get("missed_gold_pass_root_causes") or []:
         if not isinstance(row, Mapping):
             continue
         lines.append(
             f"- `{row.get('gold_event_id')}` @ {_display(row.get('gold_time_sec'))}s · **{row.get('root_cause')}** · "
             f"contacts `{row.get('nearby_contact_ids')}` · pairs `{row.get('nearby_pass_candidate_ids')}` · "
-            f"rejections `{row.get('rejection_reasons')}`"
+            f"rejections `{row.get('rejection_reasons')}` · signals `{row.get('diagnostic_signals', [])}`"
         )
     lines.extend(["", "## False-positive root causes", ""])
     root_counts = Counter(str(row.get("root_cause")) for row in report.get("false_positive_root_causes") or [] if isinstance(row, Mapping))
     for reason, count in sorted(root_counts.items()):
         lines.append(f"- `{reason}`: **{count}**")
-    lines.extend(["", "## False-positive clusters", ""])
+    signal_counts = Counter(
+        signal
+        for row in report.get("false_positive_root_causes") or []
+        if isinstance(row, Mapping)
+        for signal in row.get("diagnostic_signals") or []
+    )
+    lines.append("- Diagnostic signals below are observations, not asserted causes:")
+    for signal, count in sorted(signal_counts.items()):
+        lines.append(f"  - `{signal}`: **{count}**")
+    lines.extend(["", "## False-positive-only diagnostic clusters", ""])
     clusters = report.get("false_positive_clusters") or []
     sizes = Counter(int(row.get("size") or 0) for row in clusters if isinstance(row, Mapping))
     lines.append(f"- Diagnostic clustering gap: **{FALSE_POSITIVE_CLUSTER_GAP_SEC:.1f}s** within one physical source match.")
@@ -239,6 +252,36 @@ def render_open_play_pass_evidence_audit_markdown(report: Mapping[str, Any]) -> 
     for row in clusters:
         if isinstance(row, Mapping) and int(row.get("size") or 0) > 1:
             lines.append(f"- `{row.get('cluster_id')}` · {row.get('source_match_id')} · {row.get('start_time_sec')}–{row.get('end_time_sec')}s · size {row.get('size')} · `{row.get('candidate_ids')}`")
+    all_summary = _mapping(report.get("all_candidate_cluster_summary"))
+    lines.extend(["", "## All-candidate cluster composition", ""])
+    lines.append(f"- Same documented adjacency gap: **{FALSE_POSITIVE_CLUSTER_GAP_SEC:.1f}s** within one physical source match.")
+    lines.append(
+        "- Multi-candidate clusters: **{total}** · TRUE_ONLY: **{true_only}** · FALSE_ONLY: **{false_only}** · MIXED: **{mixed}** · "
+        "true candidates inside: **{true_candidates}** · false candidates inside: **{false_candidates}**.".format(
+            total=all_summary.get("multi_candidate_clusters", 0),
+            true_only=all_summary.get("TRUE_ONLY", 0),
+            false_only=all_summary.get("FALSE_ONLY", 0),
+            mixed=all_summary.get("MIXED", 0),
+            true_candidates=all_summary.get("true_candidates_in_multi_clusters", 0),
+            false_candidates=all_summary.get("false_candidates_in_multi_clusters", 0),
+        )
+    )
+    lines.append("- Dense candidate clusters include genuine fast passing, so temporal density alone is not a safe consolidation rule.")
+    lines.extend(["", "| Window | Multi clusters | TRUE_ONLY | FALSE_ONLY | MIXED | True candidates | False candidates |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
+    for window_id, values in _mapping(all_summary.get("by_window")).items():
+        item = _mapping(values)
+        lines.append(
+            f"| {window_id} | {item.get('multi_candidate_clusters', 0)} | {item.get('TRUE_ONLY', 0)} | "
+            f"{item.get('FALSE_ONLY', 0)} | {item.get('MIXED', 0)} | {item.get('true_candidates', 0)} | {item.get('false_candidates', 0)} |"
+        )
+    for row in report.get("all_candidate_clusters") or []:
+        if not isinstance(row, Mapping) or int(row.get("size") or 0) <= 1:
+            continue
+        lines.append(
+            f"- `{row.get('cluster_id')}` · {row.get('source_match_id')} · {row.get('start_time_sec')}–{row.get('end_time_sec')}s · "
+            f"{row.get('composition')} · true={row.get('true_pass_count')} false={row.get('false_positive_count')} · "
+            f"refs `{row.get('candidate_refs')}` · labels `{row.get('labels')}` · identities `{row.get('player_identities')}`"
+        )
     lines.extend(["", "## Oracle diagnostics — impossible / evaluation-only", ""])
     for name, result in _mapping(report.get("oracle_diagnostics")).items():
         data = _mapping(result)
@@ -256,11 +299,11 @@ def render_open_play_pass_evidence_audit_markdown(report: Mapping[str, Any]) -> 
             f"### {item.get('name')}", "",
             f"- Physical interpretation: {item.get('physical_interpretation')}",
             f"- Runtime evidence: {item.get('runtime_evidence')}",
-            f"- Supporting windows: `{item.get('supporting_windows')}`; contradicting windows: `{item.get('contradicting_windows')}`",
+            f"- Supporting windows: `{item.get('supporting_windows')}`; contradicting windows: `{item.get('contradicting_windows')}`; no-evidence windows: `{item.get('no_evidence_windows')}`",
             f"- Genuine pass types at risk: {item.get('genuine_pass_risk')}",
             f"- Measured support: {item.get('measured_support')}", "",
         ])
-    lines.append("No hypothesis in this report is implemented or promoted. Production remains Pass Policy v1.")
+    lines.append("The evidence is sufficient to retain candidate observations for a future controlled shadow design, but not to specify or promote a production v3 policy. Production remains Pass Policy v1.")
     lines.append("")
     return "\n".join(lines)
 
@@ -430,6 +473,8 @@ def _skipped_contact_pairs(
             output.append({
                 "source_match_id": source_match_id,
                 "source_event_id": source.get("event_id"), "target_event_id": target.get("event_id"),
+                "source_stable_player_id": source.get("stable_player_id"),
+                "target_stable_player_id": target.get("stable_player_id"),
                 "source_time_sec": float(source.get("end_time_sec") or source.get("start_time_sec") or 0.0) + offset,
                 "target_time_sec": float(target.get("start_time_sec") or target.get("end_time_sec") or 0.0) + offset,
                 "skip_reason": reason,
@@ -452,22 +497,26 @@ def _missed_gold_pass_root_causes(
         near_skips = [row for row in skipped_pairs if abs(_number(row.get("source_time_sec")) - time) <= max(tolerance, 1.0)]
         rejected = [row for row in local_contacts if str(row.get("review_status") or row.get("status") or "") == "rejected"]
         excluded = [row for row in near_pairs if str(row.get("outcome")) == "excluded_non_pass"]
+        diagnostic_signals: list[str] = []
         if excluded:
             cause = "EXCLUDED_BY_RELEASE_POLICY"
         elif near_pairs:
-            cause = "TEMPORAL_CANDIDATE_MISALIGNMENT"
-        elif near_skips:
-            cause = _skip_to_root_cause(str(near_skips[0].get("skip_reason")))
+            cause = "UNKNOWN"
+            diagnostic_signals.append("NEARBY_UNMATCHED_PASS_CANDIDATE")
+        elif _has_structural_same_player_skip(near_skips, local_contacts):
+            cause = "SAME_PLAYER_SKIP"
         elif rejected and len(rejected) == len(local_contacts):
             cause = "CONTACT_REVIEW_FILTER"
         elif not local_contacts:
             cause = "NO_SOURCE_CONTACT"
-        elif len(local_contacts) == 1:
-            cause = "SOURCE_CONTACT_PRESENT_TARGET_MISSING"
-        elif len(local_contacts) >= 3:
-            cause = "INTERMEDIATE_CONTACT_BREAKS_PAIR"
         else:
             cause = "UNKNOWN"
+            if any(str(row.get("skip_reason")) == "same_player_consecutive_contacts" for row in near_skips):
+                diagnostic_signals.append("NEARBY_SAME_PLAYER_SKIP")
+            if len(local_contacts) == 1:
+                diagnostic_signals.append("SINGLE_NEARBY_CONTACT")
+            elif len(local_contacts) >= 3:
+                diagnostic_signals.append("MULTIPLE_NEARBY_CONTACTS")
         output.append({
             **_gold_public(gold),
             "root_cause": cause,
@@ -477,46 +526,137 @@ def _missed_gold_pass_root_causes(
             "nearby_pass_candidate_ids": [row.get("candidate_id") for row in near_pairs],
             "rejection_reasons": {str(row.get("candidate_id")): list(row.get("rejection_reasons") or []) for row in excluded},
             "skipped_contact_pairs": near_skips,
+            "diagnostic_signals": diagnostic_signals,
         })
     return output
 
 
-def _skip_to_root_cause(reason: str) -> str:
-    return {
-        "same_player_consecutive_contacts": "SAME_PLAYER_SKIP",
-        "gap_too_short": "GAP_TOO_SHORT",
-        "gap_too_long": "GAP_TOO_LONG",
-        "missing_position": "MISSING_POSITION",
-    }.get(reason, "OTHER")
+def _has_structural_same_player_skip(
+    skipped_pairs: Sequence[Mapping[str, Any]], local_contacts: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Require an observable same-player chain into a later distinct contact.
+
+    A nearby skip alone only tells us that the approximate manual anchor shares
+    time with a construction decision. It becomes causal evidence only when the
+    skipped pair itself is known to be same-player and the available local
+    contacts show the later distinct receiver/interceptor transition.
+    """
+
+    contacts_by_id = {str(row.get("event_id") or row.get("candidate_id")): row for row in local_contacts}
+    for skip in skipped_pairs:
+        if str(skip.get("skip_reason")) != "same_player_consecutive_contacts":
+            continue
+        source_id, target_id = str(skip.get("source_event_id")), str(skip.get("target_event_id"))
+        source = contacts_by_id.get(source_id)
+        target = contacts_by_id.get(target_id)
+        source_player = skip.get("source_stable_player_id") or _mapping(source).get("stable_player_id")
+        target_player = skip.get("target_stable_player_id") or _mapping(target).get("stable_player_id")
+        if not source_player or source_player != target_player:
+            continue
+        target_time = _number(skip.get("target_time_sec"))
+        for contact in local_contacts:
+            contact_player = contact.get("stable_player_id")
+            if (
+                contact_player
+                and contact_player != source_player
+                and _number(contact.get("merged_start_time_sec")) >= target_time
+            ):
+                return True
+    return False
 
 
 def _false_positive_clusters(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    false_rows = [row for row in rows if row.get("evaluation_label") != "TRUE_PASS_MATCH"]
+    """Retain the historical FP-only view as a diagnostic subset, not a policy claim."""
+
+    return _candidate_clusters(
+        [row for row in rows if row.get("evaluation_label") != "TRUE_PASS_MATCH"],
+        cluster_id_prefix="fp-cluster",
+    )
+
+
+def _all_candidate_clusters(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Cluster all evaluated candidates so true rapid passing is visible beside FPs."""
+
+    return _candidate_clusters(rows, cluster_id_prefix="candidate-cluster")
+
+
+def _candidate_clusters(
+    rows: Sequence[Mapping[str, Any]], *, cluster_id_prefix: str,
+) -> list[dict[str, Any]]:
     groups: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
-    for row in false_rows:
+    for row in rows:
         groups[str(row.get("source_match_id"))].append(row)
     output: list[dict[str, Any]] = []
     for source_match_id, values in sorted(groups.items()):
         cluster: list[Mapping[str, Any]] = []
         for row in sorted(values, key=lambda item: (_number(item.get("merged_release_time_sec")), str(item.get("candidate_id")))):
             if cluster and _number(row.get("merged_release_time_sec")) - _number(cluster[-1].get("merged_release_time_sec")) > FALSE_POSITIVE_CLUSTER_GAP_SEC:
-                output.append(_cluster_row(source_match_id, cluster, len(output) + 1))
+                output.append(_cluster_row(source_match_id, cluster, len(output) + 1, cluster_id_prefix))
                 cluster = []
             cluster.append(row)
         if cluster:
-            output.append(_cluster_row(source_match_id, cluster, len(output) + 1))
+            output.append(_cluster_row(source_match_id, cluster, len(output) + 1, cluster_id_prefix))
     return output
 
 
-def _cluster_row(source_match_id: str, rows: Sequence[Mapping[str, Any]], index: int) -> dict[str, Any]:
+def _cluster_row(
+    source_match_id: str, rows: Sequence[Mapping[str, Any]], index: int, cluster_id_prefix: str,
+) -> dict[str, Any]:
+    true_pass_count = sum(row.get("evaluation_label") == "TRUE_PASS_MATCH" for row in rows)
+    false_positive_count = len(rows) - true_pass_count
+    composition = "TRUE_ONLY" if true_pass_count == len(rows) else "FALSE_ONLY" if not true_pass_count else "MIXED"
     return {
-        "cluster_id": f"fp-cluster-{index:03d}", "source_match_id": source_match_id,
+        "cluster_id": f"{cluster_id_prefix}-{index:03d}", "source_match_id": source_match_id,
         "start_time_sec": _round(_number(rows[0].get("merged_release_time_sec"))),
         "end_time_sec": _round(_number(rows[-1].get("merged_release_time_sec"))), "size": len(rows),
         "candidate_refs": [str(row.get("candidate_ref")) for row in rows],
         "candidate_ids": [row.get("candidate_id") for row in rows],
+        "timestamps_sec": [_round(_number(row.get("merged_release_time_sec"))) for row in rows],
         "labels": dict(sorted(Counter(str(row.get("evaluation_label")) for row in rows).items())),
         "window_ids": sorted({_window_id_for_row(row) for row in rows if _window_id_for_row(row)}),
+        "true_pass_count": true_pass_count,
+        "false_positive_count": false_positive_count,
+        "composition": composition,
+        "player_identities": [
+            {
+                "candidate_ref": row.get("candidate_ref"),
+                "source_stable_player_id": row.get("source_stable_player_id"),
+                "target_stable_player_id": row.get("target_stable_player_id"),
+            }
+            for row in rows
+        ],
+    }
+
+
+def _all_candidate_cluster_summary(clusters: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    multi = [row for row in clusters if int(row.get("size") or 0) > 1]
+    by_window: dict[str, Counter[str]] = {f"W{index}": Counter() for index in range(1, 7)}
+    for row in multi:
+        for window_id in row.get("window_ids") or []:
+            bucket = by_window.setdefault(str(window_id), Counter())
+            bucket["multi_candidate_clusters"] += 1
+            bucket[str(row.get("composition"))] += 1
+            bucket["true_candidates"] += int(row.get("true_pass_count") or 0)
+            bucket["false_candidates"] += int(row.get("false_positive_count") or 0)
+    composition = Counter(str(row.get("composition")) for row in multi)
+    return {
+        "multi_candidate_clusters": len(multi),
+        "TRUE_ONLY": composition["TRUE_ONLY"],
+        "FALSE_ONLY": composition["FALSE_ONLY"],
+        "MIXED": composition["MIXED"],
+        "true_candidates_in_multi_clusters": sum(int(row.get("true_pass_count") or 0) for row in multi),
+        "false_candidates_in_multi_clusters": sum(int(row.get("false_positive_count") or 0) for row in multi),
+        "by_window": {
+            window_id: {
+                "multi_candidate_clusters": values["multi_candidate_clusters"],
+                "TRUE_ONLY": values["TRUE_ONLY"],
+                "FALSE_ONLY": values["FALSE_ONLY"],
+                "MIXED": values["MIXED"],
+                "true_candidates": values["true_candidates"],
+                "false_candidates": values["false_candidates"],
+            }
+            for window_id, values in sorted(by_window.items())
+        },
     }
 
 
@@ -534,19 +674,24 @@ def _false_positive_root_causes(
         cluster = _mapping(clusters.get(reference))
         if label != "UNMATCHED_PASS_CANDIDATE":
             cause = label
-        elif int(cluster.get("size") or 0) > 1:
-            cause = "REPEATED_CANDIDATE_CLUSTER"
-        elif _number(_mapping(row.get("derived_evidence")).get("controlled_frame_ratio")) > 0:
-            cause = "CONTINUED_CONTROL_EVIDENCE"
-        elif _number(_mapping(row.get("derived_evidence")).get("contested_frame_ratio")) > 0:
-            cause = "CONTESTED_BETWEEN_CONTACTS"
         else:
             cause = "UNEXPLAINED_FALSE_POSITIVE"
+        diagnostic_signals: list[str] = []
+        if int(cluster.get("size") or 0) > 1:
+            diagnostic_signals.append("FALSE_POSITIVE_MULTI_CANDIDATE_CLUSTER")
+        derived = _mapping(row.get("derived_evidence"))
+        if _number(derived.get("controlled_frame_ratio")) > 0:
+            # Both all 30 matches and all 67 false positives have this signal in
+            # the real audit. It is retained as evidence, never called causal.
+            diagnostic_signals.append("CONTROLLED_FRAMES_PRESENT")
+        if _number(derived.get("contested_frame_ratio")) > 0:
+            diagnostic_signals.append("CONTESTED_FRAMES_PRESENT")
         output[reference] = {
             "candidate_ref": reference, "candidate_id": row.get("candidate_id"), "source_match_id": row.get("source_match_id"),
             "merged_release_time_sec": row.get("merged_release_time_sec"), "semantic_label": label,
             "root_cause": cause, "cluster_id": cluster.get("cluster_id"),
             "nearest_gold_event_id": _mapping(false_positives.get(reference)).get("nearest_gold_event_id"),
+            "diagnostic_signals": diagnostic_signals,
         }
     return output
 
@@ -623,23 +768,42 @@ def _oracle(description: str, gold: Sequence[Mapping[str, Any]], candidates: Seq
 
 
 def _candidate_v3_hypotheses(
-    rows: Sequence[Mapping[str, Any]], misses: Sequence[Mapping[str, Any]], clusters: Sequence[Mapping[str, Any]], distributions: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    misses: Sequence[Mapping[str, Any]],
+    all_candidate_clusters: Sequence[Mapping[str, Any]],
+    cluster_summary: Mapping[str, Any],
+    distributions: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
+    """Describe only hypotheses that current evidence can support conservatively.
+
+    This report deliberately does not turn an observational cluster correlation
+    into an executable v3 policy. The existing v2 experiment already showed why
+    a generic dense-contact suppression rule is unsafe for real quick passing.
+    """
+
     hypotheses: list[dict[str, Any]] = []
-    fp_clustered = sum(int(row.get("size") or 0) for row in clusters if int(row.get("size") or 0) > 1)
-    true_clustered = 0
-    cluster_windows = sorted({window for row in clusters if int(row.get("size") or 0) > 1 for window in row.get("window_ids") or []})
-    if fp_clustered:
-        all_windows = {"W1", "W2", "W3", "W4", "W5", "W6"}
+    multi_clusters = [row for row in all_candidate_clusters if int(row.get("size") or 0) > 1]
+    false_only_clusters = [row for row in multi_clusters if row.get("composition") == "FALSE_ONLY"]
+    if false_only_clusters:
+        supporting_windows = sorted({window for row in false_only_clusters for window in row.get("window_ids") or []})
+        true_windows = sorted({window for row in multi_clusters if row.get("true_pass_count") for window in row.get("window_ids") or []})
+        no_evidence_windows = sorted({"W1", "W2", "W3", "W4", "W5", "W6"} - set(supporting_windows) - set(true_windows))
         hypotheses.append({
-            "name": "Collapse repeated candidate pairs around one short contact cluster",
-            "physical_interpretation": "Several generated source→target pairs can describe one rebound, shot or fragmented contact action.",
-            "runtime_evidence": "Existing pass candidate timestamps and consecutive-contact identifiers only.",
-            "why_it_should_remove_false_positives": "The audit finds repeated false-positive candidates within one documented diagnostic time cluster.",
-            "genuine_pass_risk": "Fast one-touch passing sequences can also be dense; preserve distinct player-to-player releases.",
-            "supporting_windows": cluster_windows,
-            "contradicting_windows": sorted(all_windows - set(cluster_windows)),
-            "measured_support": f"{fp_clustered} false-positive candidates occur in multi-candidate diagnostic clusters; true clustered count not inferred as football truth ({true_clustered}).",
+            "name": "Specify an identity-aware consolidation rule before any controlled shadow experiment",
+            "physical_interpretation": "Some false-only clusters may be duplicate representations of one physical chain, but rapid genuine passes are also temporally dense.",
+            "runtime_evidence": "Existing ordered source/target contact IDs, stable-player identities and candidate timestamps; no gold label would be available at runtime.",
+            "why_it_should_remove_false_positives": "Observational only: false-only clusters exist, but a generic time-gap consolidation is unsafe because other dense clusters contain genuine passes.",
+            "genuine_pass_risk": "High: #171's generic dense-contact/scramble suppression removed true passes together with false positives.",
+            "supporting_windows": supporting_windows,
+            "contradicting_windows": [],
+            "no_evidence_windows": no_evidence_windows,
+            "measured_support": (
+                f"all-candidate multi-clusters={cluster_summary.get('multi_candidate_clusters', 0)}; "
+                f"FALSE_ONLY={cluster_summary.get('FALSE_ONLY', 0)}; MIXED={cluster_summary.get('MIXED', 0)}; "
+                f"TRUE_ONLY={cluster_summary.get('TRUE_ONLY', 0)}; true candidates inside={cluster_summary.get('true_candidates_in_multi_clusters', 0)}; "
+                f"false candidates inside={cluster_summary.get('false_candidates_in_multi_clusters', 0)}."
+            ),
+            "readiness": "INSUFFICIENT_FOR_SHADOW_RULE",
         })
     same_player = [row for row in misses if row.get("root_cause") == "SAME_PLAYER_SKIP"]
     if same_player:
@@ -651,8 +815,10 @@ def _candidate_v3_hypotheses(
             "why_it_should_remove_false_positives": "This is a recall hypothesis rather than a false-positive filter: it targets a dominant documented construction loss without changing contact detection.",
             "genuine_pass_risk": "Most same-player chains are continued control; any shadow rule must require a later distinct receiver and visible free-flight evidence.",
             "supporting_windows": windows,
-            "contradicting_windows": sorted({"W1", "W2", "W3", "W4", "W5", "W6"} - set(windows)),
+            "contradicting_windows": [],
+            "no_evidence_windows": sorted({"W1", "W2", "W3", "W4", "W5", "W6"} - set(windows)),
             "measured_support": f"{len(same_player)} of {len(misses)} missed gold passes trace to a recorded same_player_consecutive_contacts skip.",
+            "readiness": "REQUIRES_CONTROLLED_SHADOW",
         })
     intermediate = [row for row in misses if row.get("root_cause") == "INTERMEDIATE_CONTACT_BREAKS_PAIR"]
     if intermediate:
@@ -665,7 +831,9 @@ def _candidate_v3_hypotheses(
             "genuine_pass_risk": "Could join unrelated loose-ball actions; require continuous-flight evidence before any shadow test.",
             "supporting_windows": windows,
             "contradicting_windows": [],
+            "no_evidence_windows": sorted({"W1", "W2", "W3", "W4", "W5", "W6"} - set(windows)),
             "measured_support": f"{len(intermediate)} missed gold passes are classified from available contact ordering as intermediate-contact breaks.",
+            "readiness": "REQUIRES_CONTROLLED_SHADOW",
         })
     release = _mapping(distributions.get("derived.free_frame_ratio"))
     true_median = _mapping(release.get("TRUE_PASS_MATCH")).get("median")
@@ -680,8 +848,10 @@ def _candidate_v3_hypotheses(
             "why_it_should_remove_false_positives": "True and false candidate free-flight ratios have a measured median separation in the evidence table.",
             "genuine_pass_risk": "Headers, interceptions, blocks and short passes can have sparse or contested ball evidence.",
             "supporting_windows": support_windows,
-            "contradicting_windows": [window for window in fp_windows if window not in support_windows],
+            "contradicting_windows": [],
+            "no_evidence_windows": [window for window in fp_windows if window not in support_windows],
             "measured_support": f"free_frame_ratio median true={true_median}, false-positive={fp_median}; inspect per-window values before implementation.",
+            "readiness": "REQUIRES_CONTROLLED_SHADOW",
         })
     return hypotheses[:3]
 
@@ -698,18 +868,6 @@ def _window_id_for_row(row: Mapping[str, Any]) -> str | None:
     # populated by callers that already attach a window id.
     value = row.get("window_id")
     return str(value) if value else None
-
-
-def _top_separating_features(distributions: Mapping[str, Any]) -> list[dict[str, Any]]:
-    values: list[dict[str, Any]] = []
-    for feature, groups in distributions.items():
-        if feature == "categorical":
-            continue
-        true, false = _mapping(groups).get("TRUE_PASS_MATCH"), _mapping(groups).get("ALL_FALSE_POSITIVES")
-        true_data, false_data = _mapping(true), _mapping(false)
-        if _finite_number(true_data.get("median")) and _finite_number(false_data.get("median")):
-            values.append({"feature": feature, "true_median": true_data["median"], "fp_median": false_data["median"], "true_n": true_data.get("sample_count"), "fp_n": false_data.get("sample_count"), "delta": abs(float(true_data["median"]) - float(false_data["median"]))})
-    return sorted(values, key=lambda row: (-row["delta"], row["feature"]))[:8]
 
 
 def _candidate_ref(row: Mapping[str, Any]) -> str:
