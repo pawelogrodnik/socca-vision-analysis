@@ -15,15 +15,15 @@ This is a read-only GO / NO-GO audit. It regenerates current Pass Policy v1 evid
 - `W1-E005` · W1 · **CONTACT_GENERATION** · source `9c7485e4` @ `21.0`s
 - `W1-E013` · W1 · **PASS_PAIR_CONSTRUCTION** · source `9c7485e4` @ `42.0`s
 - `W2-E019` · W2 · **CONTACT_GENERATION** · source `9c7485e4` @ `615.0`s
-- `W3-E002` · W3 · **PASS_PAIR_CONSTRUCTION** · source `6d8fc20c` @ `117.0`s
-- `W3-E014` · W3 · **PASS_PAIR_CONSTRUCTION** · source `6d8fc20c` @ `167.0`s
+- `W3-E002` · W3 · **UNKNOWN** · source `6d8fc20c` @ `117.0`s
+- `W3-E014` · W3 · **UNKNOWN** · source `6d8fc20c` @ `167.0`s
 - `W3-E017` · W3 · **UNKNOWN** · source `6d8fc20c` @ `175.0`s
-- `W4-E007` · W4 · **PASS_PAIR_CONSTRUCTION** · source `6d8fc20c` @ `200.7`s
+- `W4-E007` · W4 · **UNKNOWN** · source `6d8fc20c` @ `200.7`s
 - `W4-E008` · W4 · **RELEASE_POLICY** · source `6d8fc20c` @ `201.7`s
-- `W4-E017` · W4 · **PASS_PAIR_CONSTRUCTION** · source `6d8fc20c` @ `256.7`s
+- `W4-E017` · W4 · **UNKNOWN** · source `6d8fc20c` @ `256.7`s
 - `W4-E018` · W4 · **CONTACT_GENERATION** · source `6d8fc20c` @ `258.7`s
 - `W5-E006` · W5 · **UNKNOWN** · source `5e62625e` @ `55.122`s
-- `W6-E001` · W6 · **CONTACT_GENERATION** · source `5e62625e` @ `151.122`s
+- `W6-E001` · W6 · **POSSESSION** · source `5e62625e` @ `151.122`s
 - `W6-E010` · W6 · **UNKNOWN** · source `5e62625e` @ `188.122`s
 - `W6-E011` · W6 · **UNKNOWN** · source `5e62625e` @ `192.122`s
 - `W6-E012` · W6 · **UNKNOWN** · source `5e62625e` @ `193.122`s
@@ -88,25 +88,26 @@ This is a read-only GO / NO-GO audit. It regenerates current Pass Policy v1 evid
 ## Diagnostic / semantic context
 
 - Semantic context and nearby skipped-contact signals are diagnostic only. They are not counted as demonstrated root causes without a structural runtime chain.
-- False-positive sample coverage: `{'sample_count': 24, 'windows': ['W1', 'W2', 'W3', 'W4', 'W5', 'W6'], 'semantic_context': {'AMBIGUOUS_ACTION_AS_PASS': 3, 'CONTEST_AS_PASS': 2, 'CONTROL_AS_PASS': 2, 'INTERVENTION_AS_PASS': 5, 'SHOT_AS_PASS': 6, 'UNMATCHED_PASS_CANDIDATE': 6}, 'duration_buckets_sec': {'long_>=1.5': 6, 'medium_0.5_to_<1.5': 6, 'short_<0.5': 12}, 'pass_type': {'same_team_pass': 9, 'turnover_or_interception': 15}, 'team_relationship': {'same_team': 9, 'turnover': 15}, 'cluster_membership': {'multi_candidate_cluster': 24}, 'population_cluster_membership': {'multi_candidate_cluster': 67}, 'confidence_buckets': {'high_>=0.75': 1, 'low_<0.5': 20, 'medium_0.5_to_<0.75': 3}}`
+- False-positive sample coverage: `{'sample_count': 24, 'windows': ['W1', 'W2', 'W3', 'W4', 'W5', 'W6'], 'semantic_context': {'AMBIGUOUS_ACTION_AS_PASS': 3, 'CONTEST_AS_PASS': 2, 'CONTROL_AS_PASS': 2, 'INTERVENTION_AS_PASS': 5, 'SHOT_AS_PASS': 6, 'UNMATCHED_PASS_CANDIDATE': 6}, 'duration_buckets_sec': {'long_>=1.5': 6, 'medium_0.5_to_<1.5': 6, 'short_<0.5': 12}, 'pass_type': {'same_team_pass': 9, 'turnover_or_interception': 15}, 'team_relationship': {'same_team': 9, 'turnover': 15}, 'cluster_membership': {'isolated_or_singleton': 10, 'multi_candidate_cluster': 14}, 'population_cluster_membership': {'isolated_or_singleton': 24, 'multi_candidate_cluster': 43}, 'confidence_buckets': {'high_>=0.75': 1, 'low_<0.5': 20, 'medium_0.5_to_<0.75': 3}}`
 - Miss diagnostic signals: `['NEARBY_GAP_TOO_LONG', 'NEARBY_GAP_TOO_SHORT', 'NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS']`
 
 ## Cross-population error families
 
 | Root cause | MISS | TEAM | FP sample | Total |
 | --- | ---: | ---: | ---: | ---: |
-| UNKNOWN | 5 | 23 | 24 | 52 |
-| CONTACT_GENERATION | 5 | 0 | 0 | 5 |
-| PASS_PAIR_CONSTRUCTION | 5 | 0 | 0 | 5 |
+| UNKNOWN | 9 | 23 | 24 | 56 |
+| CONTACT_GENERATION | 4 | 0 | 0 | 4 |
 | RELEASE_POLICY | 3 | 0 | 0 | 3 |
+| PASS_PAIR_CONSTRUCTION | 1 | 0 | 0 | 1 |
+| POSSESSION | 1 | 0 | 0 | 1 |
 
 ## Contact-player association findings
 
-- `{'wrong_possession_owner_demonstrated': 0, 'misses_with_explicit_pair_skip': 5, 'fp_samples_with_contact_fragmentation': 0, 'conclusion': 'No contact-player selector defect is asserted unless a closer opposite-team production candidate is present in the trace.'}`
+- `{'wrong_possession_owner_demonstrated': 0, 'misses_with_explicit_pair_skip': 1, 'fp_samples_with_contact_fragmentation': 0, 'conclusion': 'No contact-player selector defect is asserted unless a closer opposite-team production candidate is present in the trace.'}`
 
 ## Contact-fragmentation findings
 
-- `{'multi_candidate_clusters': 21, 'true_only': 4, 'false_only': 9, 'mixed': 8, 'miss_pair_construction_count': 5, 'fp_fragmentation_asserted': 0, 'conclusion': 'Cluster density remains non-selective because mixed clusters contain genuine passes; no suppression recommendation follows.'}`
+- `{'multi_candidate_clusters': 21, 'true_only': 4, 'false_only': 9, 'mixed': 8, 'miss_pair_construction_count': 1, 'fp_fragmentation_asserted': 0, 'conclusion': 'Cluster density remains non-selective because mixed clusters contain genuine passes; no suppression recommendation follows.'}`
 
 ## Identity findings
 
@@ -118,10 +119,11 @@ This is a read-only GO / NO-GO audit. It regenerates current Pass Policy v1 evid
 
 ## Shared-fix evaluation
 
-- `{'root_cause': 'CONTACT_GENERATION', 'count': 5, 'affected_populations': ['MISS'], 'affected_windows': ['W1', 'W2', 'W4', 'W6'], 'production_layer': 'ball possession/contact generation', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
-- `{'root_cause': 'PASS_PAIR_CONSTRUCTION', 'count': 5, 'affected_populations': ['MISS'], 'affected_windows': ['W1', 'W3', 'W4'], 'production_layer': 'pass candidate pairing', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
-- `{'root_cause': 'RELEASE_POLICY', 'count': 3, 'affected_populations': ['MISS'], 'affected_windows': ['W4', 'W6'], 'production_layer': 'pass release policy', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
-- `{'root_cause': 'UNKNOWN', 'count': 52, 'affected_populations': ['FP_SAMPLE', 'MISS', 'TEAM'], 'affected_windows': ['W1', 'W2', 'W3', 'W4', 'W5', 'W6'], 'production_layer': 'undetermined', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'unknown', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
+- `{'root_cause': 'CONTACT_GENERATION', 'count': 4, 'affected_populations': ['MISS'], 'affected_windows': ['W1', 'W2', 'W4', 'W6'], 'production_layer': 'ball possession/contact generation', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'rationale': 'Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision whose bounded change would create the missing contacts without threshold research.', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
+- `{'root_cause': 'PASS_PAIR_CONSTRUCTION', 'count': 1, 'affected_populations': ['MISS'], 'affected_windows': ['W1'], 'production_layer': 'pass candidate pairing', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'rationale': 'The demonstrated chains retain their measured skip shapes (same_player_consecutive_contacts), but the trace supplies no gold-independent invariant that would relax them safely.', 'support_character': 'single demonstrated instance', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
+- `{'root_cause': 'POSSESSION', 'count': 1, 'affected_populations': ['MISS'], 'affected_windows': ['W6'], 'production_layer': 'upstream prerequisites', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'rationale': 'The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.', 'support_character': 'single demonstrated instance', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
+- `{'root_cause': 'RELEASE_POLICY', 'count': 3, 'affected_populations': ['MISS'], 'affected_windows': ['W4', 'W6'], 'production_layer': 'pass release policy', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'rationale': 'The exclusion is demonstrated, but the trace does not establish a bounded relaxation that preserves known true-pass precision.', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
+- `{'root_cause': 'UNKNOWN', 'count': 56, 'affected_populations': ['FP_SAMPLE', 'MISS', 'TEAM'], 'affected_windows': ['W1', 'W2', 'W3', 'W4', 'W5', 'W6'], 'production_layer': 'multiple_or_undetermined', 'bounded_fix_scope': None, 'gold_independent': True, 'regression_risk': 'high', 'rationale': 'No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified. The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change. The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change.', 'support_character': 'repeated demonstrated evidence', 'qualifies_for_go': False, 'decision': 'rejected', 'rejection_reason': 'No demonstrated bounded general production fix; retain this family as diagnostic evidence only.'}`
 
 ## Go / No-Go
 

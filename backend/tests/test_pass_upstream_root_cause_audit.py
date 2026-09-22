@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from evaluation.pass_upstream_root_cause_audit import (
     _fp_structural_chain,
     _fp_root_cause,
     _fp_sample_coverage,
+    _all_candidate_cluster_index,
+    _cluster_membership,
+    _contact_generation_prerequisites,
     _miss_root_cause,
     _go_no_go_decision,
     _root_cause_counts,
@@ -141,8 +145,8 @@ class PassUpstreamRootCauseAuditTests(unittest.TestCase):
         indexes["source"]["contacts"]["contact-dup"] = duplicate
         indexes["source"]["events"] = {"event-1": indexes["source"]["events"]["event-1"], "event-dup": _event("event-dup", duplicate)}
         trace = build_upstream_trace("source", 10.0, indexes, "event-1")
-        row = {"root_cause": "UNKNOWN", "skipped_contact_pairs": [{"source_event_id": "event-1", "target_event_id": "event-dup", "skip_reason": "same_player_consecutive_contacts"}]}
-        chain = _structural_pairing_chain(row, "source", indexes)
+        row = {"root_cause": "UNKNOWN", "actor": {"team": "Corgi"}, "target": {"team": "Verisk"}, "skipped_contact_pairs": [{"source_event_id": "event-1", "target_event_id": "event-dup", "skip_reason": "same_player_consecutive_contacts"}]}
+        chain = _structural_pairing_chain(row, "source", indexes, 10.0)
         self.assertFalse(chain["demonstrated"])
         self.assertIn("NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS", chain["diagnostic_signals"])
         self.assertEqual(_miss_root_cause(row, trace, chain), "UNKNOWN")
@@ -157,16 +161,34 @@ class PassUpstreamRootCauseAuditTests(unittest.TestCase):
             "event-dup": _event("event-dup", duplicate),
             "event-receiver": _event("event-receiver", receiver),
         }
-        row = {"root_cause": "UNKNOWN", "skipped_contact_pairs": [{"source_event_id": "event-1", "target_event_id": "event-dup", "skip_reason": "same_player_consecutive_contacts"}]}
-        chain = _structural_pairing_chain(row, "source", indexes)
+        row = {"root_cause": "UNKNOWN", "actor": {"team": "Corgi"}, "target": {"team": "Verisk"}, "skipped_contact_pairs": [{"source_event_id": "event-1", "target_event_id": "event-dup", "skip_reason": "same_player_consecutive_contacts"}]}
+        chain = _structural_pairing_chain(row, "source", indexes, 10.0)
         self.assertTrue(chain["demonstrated"])
         self.assertEqual(chain["chains"][0]["later_distinct_event"]["event_id"], "event-receiver")
         self.assertEqual(_miss_root_cause(row, build_upstream_trace("source", 10.0, indexes, "event-1"), chain), "PASS_PAIR_CONSTRUCTION")
 
+    def test_structural_pairing_must_match_gold_action_plausibility(self) -> None:
+        indexes = _indexes()
+        duplicate = _contact("contact-dup", "slot-a", "A01", "A", 10.15)
+        receiver = _contact("contact-receiver", "slot-c", "B02", "B", 10.25)
+        indexes["source"]["events"] = {
+            "event-1": indexes["source"]["events"]["event-1"],
+            "event-dup": _event("event-dup", duplicate),
+            "event-receiver": _event("event-receiver", receiver),
+        }
+        row = {"root_cause": "UNKNOWN", "actor": {"team": "Verisk"}, "target": {"team": "Verisk"}, "skipped_contact_pairs": [{"source_event_id": "event-1", "target_event_id": "event-dup", "skip_reason": "same_player_consecutive_contacts"}]}
+        chain = _structural_pairing_chain(row, "source", indexes, 10.0)
+        self.assertFalse(chain["demonstrated"])
+        self.assertFalse(chain["chains"][0]["gold_action_plausibility"]["demonstrated"])
+
     def test_miss_stages_use_effective_ball_evidence_without_claiming_ball_causality(self) -> None:
         ball_trace = {"effective_ball": {"nearby_positions": [{"frame": 1}]}}
         no_ball_trace = {"effective_ball": {"nearby_positions": []}}
-        self.assertEqual(_miss_root_cause({"root_cause": "NO_SOURCE_CONTACT"}, ball_trace), "CONTACT_GENERATION")
+        prerequisites = {
+            "demonstrates_contact_generation_gap": True,
+            "earliest_missing_stage": "CONTACT_GENERATION",
+        }
+        self.assertEqual(_miss_root_cause({"root_cause": "NO_SOURCE_CONTACT"}, ball_trace, contact_prerequisites=prerequisites), "CONTACT_GENERATION")
         self.assertEqual(_miss_root_cause({"root_cause": "NO_SOURCE_CONTACT"}, no_ball_trace), "UNKNOWN")
         self.assertEqual(_miss_root_cause({"root_cause": "EXCLUDED_BY_RELEASE_POLICY"}, ball_trace), "RELEASE_POLICY")
 
@@ -183,12 +205,63 @@ class PassUpstreamRootCauseAuditTests(unittest.TestCase):
         first = _deterministic_fp_sample(rows)
         self.assertEqual(first, _deterministic_fp_sample(rows))
         self.assertEqual({row["window_id"] for row in first}, {"W1", "W2", "W3", "W4", "W5", "W6"})
-        coverage = _fp_sample_coverage([
-            {"window_id": "W1", "semantic_context": "SHOT_AS_PASS", "evidence": {"duration_sec": 0.3, "confidence": 0.8, "pass_type": "same_team_pass"}},
-            {"window_id": "W2", "semantic_context": "INTERVENTION_AS_PASS", "evidence": {"duration_sec": 1.1, "confidence": 0.6, "pass_type": "turnover_or_interception", "cluster_id": "cluster-1"}},
-        ])
+        sample = [
+            {"candidate_ref": "source:isolated", "window_id": "W1", "semantic_context": "SHOT_AS_PASS", "evidence": {"duration_sec": 0.3, "confidence": 0.8, "pass_type": "same_team_pass", "cluster": {"membership": "isolated_or_singleton"}}},
+            {"candidate_ref": "source:multi", "window_id": "W2", "semantic_context": "INTERVENTION_AS_PASS", "evidence": {"duration_sec": 1.1, "confidence": 0.6, "pass_type": "turnover_or_interception", "cluster": {"membership": "multi_candidate_cluster"}}},
+        ]
+        clusters = {"source:isolated": {"cluster_size": 1}, "source:multi": {"cluster_size": 2}}
+        coverage = _fp_sample_coverage(sample, sample, clusters)
         self.assertEqual(coverage["team_relationship"], {"same_team": 1, "turnover": 1})
         self.assertEqual(coverage["cluster_membership"]["multi_candidate_cluster"], 1)
+
+    def test_singleton_cluster_id_is_not_multi_candidate_and_sample_adds_both_shapes(self) -> None:
+        evidence = {"all_candidate_clusters": [
+            {"cluster_id": "cluster-one", "size": 1, "composition": "FALSE_ONLY", "candidate_refs": ["source:one"]},
+            {"cluster_id": "cluster-two", "size": 2, "composition": "FALSE_ONLY", "candidate_refs": ["source:two", "source:three"]},
+        ]}
+        clusters = _all_candidate_cluster_index(evidence)
+        self.assertEqual(_cluster_membership("source:one", clusters)["membership"], "isolated_or_singleton")
+        self.assertEqual(_cluster_membership("source:two", clusters)["membership"], "multi_candidate_cluster")
+        rows = [
+            {"candidate_ref": "source:one", "candidate_id": "one", "window_id": "W1", "merged_release_time_sec": 1, "evaluation_label": "SHOT_AS_PASS"},
+            {"candidate_ref": "source:two", "candidate_id": "two", "window_id": "W2", "merged_release_time_sec": 2, "evaluation_label": "SHOT_AS_PASS"},
+        ]
+        selected = _deterministic_fp_sample(rows, clusters)
+        self.assertEqual(
+            {_cluster_membership(row["candidate_ref"], clusters)["membership"] for row in selected},
+            {"isolated_or_singleton", "multi_candidate_cluster"},
+        )
+
+    def test_real_fp_cluster_population_reports_singletons_and_multi_candidates(self) -> None:
+        artifact = Path(__file__).resolve().parents[1] / "benchmarks" / "contact-action-goldset-v1" / "open_play_pass_evidence_audit_v1.json"
+        report = json.loads(artifact.read_text(encoding="utf-8"))
+        clusters = _all_candidate_cluster_index(report)
+        false_rows = [row for row in report["evidence_rows"] if row["evaluation_label"] != "TRUE_PASS_MATCH"]
+        membership = [
+            _cluster_membership(row["candidate_ref"], clusters)["membership"]
+            for row in false_rows
+        ]
+        self.assertEqual(membership.count("isolated_or_singleton"), 24)
+        self.assertEqual(membership.count("multi_candidate_cluster"), 43)
+
+    def test_effective_ball_alone_does_not_prove_contact_generation(self) -> None:
+        prerequisites = _contact_generation_prerequisites(
+            {"nearby_contact_ids": []},
+            {"effective_ball": {"nearby_positions": [{"frame": 1}]}, "nearby_players": [], "possession": {"nearby_owner_frames": []}},
+        )
+        self.assertEqual(prerequisites["earliest_missing_stage"], "PLAYER_TRACK")
+        self.assertFalse(prerequisites["demonstrates_contact_generation_gap"])
+
+    def test_contact_generation_requires_all_upstream_prerequisites(self) -> None:
+        prerequisites = _contact_generation_prerequisites(
+            {"nearby_contact_ids": []},
+            {
+                "effective_ball": {"nearby_positions": [{"frame": 1}]},
+                "nearby_players": [{"stable_player_id": "A01", "stable_subject_id": "slot-a"}],
+                "possession": {"nearby_owner_frames": [{"status": "controlled", "stable_player_id": "A01", "stable_subject_id": "slot-a"}]},
+            },
+        )
+        self.assertTrue(prerequisites["demonstrates_contact_generation_gap"])
 
     def test_shared_fix_evaluation_supports_multiple_families_and_go_and_no_go(self) -> None:
         no_go = _evaluate_shared_fix_candidates([
@@ -200,8 +273,8 @@ class PassUpstreamRootCauseAuditTests(unittest.TestCase):
         self.assertFalse(any(row["qualifies_for_go"] for row in no_go))
         self.assertEqual(_go_no_go_decision(no_go), "NO_SHARED_FIX_FOUND")
         clear_go = _evaluate_shared_fix_candidates([
-            {"root_cause": "OPERATOR_DECISION_PROPAGATION_BUG", "population": "TEAM", "window_id": "W1"},
-            {"root_cause": "OPERATOR_DECISION_PROPAGATION_BUG", "population": "TEAM", "window_id": "W2"},
+            {"root_cause": "SHARED_SYNTHETIC_DEFECT", "population": "TEAM", "window_id": "W1", "engineering_assessment": {"production_layer": "synthetic runtime", "bounded_fix_scope": "one bounded synthetic guard", "gold_independent": True, "regression_risk": "acceptable", "rationale": "synthetic repeated runtime evidence"}},
+            {"root_cause": "SHARED_SYNTHETIC_DEFECT", "population": "TEAM", "window_id": "W2", "engineering_assessment": {"production_layer": "synthetic runtime", "bounded_fix_scope": "one bounded synthetic guard", "gold_independent": True, "regression_risk": "acceptable", "rationale": "synthetic repeated runtime evidence"}},
         ])
         self.assertTrue(clear_go[0]["qualifies_for_go"])
         self.assertEqual(_go_no_go_decision(clear_go), "CLEAR_SHARED_UPSTREAM_FIX")

@@ -39,6 +39,7 @@ def audit_pass_upstream_root_causes(
     team = evaluate_pass_team_attribution_v2(goldset, source_documents, global_identity_documents)
     indexes = _indexes(source_documents, global_identity_documents)
     windows = _windows(goldset)
+    cluster_by_candidate = _all_candidate_cluster_index(evidence)
 
     missed = [
         _audit_missed(row, windows, indexes)
@@ -50,7 +51,7 @@ def audit_pass_upstream_root_causes(
         row for row in evidence.get("evidence_rows") or []
         if isinstance(row, Mapping) and row.get("evaluation_label") != "TRUE_PASS_MATCH"
     ]
-    fp_sample = _audit_false_positive_sample(evidence, windows, indexes)
+    fp_sample = _audit_false_positive_sample(evidence, windows, indexes, cluster_by_candidate)
     counts = _root_cause_counts(missed, team_errors, fp_sample)
     trace_rows = _extract_traces(missed, team_errors, fp_sample)
     contact_findings = _contact_findings(missed, team_errors, fp_sample)
@@ -78,7 +79,7 @@ def audit_pass_upstream_root_causes(
         "inspected_missed_passes": missed,
         "inspected_team_attribution_errors": team_errors,
         "inspected_false_positive_sample": fp_sample,
-        "false_positive_sample_coverage": _fp_sample_coverage(fp_sample, fp_population),
+        "false_positive_sample_coverage": _fp_sample_coverage(fp_sample, fp_population, cluster_by_candidate),
         "upstream_traces": trace_rows,
         "root_cause_counts": counts["total"],
         "root_cause_by_population": counts["by_population"],
@@ -165,8 +166,9 @@ def _slot_public(slot: Mapping[str, Any]) -> dict[str, Any]:
 def _audit_missed(row: Mapping[str, Any], windows: Mapping[str, Mapping[str, Any]], indexes: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     source_id, source_time = _source_time(row, windows)
     trace = build_upstream_trace(source_id, source_time, indexes)
-    structural_chain = _structural_pairing_chain(row, source_id, indexes)
-    root = _miss_root_cause(row, trace, structural_chain)
+    structural_chain = _structural_pairing_chain(row, source_id, indexes, source_time)
+    contact_prerequisites = _contact_generation_prerequisites(row, trace)
+    root = _miss_root_cause(row, trace, structural_chain, contact_prerequisites)
     return {
         "population": "MISS",
         "gold_event_id": row.get("gold_event_id"),
@@ -182,27 +184,33 @@ def _audit_missed(row: Mapping[str, Any], windows: Mapping[str, Mapping[str, Any
             "rejection_reasons": row.get("rejection_reasons"),
             "skipped_contact_pairs": row.get("skipped_contact_pairs"),
             "structural_pairing_chain": structural_chain,
+            "contact_generation_prerequisites": contact_prerequisites,
             "effective_ball_frame_count": len(trace["effective_ball"]["nearby_positions"]),
         },
+        "engineering_assessment": _miss_engineering_assessment(root, structural_chain, contact_prerequisites),
         "upstream_trace": trace,
     }
 
 
 def _miss_root_cause(
     row: Mapping[str, Any], trace: Mapping[str, Any], structural_chain: Mapping[str, Any] | None = None,
+    contact_prerequisites: Mapping[str, Any] | None = None,
 ) -> str:
     prior = str(row.get("root_cause") or "")
     if prior == "EXCLUDED_BY_RELEASE_POLICY":
         return "RELEASE_POLICY"
     if prior == "NO_SOURCE_CONTACT":
-        return "CONTACT_GENERATION" if trace["effective_ball"]["nearby_positions"] else "UNKNOWN"
+        prerequisites = _mapping(contact_prerequisites)
+        if prerequisites.get("demonstrates_contact_generation_gap"):
+            return "CONTACT_GENERATION"
+        return str(prerequisites.get("earliest_missing_stage") or "UNKNOWN")
     if _mapping(structural_chain).get("demonstrated"):
         return "PASS_PAIR_CONSTRUCTION"
     return "UNKNOWN"
 
 
 def _structural_pairing_chain(
-    row: Mapping[str, Any], source_id: str, indexes: Mapping[str, Mapping[str, Any]],
+    row: Mapping[str, Any], source_id: str, indexes: Mapping[str, Mapping[str, Any]], source_anchor_time_sec: float | None = None,
 ) -> dict[str, Any]:
     """Require an actual event chain, not a skip merely near an approximate anchor."""
 
@@ -221,6 +229,7 @@ def _structural_pairing_chain(
         later = ordered[duplicate_index + 1] if duplicate_index >= 0 and duplicate_index + 1 < len(ordered) else {}
         source_subject = str(source.get("stable_subject_id") or "")
         later_subject = str(later.get("stable_subject_id") or "")
+        plausible_gold_link = _pair_chain_matches_gold_action(row, source, later, source_anchor_time_sec)
         # A direct source -> duplicate same-owner -> distinct immediate receiver
         # chain is structural. Any other nearby skip remains diagnostic only.
         demonstrated = (
@@ -230,12 +239,14 @@ def _structural_pairing_chain(
             and later_subject
             and later_subject != source_subject
             and _number(later.get("start_time_sec")) - _number(duplicate.get("end_time_sec")) <= 1.0
+            and plausible_gold_link["demonstrated"]
         )
         candidates.append({
             "skip_reason": skipped.get("skip_reason"),
             "source_event": _event_public(source),
             "skipped_duplicate_event": _event_public(duplicate),
             "later_distinct_event": _event_public(later),
+            "gold_action_plausibility": plausible_gold_link,
             "demonstrated": demonstrated,
         })
     return {
@@ -244,6 +255,109 @@ def _structural_pairing_chain(
         "diagnostic_signals": [
             f"NEARBY_{str(item.get('skip_reason') or 'SKIP').upper()}" for item in candidates if not item["demonstrated"]
         ],
+    }
+
+
+def _pair_chain_matches_gold_action(
+    gold_row: Mapping[str, Any], source_event: Mapping[str, Any], later_event: Mapping[str, Any], source_anchor_time_sec: float | None,
+) -> dict[str, Any]:
+    """Use manual actor/target team and anchor as plausibility, never as runtime input."""
+
+    source_team = _team_name(source_event)
+    later_team = _team_name(later_event)
+    actor_team = str(_mapping(gold_row.get("actor")).get("team") or "")
+    receiver_teams = {
+        str(_mapping(gold_row.get("target")).get("team") or ""),
+        str(_mapping(gold_row.get("interceptor")).get("team") or ""),
+    } - {""}
+    anchor = _number(source_anchor_time_sec if source_anchor_time_sec is not None else gold_row.get("gold_time_sec"))
+    source_near_anchor = abs(_number(source_event.get("start_time_sec")) - anchor) <= 1.5
+    return {
+        "source_team_matches_gold_actor": bool(actor_team and source_team == actor_team),
+        "later_team_matches_gold_target_or_interceptor": bool(receiver_teams and later_team in receiver_teams),
+        "source_near_gold_anchor": source_near_anchor,
+        "demonstrated": bool(
+            actor_team and receiver_teams and source_team == actor_team and later_team in receiver_teams and source_near_anchor
+        ),
+    }
+
+
+def _contact_generation_prerequisites(row: Mapping[str, Any], trace: Mapping[str, Any]) -> dict[str, Any]:
+    """Find the earliest missing real prerequisite before calling it contact generation."""
+
+    effective_ball = bool(_mapping(trace.get("effective_ball")).get("nearby_positions"))
+    possession = _mapping(trace.get("possession"))
+    owner_frames = possession.get("nearby_owner_frames") or []
+    nearby_players = trace.get("nearby_players") or []
+    has_player_track = any(isinstance(player, Mapping) and player.get("stable_player_id") for player in nearby_players)
+    has_stable_identity = any(isinstance(player, Mapping) and player.get("stable_subject_id") for player in nearby_players)
+    controlled_owner = any(
+        isinstance(frame, Mapping)
+        and frame.get("status") == "controlled"
+        and frame.get("stable_player_id")
+        and frame.get("stable_subject_id")
+        for frame in owner_frames
+    )
+    no_corresponding_contact = not bool(row.get("nearby_contact_ids") or [])
+    if not effective_ball:
+        earliest = "UNKNOWN"
+    elif not has_player_track:
+        earliest = "PLAYER_TRACK"
+    elif not has_stable_identity:
+        earliest = "STABLE_IDENTITY"
+    elif not controlled_owner:
+        earliest = "POSSESSION"
+    elif no_corresponding_contact:
+        earliest = "CONTACT_GENERATION"
+    else:
+        earliest = "UNKNOWN"
+    return {
+        "authoritative_effective_ball": effective_ball,
+        "nearby_player_track": has_player_track,
+        "nearby_stable_identity": has_stable_identity,
+        "controlled_possession_owner": controlled_owner,
+        "no_corresponding_contact_candidate": no_corresponding_contact,
+        "earliest_missing_stage": earliest,
+        "demonstrates_contact_generation_gap": earliest == "CONTACT_GENERATION",
+    }
+
+
+def _miss_engineering_assessment(
+    root_cause: str, structural_chain: Mapping[str, Any], prerequisites: Mapping[str, Any],
+) -> dict[str, Any]:
+    if root_cause == "PASS_PAIR_CONSTRUCTION":
+        production_layer = "pass candidate pairing"
+        chain_shapes = sorted({
+            str(item.get("skip_reason") or "unknown")
+            for item in _mapping(structural_chain).get("chains") or []
+            if isinstance(item, Mapping) and item.get("demonstrated")
+        })
+        rationale = (
+            "The demonstrated chains retain their measured skip shapes "
+            f"({', '.join(chain_shapes) or 'unknown'}), but the trace supplies no gold-independent invariant that would relax them safely."
+        )
+    elif root_cause == "CONTACT_GENERATION":
+        production_layer = "ball possession/contact generation"
+        rationale = (
+            "Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision "
+            "whose bounded change would create the missing contacts without threshold research."
+        )
+    elif root_cause == "RELEASE_POLICY":
+        production_layer = "pass release policy"
+        rationale = "The exclusion is demonstrated, but the trace does not establish a bounded relaxation that preserves known true-pass precision."
+    else:
+        production_layer = "upstream prerequisites"
+        rationale = "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change."
+    return {
+        "production_layer": production_layer,
+        "bounded_fix_scope": None,
+        "gold_independent": True,
+        "regression_risk": "high",
+        "rationale": rationale,
+        "evidence": {
+            "pairing_chain_demonstrated": bool(_mapping(structural_chain).get("demonstrated")),
+            "contact_prerequisite_stage": _mapping(prerequisites).get("earliest_missing_stage"),
+        },
     }
 
 
@@ -286,6 +400,13 @@ def _audit_team_errors(report: Mapping[str, Any], indexes: Mapping[str, Mapping[
                     "canonical_player_team": contact_evidence.get("canonical_player_team"),
                     "nearby_possession": contact_evidence.get("nearby_controlled_possession"),
                 },
+                "engineering_assessment": {
+                    "production_layer": "team attribution / identity consumption",
+                    "bounded_fix_scope": None,
+                    "gold_independent": True,
+                    "regression_risk": "high",
+                    "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified.",
+                },
                 "upstream_trace": trace,
             })
     return rows
@@ -308,11 +429,41 @@ def _team_error_root_cause(expected_team: str, trace: Mapping[str, Any]) -> str:
     return "UNKNOWN"
 
 
+def _all_candidate_cluster_index(evidence: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map every candidate to the symmetric all-candidate cluster contract."""
+
+    output: dict[str, dict[str, Any]] = {}
+    for cluster in evidence.get("all_candidate_clusters") or []:
+        if not isinstance(cluster, Mapping):
+            continue
+        cluster_id = cluster.get("cluster_id")
+        cluster_size = int(cluster.get("size") or 0)
+        for candidate_ref in cluster.get("candidate_refs") or []:
+            output[str(candidate_ref)] = {
+                "cluster_id": cluster_id,
+                "cluster_size": cluster_size,
+                "composition": cluster.get("composition"),
+            }
+    return output
+
+
+def _cluster_membership(candidate_ref: Any, cluster_by_candidate: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    cluster = _mapping(cluster_by_candidate.get(str(candidate_ref)))
+    cluster_size = int(cluster.get("cluster_size") or 0)
+    return {
+        "cluster_id": cluster.get("cluster_id"),
+        "cluster_size": cluster_size or None,
+        "composition": cluster.get("composition"),
+        "membership": "multi_candidate_cluster" if cluster_size > 1 else "isolated_or_singleton",
+    }
+
+
 def _audit_false_positive_sample(
     evidence: Mapping[str, Any], windows: Mapping[str, Mapping[str, Any]], indexes: Mapping[str, Mapping[str, Any]],
+    cluster_by_candidate: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     rows = [row for row in evidence.get("evidence_rows") or [] if isinstance(row, Mapping) and row.get("evaluation_label") != "TRUE_PASS_MATCH"]
-    selected = _deterministic_fp_sample(rows)
+    selected = _deterministic_fp_sample(rows, cluster_by_candidate)
     output: list[dict[str, Any]] = []
     for row in selected:
         source_id = str(row.get("source_match_id") or "")
@@ -322,6 +473,7 @@ def _audit_false_positive_sample(
         trace = build_upstream_trace(source_id, time_sec, indexes, row.get("source_contact_event_id"))
         classification = str(row.get("evaluation_label") or "UNMATCHED_PASS_CANDIDATE")
         structural_chain = _fp_structural_chain(classification, trace)
+        cluster = _cluster_membership(row.get("candidate_ref"), cluster_by_candidate)
         output.append({
             "population": "FP_SAMPLE",
             "candidate_ref": row.get("candidate_ref"),
@@ -338,15 +490,24 @@ def _audit_false_positive_sample(
                 "duration_sec": _mapping(row.get("runtime_evidence")).get("duration_sec"),
                 "confidence": _mapping(row.get("automatic")).get("confidence"),
                 "pass_type": _mapping(row.get("automatic")).get("pass_type"),
-                "cluster_id": row.get("false_positive_cluster_id"),
+                "cluster": cluster,
                 "structural_chain": structural_chain,
+            },
+            "engineering_assessment": {
+                "production_layer": "candidate semantics / contact sequence",
+                "bounded_fix_scope": None,
+                "gold_independent": True,
+                "regression_risk": "high",
+                "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change.",
             },
             "upstream_trace": trace,
         })
     return output
 
 
-def _deterministic_fp_sample(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+def _deterministic_fp_sample(
+    rows: Sequence[Mapping[str, Any]], cluster_by_candidate: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[Mapping[str, Any]]:
     by_label: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for row in rows:
         by_label[str(row.get("evaluation_label") or "UNMATCHED_PASS_CANDIDATE")].append(row)
@@ -357,7 +518,39 @@ def _deterministic_fp_sample(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[
     selected.extend(_spread_generic_sample(generic, GENERIC_FP_LIMIT))
     for label in sorted(by_label):
         selected.extend(_stable_sample(by_label[label], 1))
-    return selected
+    return _ensure_cluster_representation(selected, rows, cluster_by_candidate or {})
+
+
+def _ensure_cluster_representation(
+    selected: Sequence[Mapping[str, Any]], all_rows: Sequence[Mapping[str, Any]], cluster_by_candidate: Mapping[str, Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Add at most one deterministic representative for each available shape."""
+
+    output = list(selected)
+    selected_refs = {str(row.get("candidate_ref") or "") for row in output}
+    available = {
+        _cluster_membership(row.get("candidate_ref"), cluster_by_candidate)["membership"]
+        for row in all_rows
+    }
+    represented = {
+        _cluster_membership(row.get("candidate_ref"), cluster_by_candidate)["membership"]
+        for row in output
+    }
+    for membership in ("isolated_or_singleton", "multi_candidate_cluster"):
+        if membership not in available or membership in represented:
+            continue
+        representative = next(
+            (
+                row for row in sorted(all_rows, key=_sample_key)
+                if str(row.get("candidate_ref") or "") not in selected_refs
+                and _cluster_membership(row.get("candidate_ref"), cluster_by_candidate)["membership"] == membership
+            ),
+            None,
+        )
+        if representative is not None:
+            output.append(representative)
+            selected_refs.add(str(representative.get("candidate_ref") or ""))
+    return output
 
 
 def _stable_sample(rows: Sequence[Mapping[str, Any]], limit: int) -> list[Mapping[str, Any]]:
@@ -693,18 +886,21 @@ def _evaluate_shared_fix_candidates(records: Sequence[Mapping[str, Any]]) -> lis
     for cause, rows in sorted(families.items()):
         populations = sorted({str(row.get("population") or "unknown") for row in rows})
         windows = sorted({str(row.get("window_id") or "unknown") for row in rows})
-        layer, scope, risk = _fix_family_assessment(cause)
+        assessment = _aggregate_engineering_assessment(rows)
+        scope = assessment["bounded_fix_scope"]
+        risk = assessment["regression_risk"]
         repeated = len(rows) > 1
-        qualifies = bool(scope and risk == "acceptable" and repeated)
+        qualifies = bool(scope and assessment["gold_independent"] and risk == "acceptable" and repeated)
         result.append({
             "root_cause": cause,
             "count": len(rows),
             "affected_populations": populations,
             "affected_windows": windows,
-            "production_layer": layer,
+            "production_layer": assessment["production_layer"],
             "bounded_fix_scope": scope,
-            "gold_independent": True,
+            "gold_independent": assessment["gold_independent"],
             "regression_risk": risk,
+            "rationale": assessment["rationale"],
             "support_character": "repeated demonstrated evidence" if repeated else "single demonstrated instance",
             "qualifies_for_go": qualifies,
             "decision": "candidate" if qualifies else "rejected",
@@ -713,21 +909,30 @@ def _evaluate_shared_fix_candidates(records: Sequence[Mapping[str, Any]]) -> lis
     return result
 
 
-def _fix_family_assessment(cause: str) -> tuple[str, str | None, str]:
-    assessments = {
-        "OPERATOR_DECISION_PROPAGATION_BUG": ("identity downstream consumption", "propagate existing durable operator team decision", "acceptable"),
-        "WRONG_CONTACT_PLAYER": ("contact candidate generation", None, "high"),
-        "WRONG_POSSESSION_OWNER": ("ball possession owner selection", None, "high"),
-        "CONTACT_GENERATION": ("ball possession/contact generation", None, "high"),
-        "PASS_PAIR_CONSTRUCTION": ("pass candidate pairing", None, "high"),
-        "RELEASE_POLICY": ("pass release policy", None, "high"),
-        "CONTACT_FRAGMENTATION": ("contact segmentation", None, "high"),
-        "SHOT_REBOUND_CHAIN": ("football action semantics", None, "high"),
-        "INTERVENTION_CHAIN": ("football action semantics", None, "high"),
-        "CONTINUED_CONTROL_FRAGMENTATION": ("contact segmentation", None, "high"),
-        "UNKNOWN": ("undetermined", None, "unknown"),
+def _aggregate_engineering_assessment(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Assess a measured family from its supplied evidence, never its name."""
+
+    assessments = [_mapping(row.get("engineering_assessment")) for row in rows]
+    populated = [assessment for assessment in assessments if assessment]
+    if not populated:
+        return {
+            "production_layer": "undetermined",
+            "bounded_fix_scope": None,
+            "gold_independent": False,
+            "regression_risk": "unknown",
+            "rationale": "No engineering assessment was supplied by the measured trace.",
+        }
+    scopes = {str(item.get("bounded_fix_scope")) for item in populated if item.get("bounded_fix_scope")}
+    layers = {str(item.get("production_layer")) for item in populated if item.get("production_layer")}
+    risks = {str(item.get("regression_risk") or "unknown") for item in populated}
+    rationales = sorted({str(item.get("rationale")) for item in populated if item.get("rationale")})
+    return {
+        "production_layer": next(iter(layers)) if len(layers) == 1 else "multiple_or_undetermined",
+        "bounded_fix_scope": next(iter(scopes)) if len(scopes) == 1 else None,
+        "gold_independent": all(bool(item.get("gold_independent")) for item in populated),
+        "regression_risk": "acceptable" if risks == {"acceptable"} else "high" if "high" in risks else "unknown",
+        "rationale": " ".join(rationales) or "No evidence-backed bounded engineering assessment is available.",
     }
-    return assessments.get(cause, ("unknown", None, "high"))
 
 
 def _fix_rejection_reason(scope: str | None, risk: str, repeated: bool) -> str | None:
@@ -746,6 +951,7 @@ def _go_no_go_decision(candidates: Sequence[Mapping[str, Any]]) -> str:
 
 def _fp_sample_coverage(
     rows: Sequence[Mapping[str, Any]], population_rows: Sequence[Mapping[str, Any]] = (),
+    cluster_by_candidate: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     durations = Counter(_duration_bucket(_number(_mapping(row.get("evidence")).get("duration_sec"))) for row in rows)
     classifications = Counter(str(row.get("semantic_context") or "unknown") for row in rows)
@@ -758,9 +964,9 @@ def _fp_sample_coverage(
         for evidence in evidence_rows
     )
     confidence = Counter(_confidence_bucket(_number(evidence.get("confidence"))) for evidence in evidence_rows)
+    clusters = cluster_by_candidate or {}
     population_cluster_membership = Counter(
-        "multi_candidate_cluster" if row.get("false_positive_cluster_id") else "isolated_or_unclustered"
-        for row in population_rows
+        _cluster_membership(row.get("candidate_ref"), clusters)["membership"] for row in population_rows
     )
     return {
         "sample_count": len(rows),
@@ -770,7 +976,7 @@ def _fp_sample_coverage(
         "pass_type": dict(sorted(pass_types.items())),
         "team_relationship": dict(sorted(relationships.items())),
         "cluster_membership": dict(sorted(Counter(
-            "multi_candidate_cluster" if _mapping(row.get("evidence")).get("cluster_id") else "isolated_or_unclustered" for row in rows
+            _mapping(_mapping(row.get("evidence")).get("cluster")).get("membership") or "isolated_or_singleton" for row in rows
         ).items())),
         "population_cluster_membership": dict(sorted(population_cluster_membership.items())),
         "confidence_buckets": dict(sorted(confidence.items())),

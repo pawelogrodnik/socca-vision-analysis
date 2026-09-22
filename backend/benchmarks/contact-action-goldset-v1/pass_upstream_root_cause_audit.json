@@ -34,7 +34,27 @@
           "chains": [],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": true,
+          "earliest_missing_stage": "CONTACT_GENERATION",
+          "demonstrates_contact_generation_gap": true
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "ball possession/contact generation",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision whose bounded change would create the missing contacts without threshold research.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "CONTACT_GENERATION"
+        }
       },
       "trace_id": "trace-001"
     },
@@ -116,12 +136,38 @@
                 "confidence": 0.75,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
+              },
               "demonstrated": true
             }
           ],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "pass candidate pairing",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The demonstrated chains retain their measured skip shapes (same_player_consecutive_contacts), but the trace supplies no gold-independent invariant that would relax them safely.",
+        "evidence": {
+          "pairing_chain_demonstrated": true,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-002"
     },
@@ -144,7 +190,27 @@
           "chains": [],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": true,
+          "earliest_missing_stage": "CONTACT_GENERATION",
+          "demonstrates_contact_generation_gap": true
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "ball possession/contact generation",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision whose bounded change would create the missing contacts without threshold research.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "CONTACT_GENERATION"
+        }
       },
       "trace_id": "trace-003"
     },
@@ -156,7 +222,7 @@
       "source_match_id": "6d8fc20c",
       "source_time_sec": 117.0,
       "prior_evidence_root_cause": "UNKNOWN",
-      "root_cause": "PASS_PAIR_CONSTRUCTION",
+      "root_cause": "UNKNOWN",
       "evidence": {
         "nearby_contact_ids": [
           "event-0051"
@@ -176,7 +242,7 @@
           }
         ],
         "structural_pairing_chain": {
-          "demonstrated": true,
+          "demonstrated": false,
           "chains": [
             {
               "skip_reason": "same_player_consecutive_contacts",
@@ -225,12 +291,40 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
-              "demonstrated": true
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
+              "demonstrated": false
             }
           ],
-          "diagnostic_signals": []
+          "diagnostic_signals": [
+            "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
+          ]
+        },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
         },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-004"
     },
@@ -242,7 +336,7 @@
       "source_match_id": "6d8fc20c",
       "source_time_sec": 167.0,
       "prior_evidence_root_cause": "UNKNOWN",
-      "root_cause": "PASS_PAIR_CONSTRUCTION",
+      "root_cause": "UNKNOWN",
       "evidence": {
         "nearby_contact_ids": [
           "event-0072",
@@ -284,7 +378,7 @@
           }
         ],
         "structural_pairing_chain": {
-          "demonstrated": true,
+          "demonstrated": false,
           "chains": [
             {
               "skip_reason": "same_player_consecutive_contacts",
@@ -332,6 +426,12 @@
                 "review_status": "uncertain",
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
+              },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": false,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
               },
               "demonstrated": false
             },
@@ -381,6 +481,12 @@
                 "review_status": "uncertain",
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
+              },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": false,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
               },
               "demonstrated": false
             },
@@ -431,15 +537,42 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
-              "demonstrated": true
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": false,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
+              "demonstrated": false
             }
           ],
           "diagnostic_signals": [
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS",
+            "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS",
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-005"
     },
@@ -521,6 +654,12 @@
                 "confidence": 0.836,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
+              },
               "demonstrated": false
             }
           ],
@@ -528,7 +667,27 @@
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-006"
     },
@@ -540,7 +699,7 @@
       "source_match_id": "6d8fc20c",
       "source_time_sec": 200.7,
       "prior_evidence_root_cause": "UNKNOWN",
-      "root_cause": "PASS_PAIR_CONSTRUCTION",
+      "root_cause": "UNKNOWN",
       "evidence": {
         "nearby_contact_ids": [
           "event-0110",
@@ -571,7 +730,7 @@
           }
         ],
         "structural_pairing_chain": {
-          "demonstrated": true,
+          "demonstrated": false,
           "chains": [
             {
               "skip_reason": "same_player_consecutive_contacts",
@@ -619,6 +778,12 @@
                 "review_status": "accepted",
                 "confidence": 0.8969,
                 "source": "contact_candidates_to_event_candidates_v1"
+              },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
               },
               "demonstrated": false
             },
@@ -669,14 +834,41 @@
                 "confidence": 0.825,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
-              "demonstrated": true
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
+              "demonstrated": false
             }
           ],
           "diagnostic_signals": [
+            "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS",
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-007"
     },
@@ -760,7 +952,7 @@
           }
         ],
         "structural_pairing_chain": {
-          "demonstrated": true,
+          "demonstrated": false,
           "chains": [
             {
               "skip_reason": "same_player_consecutive_contacts",
@@ -809,7 +1001,13 @@
                 "confidence": 0.825,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
-              "demonstrated": true
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
+              "demonstrated": false
             },
             {
               "skip_reason": "same_player_consecutive_contacts",
@@ -858,6 +1056,12 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": false,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
               "demonstrated": false
             },
             {
@@ -907,7 +1111,13 @@
                 "confidence": 0.8621,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
-              "demonstrated": true
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": false,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
+              "demonstrated": false
             },
             {
               "skip_reason": "gap_too_short",
@@ -956,15 +1166,43 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": false,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
               "demonstrated": false
             }
           ],
           "diagnostic_signals": [
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS",
+            "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS",
+            "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS",
             "NEARBY_GAP_TOO_SHORT"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "pass release policy",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The exclusion is demonstrated, but the trace does not establish a bounded relaxation that preserves known true-pass precision.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-008"
     },
@@ -976,7 +1214,7 @@
       "source_match_id": "6d8fc20c",
       "source_time_sec": 256.7,
       "prior_evidence_root_cause": "UNKNOWN",
-      "root_cause": "PASS_PAIR_CONSTRUCTION",
+      "root_cause": "UNKNOWN",
       "evidence": {
         "nearby_contact_ids": [
           "event-0137"
@@ -996,7 +1234,7 @@
           }
         ],
         "structural_pairing_chain": {
-          "demonstrated": true,
+          "demonstrated": false,
           "chains": [
             {
               "skip_reason": "same_player_consecutive_contacts",
@@ -1045,12 +1283,40 @@
                 "confidence": 0.7643,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
-              "demonstrated": true
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": false,
+                "demonstrated": false
+              },
+              "demonstrated": false
             }
           ],
-          "diagnostic_signals": []
+          "diagnostic_signals": [
+            "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
+          ]
+        },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
         },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-009"
     },
@@ -1073,7 +1339,27 @@
           "chains": [],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": true,
+          "earliest_missing_stage": "CONTACT_GENERATION",
+          "demonstrates_contact_generation_gap": true
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "ball possession/contact generation",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision whose bounded change would create the missing contacts without threshold research.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "CONTACT_GENERATION"
+        }
       },
       "trace_id": "trace-010"
     },
@@ -1098,7 +1384,27 @@
           "chains": [],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-011"
     },
@@ -1110,7 +1416,7 @@
       "source_match_id": "5e62625e",
       "source_time_sec": 151.122,
       "prior_evidence_root_cause": "NO_SOURCE_CONTACT",
-      "root_cause": "CONTACT_GENERATION",
+      "root_cause": "POSSESSION",
       "evidence": {
         "nearby_contact_ids": [],
         "nearby_pass_candidate_ids": [],
@@ -1121,7 +1427,27 @@
           "chains": [],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": true,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-012"
     },
@@ -1212,6 +1538,12 @@
                 "confidence": 0.75,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": false,
+                "demonstrated": false
+              },
               "demonstrated": false
             },
             {
@@ -1261,6 +1593,12 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": false,
+                "demonstrated": false
+              },
               "demonstrated": false
             }
           ],
@@ -1269,7 +1607,27 @@
             "NEARBY_GAP_TOO_LONG"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-013"
     },
@@ -1372,6 +1730,12 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
+              },
               "demonstrated": false
             },
             {
@@ -1420,6 +1784,12 @@
                 "review_status": "accepted",
                 "confidence": 0.75,
                 "source": "contact_candidates_to_event_candidates_v1"
+              },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
               },
               "demonstrated": false
             },
@@ -1470,6 +1840,12 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
               "demonstrated": false
             }
           ],
@@ -1479,7 +1855,27 @@
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-014"
     },
@@ -1582,6 +1978,12 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
+              },
               "demonstrated": false
             },
             {
@@ -1630,6 +2032,12 @@
                 "review_status": "accepted",
                 "confidence": 0.75,
                 "source": "contact_candidates_to_event_candidates_v1"
+              },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
               },
               "demonstrated": false
             },
@@ -1680,6 +2088,12 @@
                 "confidence": 0.5,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": false,
+                "source_near_gold_anchor": true,
+                "demonstrated": false
+              },
               "demonstrated": false
             }
           ],
@@ -1689,7 +2103,27 @@
             "NEARBY_SAME_PLAYER_CONSECUTIVE_CONTACTS"
           ]
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "upstream prerequisites",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-015"
     },
@@ -1778,12 +2212,38 @@
                 "confidence": 0.7759,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
+              },
               "demonstrated": true
             }
           ],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": false,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "POSSESSION",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "pass release policy",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The exclusion is demonstrated, but the trace does not establish a bounded relaxation that preserves known true-pass precision.",
+        "evidence": {
+          "pairing_chain_demonstrated": true,
+          "contact_prerequisite_stage": "POSSESSION"
+        }
       },
       "trace_id": "trace-016"
     },
@@ -1872,12 +2332,38 @@
                 "confidence": 0.7759,
                 "source": "contact_candidates_to_event_candidates_v1"
               },
+              "gold_action_plausibility": {
+                "source_team_matches_gold_actor": true,
+                "later_team_matches_gold_target_or_interceptor": true,
+                "source_near_gold_anchor": true,
+                "demonstrated": true
+              },
               "demonstrated": true
             }
           ],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": false,
+          "earliest_missing_stage": "UNKNOWN",
+          "demonstrates_contact_generation_gap": false
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "pass release policy",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The exclusion is demonstrated, but the trace does not establish a bounded relaxation that preserves known true-pass precision.",
+        "evidence": {
+          "pairing_chain_demonstrated": true,
+          "contact_prerequisite_stage": "UNKNOWN"
+        }
       },
       "trace_id": "trace-017"
     },
@@ -1900,7 +2386,27 @@
           "chains": [],
           "diagnostic_signals": []
         },
+        "contact_generation_prerequisites": {
+          "authoritative_effective_ball": true,
+          "nearby_player_track": true,
+          "nearby_stable_identity": true,
+          "controlled_possession_owner": true,
+          "no_corresponding_contact_candidate": true,
+          "earliest_missing_stage": "CONTACT_GENERATION",
+          "demonstrates_contact_generation_gap": true
+        },
         "effective_ball_frame_count": 18
+      },
+      "engineering_assessment": {
+        "production_layer": "ball possession/contact generation",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision whose bounded change would create the missing contacts without threshold research.",
+        "evidence": {
+          "pairing_chain_demonstrated": false,
+          "contact_prerequisite_stage": "CONTACT_GENERATION"
+        }
       },
       "trace_id": "trace-018"
     }
@@ -1966,6 +2472,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-019"
     },
@@ -2042,6 +2555,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-020"
     },
     {
@@ -2116,6 +2636,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-021"
     },
@@ -2192,6 +2719,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-022"
     },
     {
@@ -2267,6 +2801,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-023"
     },
     {
@@ -2317,6 +2858,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-024"
     },
@@ -2393,6 +2941,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-025"
     },
     {
@@ -2468,6 +3023,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-026"
     },
     {
@@ -2537,6 +3099,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-027"
     },
     {
@@ -2605,6 +3174,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-028"
     },
@@ -2681,6 +3257,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-029"
     },
     {
@@ -2731,6 +3314,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-030"
     },
@@ -2807,6 +3397,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-031"
     },
     {
@@ -2858,6 +3455,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-032"
     },
     {
@@ -2908,6 +3512,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-033"
     },
@@ -2971,6 +3582,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-034"
     },
@@ -3041,6 +3659,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-035"
     },
     {
@@ -3109,6 +3734,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-036"
     },
@@ -3185,6 +3817,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-037"
     },
     {
@@ -3259,6 +3898,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-038"
     },
@@ -3335,6 +3981,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-039"
     },
     {
@@ -3409,6 +4062,13 @@
             }
           ]
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
       },
       "trace_id": "trace-040"
     },
@@ -3485,6 +4145,13 @@
           ]
         }
       },
+      "engineering_assessment": {
+        "production_layer": "team attribution / identity consumption",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified."
+      },
       "trace_id": "trace-041"
     }
   ],
@@ -3505,11 +4172,23 @@
         "duration_sec": 0.434,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-033",
+        "cluster": {
+          "cluster_id": "candidate-cluster-046",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-042"
     },
@@ -3529,11 +4208,23 @@
         "duration_sec": 0.367,
         "confidence": 0.5625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-039",
+        "cluster": {
+          "cluster_id": "candidate-cluster-055",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-043"
     },
@@ -3553,11 +4244,23 @@
         "duration_sec": 0.8,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-041",
+        "cluster": {
+          "cluster_id": "candidate-cluster-057",
+          "cluster_size": 3,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-044"
     },
@@ -3577,11 +4280,23 @@
         "duration_sec": 0.333,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-041",
+        "cluster": {
+          "cluster_id": "candidate-cluster-057",
+          "cluster_size": 3,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-045"
     },
@@ -3601,11 +4316,23 @@
         "duration_sec": 0.1,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-001",
+        "cluster": {
+          "cluster_id": "candidate-cluster-001",
+          "cluster_size": 6,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-046"
     },
@@ -3625,11 +4352,23 @@
         "duration_sec": 0.067,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-001",
+        "cluster": {
+          "cluster_id": "candidate-cluster-001",
+          "cluster_size": 6,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-047"
     },
@@ -3649,11 +4388,23 @@
         "duration_sec": 0.267,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-035",
+        "cluster": {
+          "cluster_id": "candidate-cluster-048",
+          "cluster_size": 2,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-048"
     },
@@ -3673,11 +4424,23 @@
         "duration_sec": 3.604,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-035",
+        "cluster": {
+          "cluster_id": "candidate-cluster-048",
+          "cluster_size": 2,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-049"
     },
@@ -3697,11 +4460,23 @@
         "duration_sec": 0.3,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-038",
+        "cluster": {
+          "cluster_id": "candidate-cluster-051",
+          "cluster_size": 3,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-050"
     },
@@ -3721,11 +4496,23 @@
         "duration_sec": 0.3,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-038",
+        "cluster": {
+          "cluster_id": "candidate-cluster-051",
+          "cluster_size": 3,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-051"
     },
@@ -3745,11 +4532,23 @@
         "duration_sec": 1.034,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-038",
+        "cluster": {
+          "cluster_id": "candidate-cluster-051",
+          "cluster_size": 3,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-052"
     },
@@ -3769,11 +4568,23 @@
         "duration_sec": 1.001,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-002",
+        "cluster": {
+          "cluster_id": "candidate-cluster-002",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-053"
     },
@@ -3793,11 +4604,23 @@
         "duration_sec": 1.535,
         "confidence": 0.5774,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-011",
+        "cluster": {
+          "cluster_id": "candidate-cluster-012",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-054"
     },
@@ -3817,11 +4640,23 @@
         "duration_sec": 1.134,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-036",
+        "cluster": {
+          "cluster_id": "candidate-cluster-049",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-055"
     },
@@ -3841,11 +4676,23 @@
         "duration_sec": 1.334,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-021",
+        "cluster": {
+          "cluster_id": "candidate-cluster-025",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-056"
     },
@@ -3865,11 +4712,23 @@
         "duration_sec": 2.602,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-040",
+        "cluster": {
+          "cluster_id": "candidate-cluster-056",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-057"
     },
@@ -3889,11 +4748,23 @@
         "duration_sec": 0.701,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-001",
+        "cluster": {
+          "cluster_id": "candidate-cluster-001",
+          "cluster_size": 6,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-058"
     },
@@ -3913,11 +4784,23 @@
         "duration_sec": 0.234,
         "confidence": 0.5982,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-001",
+        "cluster": {
+          "cluster_id": "candidate-cluster-001",
+          "cluster_size": 6,
+          "composition": "FALSE_ONLY",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-059"
     },
@@ -3937,11 +4820,23 @@
         "duration_sec": 0.133,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-026",
+        "cluster": {
+          "cluster_id": "candidate-cluster-037",
+          "cluster_size": 2,
+          "composition": "MIXED",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-060"
     },
@@ -3961,11 +4856,23 @@
         "duration_sec": 0.301,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-037",
+        "cluster": {
+          "cluster_id": "candidate-cluster-050",
+          "cluster_size": 2,
+          "composition": "MIXED",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-061"
     },
@@ -3985,11 +4892,23 @@
         "duration_sec": 3.069,
         "confidence": 0.75,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-015",
+        "cluster": {
+          "cluster_id": "candidate-cluster-016",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-062"
     },
@@ -4009,11 +4928,23 @@
         "duration_sec": 0.067,
         "confidence": 0.2625,
         "pass_type": "turnover_or_interception",
-        "cluster_id": "fp-cluster-022",
+        "cluster": {
+          "cluster_id": "candidate-cluster-029",
+          "cluster_size": 2,
+          "composition": "MIXED",
+          "membership": "multi_candidate_cluster"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-063"
     },
@@ -4033,11 +4964,23 @@
         "duration_sec": 1.735,
         "confidence": 0.35,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-004",
+        "cluster": {
+          "cluster_id": "candidate-cluster-004",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-064"
     },
@@ -4057,11 +5000,23 @@
         "duration_sec": 4.171,
         "confidence": 0.3443,
         "pass_type": "same_team_pass",
-        "cluster_id": "fp-cluster-008",
+        "cluster": {
+          "cluster_id": "candidate-cluster-009",
+          "cluster_size": 1,
+          "composition": "FALSE_ONLY",
+          "membership": "isolated_or_singleton"
+        },
         "structural_chain": {
           "demonstrated": false,
           "reason": "semantic_context_without_runtime_chain"
         }
+      },
+      "engineering_assessment": {
+        "production_layer": "candidate semantics / contact sequence",
+        "bounded_fix_scope": null,
+        "gold_independent": true,
+        "regression_risk": "high",
+        "rationale": "The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change."
       },
       "trace_id": "trace-065"
     }
@@ -4098,10 +5053,12 @@
       "turnover": 15
     },
     "cluster_membership": {
-      "multi_candidate_cluster": 24
+      "isolated_or_singleton": 10,
+      "multi_candidate_cluster": 14
     },
     "population_cluster_membership": {
-      "multi_candidate_cluster": 67
+      "isolated_or_singleton": 24,
+      "multi_candidate_cluster": 43
     },
     "confidence_buckets": {
       "high_>=0.75": 1,
@@ -75460,17 +76417,19 @@
     }
   ],
   "root_cause_counts": {
-    "UNKNOWN": 52,
-    "CONTACT_GENERATION": 5,
-    "PASS_PAIR_CONSTRUCTION": 5,
-    "RELEASE_POLICY": 3
+    "UNKNOWN": 56,
+    "CONTACT_GENERATION": 4,
+    "RELEASE_POLICY": 3,
+    "PASS_PAIR_CONSTRUCTION": 1,
+    "POSSESSION": 1
   },
   "root_cause_by_population": {
     "MISS": {
-      "CONTACT_GENERATION": 5,
-      "PASS_PAIR_CONSTRUCTION": 5,
+      "CONTACT_GENERATION": 4,
+      "PASS_PAIR_CONSTRUCTION": 1,
+      "POSSESSION": 1,
       "RELEASE_POLICY": 3,
-      "UNKNOWN": 5
+      "UNKNOWN": 9
     },
     "TEAM": {
       "UNKNOWN": 23
@@ -75490,27 +76449,26 @@
       "UNKNOWN": 10
     },
     "W3": {
-      "PASS_PAIR_CONSTRUCTION": 2,
-      "UNKNOWN": 8
+      "UNKNOWN": 10
     },
     "W4": {
       "CONTACT_GENERATION": 1,
-      "PASS_PAIR_CONSTRUCTION": 2,
       "RELEASE_POLICY": 1,
-      "UNKNOWN": 8
+      "UNKNOWN": 10
     },
     "W5": {
       "UNKNOWN": 10
     },
     "W6": {
-      "CONTACT_GENERATION": 2,
+      "CONTACT_GENERATION": 1,
+      "POSSESSION": 1,
       "RELEASE_POLICY": 2,
       "UNKNOWN": 6
     }
   },
   "contact_player_association_findings": {
     "wrong_possession_owner_demonstrated": 0,
-    "misses_with_explicit_pair_skip": 5,
+    "misses_with_explicit_pair_skip": 1,
     "fp_samples_with_contact_fragmentation": 0,
     "conclusion": "No contact-player selector defect is asserted unless a closer opposite-team production candidate is present in the trace."
   },
@@ -75519,7 +76477,7 @@
     "true_only": 4,
     "false_only": 9,
     "mixed": 8,
-    "miss_pair_construction_count": 5,
+    "miss_pair_construction_count": 1,
     "fp_fragmentation_asserted": 0,
     "conclusion": "Cluster density remains non-selective because mixed clusters contain genuine passes; no suppression recommendation follows."
   },
@@ -75538,7 +76496,7 @@
   "shared_fix_candidates": [
     {
       "root_cause": "CONTACT_GENERATION",
-      "count": 5,
+      "count": 4,
       "affected_populations": [
         "MISS"
       ],
@@ -75552,6 +76510,7 @@
       "bounded_fix_scope": null,
       "gold_independent": true,
       "regression_risk": "high",
+      "rationale": "Ball, tracked/stable player and controlled-possession prerequisites are present, but the audit does not identify one shared production decision whose bounded change would create the missing contacts without threshold research.",
       "support_character": "repeated demonstrated evidence",
       "qualifies_for_go": false,
       "decision": "rejected",
@@ -75559,20 +76518,38 @@
     },
     {
       "root_cause": "PASS_PAIR_CONSTRUCTION",
-      "count": 5,
+      "count": 1,
       "affected_populations": [
         "MISS"
       ],
       "affected_windows": [
-        "W1",
-        "W3",
-        "W4"
+        "W1"
       ],
       "production_layer": "pass candidate pairing",
       "bounded_fix_scope": null,
       "gold_independent": true,
       "regression_risk": "high",
-      "support_character": "repeated demonstrated evidence",
+      "rationale": "The demonstrated chains retain their measured skip shapes (same_player_consecutive_contacts), but the trace supplies no gold-independent invariant that would relax them safely.",
+      "support_character": "single demonstrated instance",
+      "qualifies_for_go": false,
+      "decision": "rejected",
+      "rejection_reason": "No demonstrated bounded general production fix; retain this family as diagnostic evidence only."
+    },
+    {
+      "root_cause": "POSSESSION",
+      "count": 1,
+      "affected_populations": [
+        "MISS"
+      ],
+      "affected_windows": [
+        "W6"
+      ],
+      "production_layer": "upstream prerequisites",
+      "bounded_fix_scope": null,
+      "gold_independent": true,
+      "regression_risk": "high",
+      "rationale": "The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change.",
+      "support_character": "single demonstrated instance",
       "qualifies_for_go": false,
       "decision": "rejected",
       "rejection_reason": "No demonstrated bounded general production fix; retain this family as diagnostic evidence only."
@@ -75591,6 +76568,7 @@
       "bounded_fix_scope": null,
       "gold_independent": true,
       "regression_risk": "high",
+      "rationale": "The exclusion is demonstrated, but the trace does not establish a bounded relaxation that preserves known true-pass precision.",
       "support_character": "repeated demonstrated evidence",
       "qualifies_for_go": false,
       "decision": "rejected",
@@ -75598,7 +76576,7 @@
     },
     {
       "root_cause": "UNKNOWN",
-      "count": 52,
+      "count": 56,
       "affected_populations": [
         "FP_SAMPLE",
         "MISS",
@@ -75612,10 +76590,11 @@
         "W5",
         "W6"
       ],
-      "production_layer": "undetermined",
+      "production_layer": "multiple_or_undetermined",
       "bounded_fix_scope": null,
       "gold_independent": true,
-      "regression_risk": "unknown",
+      "regression_risk": "high",
+      "rationale": "No independent contact-player alternative or operator-propagation contradiction is demonstrated, so a bounded team-attribution change cannot be specified. The earliest demonstrated stage is insufficient to specify a bounded, gold-independent production change. The semantic label is gold-relative context; the persisted runtime trace has no structural chain that identifies a safe production change.",
       "support_character": "repeated demonstrated evidence",
       "qualifies_for_go": false,
       "decision": "rejected",
