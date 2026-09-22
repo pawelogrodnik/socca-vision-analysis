@@ -339,6 +339,26 @@ class BallPossessionTests(unittest.TestCase):
         self.assertEqual(pass_doc["candidates"][0]["restart_type"], "kick_in")
         self.assertEqual(pass_doc["candidates"][0]["from_team_label"], "A")
 
+    def test_restart_candidate_generation_is_independent_of_pass_policy(self) -> None:
+        ball_rows = [ball(frame, 0.2, 20.0) for frame in range(10)]
+        ball_rows.extend([ball(10, 1.2, 20.0), ball(11, 2.2, 20.0), ball(12, 3.2, 20.0)])
+        stable_doc = {
+            "players": [
+                stable_player("A01", "A", [(frame, 0.45, 20.0) for frame in range(10)]),
+                stable_player("A02", "A", [(12, 3.35, 20.0)]),
+            ]
+        }
+        possession = build_possession_candidates_document({"positions": ball_rows}, stable_doc, fps=30)
+        first = build_restart_candidates_document(
+            {"positions": ball_rows}, possession, stable_doc, fps=30,
+            parameters={"pitch_width_m": 30.0, "pitch_length_m": 47.4},
+        )
+        second = build_restart_candidates_document(
+            {"positions": ball_rows}, possession, stable_doc, fps=30,
+            parameters={"pitch_width_m": 30.0, "pitch_length_m": 47.4},
+        )
+        self.assertEqual(first["candidates"], second["candidates"])
+
     def test_ground_restart_can_infer_team_from_last_touch_out_of_play(self) -> None:
         ball_rows = [ball(0, 29.0, 20.0)]
         ball_rows.extend(ball(frame, 0.0, 0.0, source="unknown") for frame in range(1, 5))

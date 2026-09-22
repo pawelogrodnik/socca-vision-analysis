@@ -75,7 +75,11 @@ def summarize_source_tree_snapshot(snapshot: Mapping[str, Sequence[Mapping[str, 
     ]
 
 
-def build_current_automatic_documents(match_dir: Path) -> dict[str, dict[str, Any]]:
+def build_current_automatic_documents(
+    match_dir: Path,
+    *,
+    pass_policy_version: str = "v1",
+) -> dict[str, dict[str, Any]]:
     """Run the actual downstream builder in memory using current effective inputs.
 
     No stored contact/pass review document is read or re-applied.  Thus the
@@ -99,6 +103,7 @@ def build_current_automatic_documents(match_dir: Path) -> dict[str, dict[str, An
         write_overlay_video=False,
         persist_artifacts=False,
         match_phase_config_doc=phase,
+        pass_policy_version=pass_policy_version,
     )
     return {
         name: dict(result.get(name) or {})

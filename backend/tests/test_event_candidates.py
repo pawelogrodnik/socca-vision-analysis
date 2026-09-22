@@ -66,6 +66,12 @@ class EventCandidatesTests(unittest.TestCase):
         self.assertEqual(report["summary"]["review_required_events"], 1)
         self.assertTrue(any("need review" in warning for warning in report["warnings"]))
 
+    def test_pass_policy_does_not_change_contact_event_generation(self) -> None:
+        v1 = build_event_candidate_artifacts(contact_doc(), pass_policy_version="v1")
+        v2 = build_event_candidate_artifacts(contact_doc(), pass_policy_version="v2")
+        self.assertEqual(v1["event_candidates"]["events"], v2["event_candidates"]["events"])
+        self.assertEqual(v1["event_candidates"]["summary"], v2["event_candidates"]["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()

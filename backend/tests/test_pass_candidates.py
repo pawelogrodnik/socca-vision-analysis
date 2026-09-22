@@ -194,6 +194,62 @@ class PassCandidatesTests(unittest.TestCase):
         self.assertGreater(candidate["trajectory_evidence"]["ball_path_distance_m"], 3.5)
         self.assertEqual(doc["summary"]["team_completed_passes"]["A"], 1)
 
+    def test_v2_keeps_normal_completed_intercepted_one_touch_long_and_slow_short_passes(self) -> None:
+        cases = [
+            ("completed", "A", "A", 0.6, 3.0),
+            ("intercepted", "A", "B", 0.25, 2.5),
+            ("one-touch", "A", "A", 0.18, 2.2),
+            ("long", "A", "A", 2.5, 15.0),
+            ("slow-short", "A", "A", 1.0, 1.4),
+        ]
+        for name, source_team, target_team, gap, distance in cases:
+            with self.subTest(name=name):
+                source = event("source", "A01", source_team, 1.0, 1.1)
+                target = event("target", "B01", target_team, 1.1 + gap, 1.2 + gap)
+                source["end_position_m"] = [10.0, 10.0]
+                target["start_position_m"] = [10.0 + distance, 10.0]
+                document = build_pass_candidates_document(
+                    {"events": [source, target]},
+                    policy_version="v2",
+                )
+                self.assertIn(document["candidates"][0]["outcome"], {"completed_pass", "failed_pass"})
+                self.assertNotIn("local_contact_scramble", document["candidates"][0]["rejection_reasons"])
+
+    def test_v1_remains_the_default_production_policy_until_v2_is_promoted(self) -> None:
+        document = build_pass_candidates_document(
+            {"events": [event("first", "A01", "A", 1.0, 1.1), event("second", "A02", "A", 1.8, 1.9)]}
+        )
+        self.assertEqual(document["parameters"]["pass_policy_version"], "v1")
+        self.assertEqual(document["candidates"][0]["pass_policy_version"], "v1")
+
+    def test_v2_suppresses_dense_ricochet_chain_without_shot_or_gold_input(self) -> None:
+        events = []
+        for index in range(6):
+            item = event(f"event-{index}", f"P{index}", "A" if index % 2 == 0 else "B", index * 0.1, index * 0.1 + 0.03)
+            item["start_position_m"] = [index * 4.0, 10.0]
+            item["end_position_m"] = [index * 4.0 + 0.2, 10.0]
+            events.append(item)
+        v1 = build_pass_candidates_document({"events": events}, policy_version="v1")
+        v2 = build_pass_candidates_document({"events": events}, policy_version="v2")
+        self.assertGreater(v1["summary"]["pass_attempts"], 1)
+        self.assertEqual(v2["summary"]["pass_attempts"], 0)
+        self.assertTrue(all("local_contact_scramble" in row["rejection_reasons"] for row in v2["candidates"]))
+
+    def test_v2_rejection_reason_is_deterministic_for_intervention_like_loose_ball_chain(self) -> None:
+        events = []
+        for index in range(5):
+            item = event(f"event-{index}", f"P{index}", "A" if index in {0, 3} else "B", index * 0.12, index * 0.12 + 0.03)
+            item["start_position_m"] = [index * 3.5, 10.0]
+            item["end_position_m"] = [index * 3.5 + 0.2, 10.0]
+            events.append(item)
+        first = build_pass_candidates_document({"events": events}, policy_version="v2")
+        second = build_pass_candidates_document({"events": events}, policy_version="v2")
+        self.assertEqual(
+            [row["rejection_reasons"] for row in first["candidates"]],
+            [row["rejection_reasons"] for row in second["candidates"]],
+        )
+        self.assertTrue(any("local_contact_scramble" in row["rejection_reasons"] for row in first["candidates"]))
+
     def test_goldset_evaluator_reports_match_miss_and_false_positive(self) -> None:
         pass_doc = {
             "candidates": [
